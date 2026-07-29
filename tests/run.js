@@ -89,7 +89,7 @@ eval(code + `
    CLIMB_SPEED, FALL_SPEED, STEP_UP, onScreen, updateCamera, moveEntity,
    unstick, BODY, UNSTICK_STEP, POWERUPS, rollPowerup, addToBag, useSlot,
    usePowerup, explode, chainLightning, drawHotbar, VERSION,
-   hidesSomeone, buildOccludees, becomeBoss, endBossMode, WALL_H, CRATE_H,
+   hidesSomeone, buildOccludees, becomeBoss, endBossMode, WALL_H, CRATE_H, killEnemy,
    get _occludees(){return _occludees},
    get bag(){return bag}, get powerups(){return powerups},
    get blasts(){return blasts}, get zaps(){return zaps},
@@ -752,8 +752,38 @@ ok('you start with no points', G.player.points === 0);
 ok('the target is reachable but not instant',
   G.TUNE.BOSS_POINTS / G.TUNE.POINTS_PER_KILL >= 10, 
   Math.round(G.TUNE.BOSS_POINTS / G.TUNE.POINTS_PER_KILL) + ' kills worth');
-ok('killing a boss is worth far more than a normal kill',
-  G.TUNE.POINTS_PER_BOSS > G.TUNE.POINTS_PER_KILL * 5);
+// Killing a boss now makes you one outright rather than just paying points.
+G.reset();
+G.enemies.length = 0;
+G.spawnEnemy('zombie', true);
+const theBoss = G.enemies[0];
+theBoss.x = G.player.x + 25; theBoss.y = G.player.y;
+G.player.points = 70;
+const pointsBefore = G.player.points;
+G.killEnemy(theBoss, 0);
+ok('killing a boss turns you into one on the spot', G.player.bossT > 0,
+  G.player.bossT.toFixed(0) + 's of boss mode');
+ok('and it does not cost you the points you had saved up',
+  G.player.points === pointsBefore, pointsBefore + ' kept');
+// Killing another boss while already one should top the clock back up.
+G.player.bossT = 3;
+G.enemies.length = 0;
+G.spawnEnemy('zombie', true);
+const boss2 = G.enemies[0];
+boss2.x = G.player.x + 25; boss2.y = G.player.y;
+G.killEnemy(boss2, 0);
+ok('killing a boss while already one tops the clock back up',
+  G.player.bossT > 3, 'back to ' + G.player.bossT.toFixed(0) + 's');
+// A normal kill must still go through the points bar, not shortcut it.
+G.reset();
+G.enemies.length = 0;
+G.spawnEnemy('zombie', false);
+const mook = G.enemies[0];
+mook.x = G.player.x + 25; mook.y = G.player.y;
+G.killEnemy(mook, 0);
+ok('an ordinary kill still just adds points', G.player.bossT === 0
+  && G.player.points === G.TUNE.POINTS_PER_KILL,
+  G.player.points + ' points, no boss mode');
 const normalHp = G.player.maxhp, normalSize = G.player.size;
 G.becomeBoss();
 ok('boss mode starts a countdown', G.player.bossT > 0, G.player.bossT.toFixed(0) + 's');

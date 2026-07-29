@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v8';
+const VERSION = 'v9';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1205,18 +1205,21 @@ function dropPowerup(x, y) {
 
 // You have earned it: turn into the boss. Bigger, tougher, hits like a truck,
 // and it wears off after a while so it stays a treat rather than the new normal.
-function becomeBoss() {
-  player.points = 0;
+// Two ways in. Filling the points bar spends the points. Killing a boss makes you
+// one outright and leaves your points alone, since you did not pay for it.
+function becomeBoss(spendPoints) {
+  const already = player.bossT > 0;
+  if (spendPoints !== false) player.points = 0;
   player.bossT = TUNE.BOSS_MODE_TIME;
   player.size = TUNE.BOSS_MODE_SIZE;
   player.maxhp = (TUNE.PLAYER_HEALTH + player.up.hpAdd) * TUNE.BOSS_MODE_HP;
   player.hp = player.maxhp;
   player.bite = 0;
-  announce('YOU ARE THE BOSS');
+  announce(already ? 'STILL THE BOSS' : 'YOU ARE THE BOSS');
   SFX.boss();
-  addShake(14);
-  spray(player.x, player.y, '#ff9f43', 44);
-  nukeFlash = .7;
+  addShake(already ? 8 : 14);
+  spray(player.x, player.y, '#ff9f43', already ? 24 : 44);
+  nukeFlash = already ? .4 : .7;
 }
 
 // Back to normal size once it runs out.
@@ -1561,9 +1564,13 @@ function killEnemy(e, dirAngle) {
     if (Math.random() < TUNE.HEART_CHANCE * player.up.luck) dropHeart(e.x, e.y);
     if (Math.random() < TUNE.POWERUP_CHANCE * player.up.luck) dropPowerup(e.x, e.y);
 
-    // Points towards becoming the boss yourself.
-    player.points += e.boss ? TUNE.POINTS_PER_BOSS : TUNE.POINTS_PER_KILL;
-    if (player.bossT <= 0 && player.points >= TUNE.BOSS_POINTS) becomeBoss();
+    if (e.boss) {
+      // Take down a boss and you become the boss. No bar to fill, no waiting.
+      becomeBoss(false);
+    } else {
+      player.points += TUNE.POINTS_PER_KILL;
+      if (player.bossT <= 0 && player.points >= TUNE.BOSS_POINTS) becomeBoss();
+    }
 
     const k = myKills();
     popup(e.x, e.y - 22, e.boss ? 'BOSS DOWN' : '+1', e.boss ? '#ff9f43' : '#ffd84d');
