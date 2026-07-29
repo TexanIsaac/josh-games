@@ -1,6 +1,7 @@
-"""Static file server for Joshua's games.
+"""Static file server for Josh's games.
 
-Runs on Mallet (DT-LT21-075) so the iPad can load games over the LAN.
+Run this on a computer on your home network and the iPad can load the game over
+wifi, with no internet needed.
 
 Why not just `python -m http.server`: that sends caching headers, so Safari on
 the iPad happily serves a stale copy after Josh changes his code. Refresh then
