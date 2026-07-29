@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- These two lines are what make it behave like an app on the iPad instead of
+     a web page: no pinch-zoom, and no white bars around the edges. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Joshua's Games</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #11131a;
+    color: #e8ecf4;
+    font-family: -apple-system, system-ui, sans-serif;
+    /* Stops the iPad from selecting text or showing the blue tap flash. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* touch-action: none is the single most important line for a game on a tablet.
+     Without it, dragging your finger scrolls the page instead of moving the player. */
+  canvas { display: block; touch-action: none; }
+  #start {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    background: #11131a;
+    text-align: center;
+    padding: 2rem;
+  }
+  h1 { font-size: 2rem; margin: 0; font-weight: 650; }
+  p { margin: 0; opacity: 0.75; font-size: 1.05rem; line-height: 1.5; }
+  #diag {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    padding: 0.75rem 1rem;
+    font: 0.8rem/1.6 ui-monospace, monospace;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .ok { color: #6ee7a8; }
+  .no { color: #ff8f8f; }
+</style>
+</head>
+<body>
+
+<div id="start">
+  <h1>Joshua's Games</h1>
+  <p>Tap anywhere to start.</p>
+</div>
+
+<canvas id="game"></canvas>
+<div id="diag"></div>
+
+<script>
+// This file is not a game yet. It is a test that proves the whole path works:
+// Mallet serves the file, the iPad loads it, touch input works, the picture is
+// sharp, and sound is allowed. Once this is confirmed, the real game goes here.
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const startScreen = document.getElementById('start');
+const diag = document.getElementById('diag');
+
+// --- Sharp on a retina screen -------------------------------------------------
+// An iPad has 2 real pixels for every 1 CSS pixel. If you ignore that, the game
+// looks crisp on the laptop and blurry on the iPad. So the canvas gets sized in
+// real pixels, then scaled back down.
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Where the finger is ------------------------------------------------------
+// Pointer events cover mouse AND touch with the same code, so this works on the
+// laptop and the iPad without writing it twice.
+const player = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+let dragging = false;
+
+function moveTo(e) {
+  const r = canvas.getBoundingClientRect();
+  player.x = e.clientX - r.left;
+  player.y = e.clientY - r.top;
+}
+
+canvas.addEventListener('pointerdown', (e) => { dragging = true; moveTo(e); });
+canvas.addEventListener('pointermove', (e) => { if (dragging) moveTo(e); });
+canvas.addEventListener('pointerup', () => { dragging = false; });
+canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+// --- The loop -----------------------------------------------------------------
+let hue = 0;
+function frame() {
+  hue = (hue + 0.4) % 360;
+  ctx.fillStyle = '#11131a';
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+  ctx.fillStyle = 'hsl(' + hue + ' 70% 62%)';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, dragging ? 46 : 34, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(232,236,244,0.8)';
+  ctx.font = '600 17px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Drag me around', window.innerWidth / 2, 52);
+
+  requestAnimationFrame(frame);
+}
+
+// --- Sound has to wait for a tap ---------------------------------------------
+// iOS refuses to play any audio until the user touches the screen. Doing the
+// unlock on the start tap means sound just works for the rest of the session.
+let audioReady = false;
+function start() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      const ac = new AC();
+      ac.resume();
+      audioReady = ac.state === 'running';
+    }
+  } catch (err) {
+    audioReady = false;
+  }
+  startScreen.style.display = 'none';
+  showDiag();
+  requestAnimationFrame(frame);
+}
+startScreen.addEventListener('pointerdown', start);
+
+function showDiag() {
+  const standalone = window.navigator.standalone === true
+    || window.matchMedia('(display-mode: standalone)').matches;
+  const yes = (label, good) =>
+    '<span class="' + (good ? 'ok' : 'no') + '">' + (good ? 'YES' : 'no ') + '</span> ' + label;
+
+  diag.innerHTML = [
+    window.innerWidth + ' x ' + window.innerHeight
+      + ' at ' + (window.devicePixelRatio || 1) + 'x',
+    yes('touch', navigator.maxTouchPoints > 0),
+    yes('sound unlocked', audioReady),
+    yes('home screen app', standalone)
+  ].join(' &nbsp; ');
+}
+</script>
+</body>
+</html>
