@@ -314,6 +314,24 @@ ok('there are three kinds of enemy', G.ENEMY_TYPES.length === 3,
 const seen = {};
 for (let i = 0; i < 3000; i++) { const k = G.rollEnemyType().key; seen[k] = (seen[k] || 0) + 1; }
 ok('all three actually turn up', Object.keys(seen).length === 3, JSON.stringify(seen));
+// The brute is the big one, and a bigger body is exactly what could start
+// wedging in corridors again, so its width gets checked against a one-tile gap.
+const brute = G.ENEMY_TYPES.find(t2 => t2.key === 'brute');
+ok('the brute is clearly the biggest of them',
+  G.ENEMY_TYPES.every(t2 => t2.key === 'brute' || t2.size < brute.size),
+  'brute ' + brute.size + ' vs ' + G.ENEMY_TYPES.filter(t2 => t2.key !== 'brute')
+    .map(t2 => t2.key + ' ' + t2.size).join(', '));
+ok('a bigger brute is tougher and slower to match',
+  brute.hp > 2 && brute.speed < 1, 'hp x' + brute.hp + ', speed x' + brute.speed);
+ok('every enemy still fits down a one-tile corridor', G.ENEMY_TYPES.every(t2 => {
+  const halfWidth = Math.round(13 * t2.size) * G.BODY;
+  return halfWidth < G.TILE / 2 - 2;
+}), G.ENEMY_TYPES.map(t2 =>
+  t2.key + ' ' + (G.TILE / 2 - Math.round(13 * t2.size) * G.BODY).toFixed(1) + 'px spare').join(', '));
+ok('and so does a boss at full size',
+  Math.round(13 * G.TUNE.BOSS_SIZE) * G.BODY < G.TILE / 2 - 2,
+  (G.TILE / 2 - Math.round(13 * G.TUNE.BOSS_SIZE) * G.BODY).toFixed(1) + 'px spare');
+
 ok('a boss comes every 5 waves', G.isBossWave(5) && G.isBossWave(10) && G.isBossWave(15));
 ok('no boss before wave 5', ![1, 2, 3, 4].some(G.isBossWave));
 ok('there are 15 upgrade cards', G.UPGRADES.length === 15, String(G.UPGRADES.length));

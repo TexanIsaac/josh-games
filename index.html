@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v10';
+const VERSION = 'v11';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -419,7 +419,7 @@ const ZOMBIE_RANKS = [
 const ENEMY_TYPES = [
   { key: 'walker', label: 'Walker', hp: 1,   speed: 1,    size: 1,    weight: 68 },
   { key: 'runner', label: 'Runner', hp: .55, speed: 1.75, size: .84,  weight: 24 },
-  { key: 'brute',  label: 'Brute',  hp: 2.7, speed: .68,  size: 1.34, weight: 8  },
+  { key: 'brute',  label: 'Brute',  hp: 3.4, speed: .64,  size: 1.78, weight: 8  },
 ];
 const TYPE_WEIGHT_TOTAL = ENEMY_TYPES.reduce((s, t) => s + t.weight, 0);
 
