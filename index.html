@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v6';
+const VERSION = 'v7';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1948,12 +1948,15 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
 
-  let skin  = isNoob ? '#f5cd30' : '#7fa05a';
-  let torso = isNoob ? '#0a9bf5' : '#46543a';
-  let legs  = isNoob ? '#6aa84f' : '#333f2c';
+  // The zombie colours used to sit almost on top of the green baseplate, so their
+  // bodies disappeared into the ground and only the head read. Brighter skin and
+  // warm clothes fix that without making them look like noobs.
+  let skin  = isNoob ? '#f5cd30' : '#9ed36a';
+  let torso = isNoob ? '#0a9bf5' : '#5a2b4a';
+  let legs  = isNoob ? '#6aa84f' : '#2f3340';
   // Runners and brutes are tinted so you can tell at a glance what is coming.
-  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#4fd6ff' : '#7fae3f'; }
-  if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#6b4a8f'; }
+  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#4fd6ff' : '#d98a2b'; }
+  if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
 
   const s = g.size || 1;
@@ -1968,6 +1971,22 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   ctx.beginPath();
   ctx.ellipse(shx, shy, 12 * s, 6 * s, 0, 0, 6.283);
   ctx.fill();
+
+  // With a screenful of near identical characters there was no way to tell which
+  // one was you. A bright ring on the ground marks you out at a glance.
+  if (isPlayer) {
+    const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
+    ctx.strokeStyle = ring;
+    ctx.lineWidth = 2.2;
+    ctx.globalAlpha = .9;
+    ctx.beginPath();
+    ctx.ellipse(shx, shy, 15 * s, 7.5 * s, 0, 0, 6.283);
+    ctx.stroke();
+    ctx.globalAlpha = .28;
+    ctx.fillStyle = ring;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 
   const flash = (g.hurtFlash > 0)
     || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
@@ -2048,6 +2067,21 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   }
 
   ctx.globalAlpha = 1;
+
+  // An arrow bobbing over your head, so you can find yourself even behind a wall.
+  if (isPlayer) {
+    const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
+    const ax = isoX(g.x, g.y);
+    const ay = isoY(g.x, g.y, z + legH + torsoH + headH)
+             - 11 - Math.abs(Math.sin(performance.now() / 260)) * 3;
+    ctx.fillStyle = ring;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay + 7);
+    ctx.lineTo(ax - 5.5, ay);
+    ctx.lineTo(ax + 5.5, ay);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;

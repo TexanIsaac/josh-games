@@ -570,6 +570,37 @@ for (const w of [1, 5, 10, 15, 20]) {
 }
 
 // --- credit -----------------------------------------------------------------
+group('You can see what is going on');
+// A real bug found from a screenshot: the zombie body colours sat almost exactly
+// on top of the green baseplate, so their bodies vanished into the ground and only
+// the head showed. Brightness is measurable, so it gets checked.
+function lum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+}
+const FLOOR_A = '#4c5a4a', FLOOR_B = '#475440';
+const zombieBody = ['#9ed36a', '#5a2b4a', '#2f3340'];
+const noobBody = ['#f5cd30', '#0a9bf5', '#6aa84f'];
+ok('zombie parts stand out from the grass', zombieBody.every(c =>
+  Math.abs(lum(c) - lum(FLOOR_A)) > 18 && Math.abs(lum(c) - lum(FLOOR_B)) > 18),
+  zombieBody.map(c => c + ' d=' + Math.abs(lum(c) - lum(FLOOR_A)).toFixed(0)).join('  '));
+ok('noob parts stand out from the grass', noobBody.every(c =>
+  Math.abs(lum(c) - lum(FLOOR_A)) > 18));
+ok('the zombie colours in the code match the ones checked here',
+  zombieBody.every(c => src.indexOf(c) !== -1));
+ok('a zombie is not mistakable for a noob at a glance',
+  Math.abs(lum(zombieBody[1]) - lum(noobBody[1])) > 15);
+// The tinted enemy types have to stand out from the grass too.
+const tints = ['#d98a2b', '#a35ce0'];
+ok('the runner and brute tints also stand out from the grass',
+  tints.every(c => Math.abs(lum(c) - lum(FLOOR_A)) > 18),
+  tints.map(c => c + ' d=' + Math.abs(lum(c) - lum(FLOOR_A)).toFixed(0)).join('  '));
+
+ok('the player is marked out from everyone else',
+  /bright ring on the ground marks you out/.test(src));
+ok('and marked above the head too, for when you are behind a wall',
+  /find yourself even behind a wall/.test(src));
+
 group('Pickups and the item row');
 ok('there is a version marker on screen', typeof G.VERSION === 'string' && G.VERSION.length > 0,
   G.VERSION);
