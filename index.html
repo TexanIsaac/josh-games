@@ -29,6 +29,17 @@
   #title h1 span { color: #6ee787; display: block; }
   #title p { margin: 0; opacity: 0.72; font-size: clamp(0.95rem, 3.4vw, 1.15rem); line-height: 1.55; max-width: 30rem; }
   #tapline { margin-top: 0.6rem; font-weight: 700; font-size: 1.2rem; color: #ffd84d; }
+  #credit {
+    margin-top: 1.4rem; font-size: 0.95rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #f5cd30; font-weight: 700;
+  }
+  #credit span { display: block; margin-top: 0.3rem; font-size: 1.5rem;
+    letter-spacing: -0.01em; text-transform: none; color: #eef2f8; }
+  #byline {
+    position: fixed; right: 12px; top: 10px; z-index: 5;
+    font: 600 11px -apple-system, system-ui, sans-serif;
+    color: rgba(238,242,248,0.4); letter-spacing: 0.05em; pointer-events: none;
+  }
 
   /* A blank white screen is the worst thing that can happen to a kid mid-build,
      so any crash gets caught and explained in plain language instead. */
@@ -47,10 +58,14 @@
   <h1>Zombie<span>Noobs</span></h1>
   <p>You are a noob with nothing but your fists. Punch zombies to rank up.
      Get bitten too many times and you join them.</p>
+  <p style="opacity:0.55;font-size:0.95rem">Just steer. You swing on your own
+     when something is close enough.</p>
   <div id="tapline">Tap to play</div>
+  <div id="credit">A game by<span>Josh Alexander</span></div>
 </div>
 
 <canvas id="game"></canvas>
+<div id="byline">Zombie Noobs &nbsp;|&nbsp; by Josh Alexander</div>
 
 <div id="oops">
   <h2>The game hit a snag</h2>
@@ -62,7 +77,11 @@
 <script>
 // ===========================================================================
 //  ZOMBIE NOOBS
-//  Game design by Joshua Alexander.
+//
+//  Made by Josh Alexander.
+//
+//  The whole game is his idea: noobs with fists, zombies that bite and infect
+//  you, and the four ranks you earn at 7, 22 and 37 kills.
 //
 //  HOW TO CHANGE THE GAME:
 //  Everything you are likely to want to tweak lives in the TUNE block and the
@@ -91,12 +110,26 @@ const TUNE = {
   BITE_PER_HIT: 26,           // lower number = takes more bites to turn
   BITE_COOLDOWN_DRAIN: 9,     // how fast the meter drains per second
 
+  // You swing by yourself whenever an enemy is close enough, so all you have to
+  // do is steer. Set this to false if you would rather press the button.
+  AUTO_ATTACK: true,
+
   // The enemies.
   ENEMY_HEALTH: 60,
   ENEMY_SPEED: 118,
   ENEMY_MAX_ON_SCREEN: 26,
-  SPAWN_EVERY: 1.5,           // seconds between spawns
+  SPAWN_EVERY: 1.5,           // seconds between spawns inside a wave
   SPAWN_SPEEDUP: 0.986,       // spawns get slightly faster each time
+
+  // Waves. Clear one and you get to pick an upgrade before the next starts.
+  WAVE_FIRST_COUNT: 5,        // how many enemies in wave 1
+  WAVE_GROWTH: 2,             // how many more each wave after that
+  WAVE_TOUGHER: 0.09,         // enemies gain this much health per wave
+  UPGRADE_CHOICES: 3,         // how many cards you choose from
+
+  // Hearts that zombies drop.
+  HEART_CHANCE: 0.16,         // 0.16 means about 1 in 6 kills drops one
+  HEART_HEAL: 28,
 
   // Feel. Turn these up for more chaos.
   SCREEN_SHAKE: 1.0,
@@ -156,6 +189,29 @@ const ZOMBIE_RANKS = [
   { name: 'Zombie Spitter', weapon: 'acid',   at: TUNE.KILLS_FOR_GUNNER,  reach: 470, dmg: 44, rate: 0.52, armor: 0,    ranged: true  },
   { name: 'Zombie Brute',   weapon: 'smash',  at: TUNE.KILLS_FOR_RIOTER,  reach: 68, dmg: 52, rate: 0.42, armor: 0.45, ranged: false },
 ];
+
+// ---------------------------------------------------------------------------
+//  UPGRADES  --  clear a wave, then pick one of three cards.
+//  Every pick stacks forever, so a long run turns you into a monster. That
+//  choice between waves is the thing that makes you want one more go.
+//  Add your own by copying a line. "mul" multiplies, "add" adds.
+// ---------------------------------------------------------------------------
+const UPGRADES = [
+  { name: 'Stronger Hits',   blurb: '+30% damage',        apply: u => u.dmg   *= 1.30 },
+  { name: 'Faster Feet',     blurb: '+14% speed',         apply: u => u.speed *= 1.14 },
+  { name: 'Quicker Swings',  blurb: 'attack 15% faster',  apply: u => u.rate  *= 0.85 },
+  { name: 'Longer Reach',    blurb: '+16% reach',         apply: u => u.reach *= 1.16 },
+  { name: 'Tougher',         blurb: '+30 max health',     apply: u => u.hpAdd += 30   },
+  { name: 'Thicker Skin',    blurb: '+10% armor',         apply: u => u.armorAdd += 0.10 },
+  { name: 'Strong Stomach',  blurb: 'bites infect 25% less', apply: u => u.biteRes *= 0.75 },
+  { name: 'Fast Healer',     blurb: 'heal twice as fast', apply: u => u.heal  *= 2.0  },
+];
+
+// A player with no upgrades yet. Enemies always use this.
+function freshUpgrades() {
+  return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0, biteRes: 1, heal: 1 };
+}
+const NO_UP = freshUpgrades();
 
 // ---------------------------------------------------------------------------
 //  Crash catcher
@@ -268,6 +324,51 @@ function loadMap() {
   }
   if (spawnPoints.length === 0) spawnPoints.push({ x: TILE * 2, y: TILE * 2 });
   if (!playerStart.x) playerStart = { x: GW * TILE / 2, y: GH * TILE / 2 };
+  sealPockets();
+}
+
+// Any floor tile with no walkable path back to where you start is a sealed
+// pocket. Nothing could ever get in or out of one, so they get filled in with
+// wall. This also means the map can be redrawn without accidentally making a
+// room that traps enemies and leaves a wave impossible to finish.
+function sealPockets() {
+  const size = GW * GH;
+  const seen = new Uint8Array(size);
+  const q = new Int32Array(size);
+  let head = 0, tail = 0;
+
+  const sx = Math.floor(playerStart.x / TILE), sy = Math.floor(playerStart.y / TILE);
+  if (sx < 0 || sy < 0 || sx >= GW || sy >= GH || grid[sy][sx] !== 0) return 0;
+
+  seen[sy * GW + sx] = 1;
+  q[tail++] = sy * GW + sx;
+  while (head < tail) {
+    const cur = q[head++];
+    const cx = cur % GW, cy = (cur - cx) / GW;
+    for (let k = 0; k < 4; k++) {
+      const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
+      const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+      if (grid[ny][nx] !== 0) continue;
+      const ni = ny * GW + nx;
+      if (seen[ni]) continue;
+      seen[ni] = 1;
+      q[tail++] = ni;
+    }
+  }
+
+  let filled = 0;
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      if (grid[y][x] === 0 && !seen[y * GW + x]) { grid[y][x] = WALL; filled++; }
+    }
+  }
+
+  // A spawn point inside a pocket we just filled is no longer usable.
+  spawnPoints = spawnPoints.filter(
+    p => grid[Math.floor(p.y / TILE)][Math.floor(p.x / TILE)] === 0);
+  if (spawnPoints.length === 0) spawnPoints.push({ x: playerStart.x, y: playerStart.y });
+  return filled;
 }
 loadMap();
 const WORLD_W = GW * TILE, WORLD_H = GH * TILE;
@@ -293,8 +394,12 @@ function moveEntity(e, dx, dy) {
 //  Game state
 // ---------------------------------------------------------------------------
 const NOOB = 'noob', ZOMB = 'zombie';
-let player, enemies, shots, bits, popups;
+let player, enemies, shots, bits, popups, hearts;
 let spawnTimer, spawnGap, running, best;
+
+// Wave state. 'fighting' means enemies are still coming or still alive.
+// 'picking' freezes the action while the three upgrade cards are on screen.
+let wave, waveState, waveToSpawn, cards, cardRects;
 let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
 
 // Screen shake, aimed. Random jitter in every direction reads as a glitch or a
@@ -318,12 +423,15 @@ function newPlayer() {
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
     face: 1, aimx: 1, aimy: 0, wob: 0,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
+    up: freshUpgrades(),
   };
 }
 
 function reset() {
   player = newPlayer();
-  enemies = []; shots = []; bits = []; popups = [];
+  enemies = []; shots = []; bits = []; popups = []; hearts = [];
+  wave = 0; waveState = 'fighting'; waveToSpawn = 0; cards = []; cardRects = [];
+  startWave(1);
   spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
   shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
   flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
@@ -333,6 +441,54 @@ function reset() {
 function myRanks() { return player.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS; }
 function myKills() { return player.kills[player.side]; }
 function enemySide() { return player.side === NOOB ? ZOMB : NOOB; }
+
+// Anyone on the other side from you, still standing.
+function hostileCount() {
+  let n = 0;
+  for (const e of enemies) { if (e.hp > 0 && e.side !== player.side) n++; }
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+//  Waves and upgrades
+// ---------------------------------------------------------------------------
+function waveCount(n) { return TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH; }
+
+function startWave(n) {
+  wave = n;
+  waveState = 'fighting';
+  waveToSpawn = waveCount(n);
+  spawnTimer = 0.5;
+  spawnGap = TUNE.SPAWN_EVERY;
+  announce('WAVE ' + n);
+}
+
+function finishWave() {
+  waveState = 'picking';
+  // Deal three different cards at random out of the list.
+  const pool = UPGRADES.slice();
+  cards = [];
+  const want = Math.min(TUNE.UPGRADE_CHOICES, pool.length);
+  for (let i = 0; i < want; i++) {
+    cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  cardRects = [];
+  SFX.rankup();
+}
+
+function choose(card) {
+  card.apply(player.up);
+  // Max health may have just gone up, so refresh it and fill the bar as a treat.
+  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
+  player.hp = player.maxhp;
+  popup(player.x, player.y - 30, card.name, '#ffd84d');
+  cards = []; cardRects = [];
+  startWave(wave + 1);
+}
+
+function dropHeart(x, y) {
+  hearts.push({ x: x, y: y, life: 16, bob: Math.random() * 6.28 });
+}
 
 // ---------------------------------------------------------------------------
 //  Enemies and allies. An "enemy" is anyone on the opposite side from you.
@@ -349,12 +505,90 @@ function spawnEnemy(side, atX, atY) {
       tries++;
     } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
   }
+  // Enemies get a little beefier every wave, so the upgrades you pick have
+  // something to keep up with.
+  const hp = Math.round(TUNE.ENEMY_HEALTH * (1 + (wave - 1) * TUNE.WAVE_TOUGHER));
   enemies.push({
     x: p.x, y: p.y, r: 13, side: side,
-    hp: TUNE.ENEMY_HEALTH, maxhp: TUNE.ENEMY_HEALTH,
+    hp: hp, maxhp: hp,
     rank: 0, cool: Math.random() * 0.6, face: 1, swing: 0, hurtFlash: 0,
     squash: 0, wob: Math.random() * 6.28,
+    // Used by the anti-wedge check below.
+    lastX: p.x, lastY: p.y, stuckT: 0,
   });
+}
+
+// ---------------------------------------------------------------------------
+//  Walking around walls
+//
+//  Enemies used to head straight for you and jam against the first wall in the
+//  way, so three of them could sit stuck in a corner and a wave would never
+//  finish. This counts the number of steps from every open tile back to the
+//  tile you are standing on, and each enemy simply walks to whichever
+//  neighbouring tile has a smaller number. That is enough to come around
+//  corners and through doorways.
+// ---------------------------------------------------------------------------
+let flow = null, flowTimer = 0, flowGX = -1, flowGY = -1, flowQueue = null;
+
+function buildFlow(tx, ty) {
+  const size = GW * GH;
+  if (!flow) { flow = new Int32Array(size); flowQueue = new Int32Array(size); }
+  flow.fill(-1);
+  if (tx < 0 || ty < 0 || tx >= GW || ty >= GH) return;
+  if (grid[ty][tx] !== 0) return;
+
+  let head = 0, tail = 0;
+  const start = ty * GW + tx;
+  flow[start] = 0;
+  flowQueue[tail++] = start;
+
+  while (head < tail) {
+    const cur = flowQueue[head++];
+    const cx = cur % GW, cy = (cur - cx) / GW;
+    const d = flow[cur] + 1;
+    for (let k = 0; k < 4; k++) {
+      const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
+      const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+      if (grid[ny][nx] !== 0) continue;
+      const ni = ny * GW + nx;
+      if (flow[ni] !== -1) continue;
+      flow[ni] = d;
+      flowQueue[tail++] = ni;
+    }
+  }
+}
+
+// Which way to walk from here to get closer to the player. Returns null when
+// the map has nothing useful to say, and the caller falls back to walking
+// straight at the target.
+function flowDir(x, y) {
+  if (!flow) return null;
+  const gx = Math.floor(x / TILE), gy = Math.floor(y / TILE);
+  if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return null;
+  const here = flow[gy * GW + gx];
+  if (here < 0) return null;
+
+  let bestD = here, bx = 0, by = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = gx + dx, ny = gy + dy;
+      if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+      if (grid[ny][nx] !== 0) continue;
+      // Never cut a diagonal through the corner of a wall.
+      if (dx !== 0 && dy !== 0 && (grid[gy][nx] !== 0 || grid[ny][gx] !== 0)) continue;
+      const v = flow[ny * GW + nx];
+      if (v >= 0 && v < bestD) { bestD = v; bx = dx; by = dy; }
+    }
+  }
+  if (bx === 0 && by === 0) return null;
+
+  // Aim for the middle of the next tile so they do not scrape along the wall.
+  const cxp = (gx + bx) * TILE + TILE / 2;
+  const cyp = (gy + by) * TILE + TILE / 2;
+  const ang = Math.atan2(cyp - y, cxp - x);
+  return { x: Math.cos(ang), y: Math.sin(ang) };
 }
 
 function nearestTarget(from, wantSide) {
@@ -383,6 +617,20 @@ const STICK_MAX = 62;
 
 function onDown(e) {
   if (!running) return;
+
+  // Cards are up: the only thing a tap can do is pick one.
+  if (waveState === 'picking') {
+    for (let i = 0; i < cardRects.length; i++) {
+      const r = cardRects[i];
+      if (e.clientX >= r.x && e.clientX <= r.x + r.w &&
+          e.clientY >= r.y && e.clientY <= r.y + r.h) {
+        choose(cards[i]);
+        return;
+      }
+    }
+    return;
+  }
+
   const leftHalf = e.clientX < VW * 0.5;
   if (leftHalf && !stick.active) {
     stick.active = true; stick.id = e.pointerId;
@@ -497,6 +745,7 @@ function killEnemy(e, dirAngle) {
   const wasEnemyOfPlayer = (e.side !== player.side);
   if (wasEnemyOfPlayer) {
     player.kills[player.side]++;
+    if (Math.random() < TUNE.HEART_CHANCE) dropHeart(e.x, e.y);
     const k = myKills();
     popup(e.x, e.y - 20, '+1', '#ffd84d');
     const newRank = rankFor(player.side, k);
@@ -536,7 +785,7 @@ function infectEnemy(e) {
 
 function hurtPlayer(dmg, biteAmount) {
   if (player.invuln > 0) return;
-  const armor = myRanks()[player.rank].armor;
+  const armor = Math.min(0.8, myRanks()[player.rank].armor + player.up.armorAdd);
   player.hp -= dmg * (1 - armor);
   player.hurtTimer = TUNE.HEAL_DELAY;
   player.squash = 0.16;
@@ -546,7 +795,7 @@ function hurtPlayer(dmg, biteAmount) {
   spray(player.x, player.y, '#c0392b', 6);
 
   if (biteAmount > 0 && player.side === NOOB) {
-    player.bite = Math.min(100, player.bite + biteAmount);
+    player.bite = Math.min(100, player.bite + biteAmount * player.up.biteRes);
     SFX.bite();
     if (player.bite >= 100) { flipSide(); return; }
   }
@@ -580,6 +829,12 @@ function tryAttack(who, isPlayer) {
   const rk = table[who.rank];
   if (who.cool > 0) return;
 
+  // Upgrades are yours alone. Enemies always fight at base stats.
+  const up = isPlayer ? player.up : NO_UP;
+  const dmg = rk.dmg * up.dmg;
+  const reach = rk.reach * up.reach;
+  const rate = rk.rate * up.rate;
+
   const wantSide = who.side === NOOB ? ZOMB : NOOB;
   const found = nearestTarget(who, wantSide);
   if (!found.target) return;
@@ -588,14 +843,14 @@ function tryAttack(who, isPlayer) {
   const dist = Math.hypot(ax, ay) || 1;
 
   if (rk.ranged) {
-    if (dist > rk.reach) return;
-    who.cool = rk.rate;
+    if (dist > reach) return;
+    who.cool = rate;
     who.swing = 0.12;
     const isAcid = rk.weapon === 'acid';
     shots.push({
       x: who.x + ax / dist * 16, y: who.y + ay / dist * 16,
       vx: ax / dist * (isAcid ? 430 : 760), vy: ay / dist * (isAcid ? 430 : 760),
-      dmg: rk.dmg, side: who.side, life: 1.4,
+      dmg: dmg, side: who.side, life: 1.4,
       acid: isAcid, bites: isAcid,
     });
     // The camera kicks backward from the shot, the way recoil would push you.
@@ -606,8 +861,8 @@ function tryAttack(who, isPlayer) {
   }
 
   // Melee: has to be close.
-  if (dist > rk.reach) return;
-  who.cool = rk.rate;
+  if (dist > reach) return;
+  who.cool = rate;
   who.swing = 0.16;
 
   if (rk.weapon === 'knife') SFX.knife();
@@ -622,13 +877,13 @@ function tryAttack(who, isPlayer) {
   if (found.target === player) {
     // Zombie melee infects as well as hurts.
     const biteAmt = who.side === ZOMB ? TUNE.BITE_PER_HIT : 0;
-    hurtPlayer(rk.dmg, biteAmt);
+    hurtPlayer(dmg, biteAmt);
   } else {
     // Player is a zombie biting a noob: infect instead of just killing.
     if (who.side === ZOMB && found.target.side === NOOB && isPlayer) {
       infectEnemy(found.target);
     } else {
-      hurtEnemy(found.target, rk.dmg, who.x, who.y);
+      hurtEnemy(found.target, dmg, who.x, who.y);
     }
   }
   if (isPlayer) addShake(rk.weapon === 'smash' ? 4.5 : 1.8, ax / dist, ay / dist);
@@ -638,9 +893,24 @@ function tryAttack(who, isPlayer) {
 //  Update
 // ---------------------------------------------------------------------------
 function update(dt) {
+  // While the upgrade cards are up the fight holds still, but particles and
+  // floating text keep moving so the screen does not look locked up.
+  if (waveState === 'picking') {
+    for (const b of bits) {
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      b.vx *= 0.92; b.vy *= 0.92; b.life -= dt;
+    }
+    bits = bits.filter(b => b.life > 0);
+    for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
+    popups = popups.filter(p => p.life > 0);
+    if (flashTime > 0) flashTime -= dt;
+    shake.mag = Math.max(0, shake.mag - dt * 40);
+    return;
+  }
+
   // Player movement
   const mv = inputVector();
-  const sp = TUNE.PLAYER_SPEED * dt;
+  const sp = TUNE.PLAYER_SPEED * player.up.speed * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
   if (mv.dx !== 0) player.face = mv.dx > 0 ? 1 : -1;
 
@@ -660,21 +930,50 @@ function update(dt) {
   player.wob += dt * 6;
   player.hurtTimer = Math.max(0, player.hurtTimer - dt);
   if (player.hurtTimer === 0 && player.hp < player.maxhp) {
-    player.hp = Math.min(player.maxhp, player.hp + TUNE.HEAL_PER_SECOND * dt);
+    player.hp = Math.min(player.maxhp, player.hp + TUNE.HEAL_PER_SECOND * player.up.heal * dt);
   }
   if (player.side === NOOB && player.bite > 0) {
     player.bite = Math.max(0, player.bite - TUNE.BITE_COOLDOWN_DRAIN * dt);
   }
-  if (firing()) tryAttack(player, true);
+  // You swing on your own when something is in range. Steering is the only job,
+  // which is what makes this playable with one thumb at eight years old.
+  if (TUNE.AUTO_ATTACK || firing()) tryAttack(player, true);
 
-  // Spawning
-  spawnTimer -= dt;
-  if (spawnTimer <= 0) {
-    spawnTimer = spawnGap;
-    spawnGap = Math.max(0.42, spawnGap * TUNE.SPAWN_SPEEDUP);
-    const alive = enemies.filter(e => e.hp > 0).length;
-    if (alive < TUNE.ENEMY_MAX_ON_SCREEN) spawnEnemy(enemySide());
+  // Rebuild the step map whenever you cross into a new tile, and on a timer as
+  // a backstop. It is only about a thousand tiles, so this is cheap.
+  const pgx = Math.floor(player.x / TILE), pgy = Math.floor(player.y / TILE);
+  flowTimer -= dt;
+  if (pgx !== flowGX || pgy !== flowGY || flowTimer <= 0 || !flow) {
+    buildFlow(pgx, pgy);
+    flowGX = pgx; flowGY = pgy; flowTimer = 0.35;
   }
+
+  // Feed the current wave in a few at a time rather than all at once.
+  if (waveToSpawn > 0) {
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnTimer = spawnGap;
+      spawnGap = Math.max(0.42, spawnGap * TUNE.SPAWN_SPEEDUP);
+      if (enemies.length < TUNE.ENEMY_MAX_ON_SCREEN) {
+        spawnEnemy(enemySide());
+        waveToSpawn--;
+      }
+    }
+  }
+
+  // Hearts that dropped from kills.
+  for (const h of hearts) {
+    h.life -= dt;
+    h.bob += dt * 4;
+    if (Math.hypot(player.x - h.x, player.y - h.y) < 26) {
+      h.life = 0;
+      player.hp = Math.min(player.maxhp, player.hp + TUNE.HEART_HEAL);
+      popup(player.x, player.y - 26, '+' + TUNE.HEART_HEAL, '#6ee787');
+      beep(880, 0.08, 'square', 0.1);
+      beep(1180, 0.1, 'square', 0.08);
+    }
+  }
+  hearts = hearts.filter(h => h.life > 0);
 
   // Enemies and allies
   for (const e of enemies) {
@@ -691,18 +990,45 @@ function update(dt) {
       const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
       const rk = table[e.rank];
       const stopAt = rk.ranged ? 240 : rk.reach - 8;
+
       if (found.dist > stopAt) {
-        const a = Math.atan2(found.target.y - e.y, found.target.x - e.x);
-        // A little side-to-side wobble so they do not march in a straight line.
-        const wob = Math.sin(e.wob) * 0.32;
-        const sx = Math.cos(a + wob), sy = Math.sin(a + wob);
+        let sx, sy;
+        // Use the step map when chasing the player, since that is the one that
+        // has to work. Chasing anyone else falls back to heading straight over.
+        const dir = (found.target === player) ? flowDir(e.x, e.y) : null;
+        if (dir) {
+          sx = dir.x; sy = dir.y;
+        } else {
+          const a = Math.atan2(found.target.y - e.y, found.target.x - e.x);
+          // A little side-to-side wobble so they do not march in a dead line.
+          const wob = Math.sin(e.wob) * 0.32;
+          sx = Math.cos(a + wob); sy = Math.sin(a + wob);
+        }
         moveEntity(e, sx * TUNE.ENEMY_SPEED * dt, sy * TUNE.ENEMY_SPEED * dt);
         e.face = sx > 0 ? 1 : -1;
+
+        // Belt and braces. If something is genuinely wedged and getting nowhere,
+        // move it back to a spawn point rather than leave a wave unfinishable.
+        e.stuckT += dt;
+        if (e.stuckT > 2.5) {
+          if (Math.hypot(e.x - e.lastX, e.y - e.lastY) < 14) {
+            const sp = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+            e.x = sp.x; e.y = sp.y;
+            spray(e.x, e.y, '#5b6474', 6);
+          }
+          e.lastX = e.x; e.lastY = e.y; e.stuckT = 0;
+        }
+      } else {
+        e.stuckT = 0; e.lastX = e.x; e.lastY = e.y;
       }
       tryAttack(e, false);
     }
   }
   enemies = enemies.filter(e => e.hp > 0);
+
+  // The wave ends once everything has been sent in and nothing hostile is left
+  // standing. Allies you infected do not count against you.
+  if (waveToSpawn === 0 && hostileCount() === 0) { finishWave(); return; }
 
   // Shots
   for (const s of shots) {
@@ -952,13 +1278,24 @@ function drawHUD() {
     ctx.beginPath(); ctx.arc(stick.ox + stick.dx, stick.oy + stick.dy, 24, 0, 6.283); ctx.fill();
   }
 
-  // Attack button hint on the right
-  ctx.fillStyle = fire.active ? 'rgba(255,216,77,0.3)' : 'rgba(255,255,255,0.09)';
-  ctx.beginPath(); ctx.arc(VW - 78, VH - 88, 46, 0, 6.283); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.font = '700 13px -apple-system, system-ui, sans-serif';
+  // Wave number and how much of it is left, across the top middle.
   ctx.textAlign = 'center';
-  ctx.fillText(rk.ranged ? 'SHOOT' : 'HIT', VW - 78, VH - 83);
+  ctx.fillStyle = 'rgba(238,242,248,0.55)';
+  ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+  ctx.fillText('WAVE ' + wave, VW / 2, 27);
+  ctx.fillStyle = 'rgba(238,242,248,0.34)';
+  ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+  ctx.fillText((hostileCount() + waveToSpawn) + ' left', VW / 2, 43);
+
+  // The attack button only shows up if auto-attack is switched off, so it never
+  // sits there implying you have to press it.
+  if (!TUNE.AUTO_ATTACK) {
+    ctx.fillStyle = fire.active ? 'rgba(255,216,77,0.3)' : 'rgba(255,255,255,0.09)';
+    ctx.beginPath(); ctx.arc(VW - 78, VH - 88, 46, 0, 6.283); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.font = '700 13px -apple-system, system-ui, sans-serif';
+    ctx.fillText(rk.ranged ? 'SHOOT' : 'HIT', VW - 78, VH - 83);
+  }
 
   // The big rank-up banner
   if (flashText && flashTime > 0) {
@@ -971,6 +1308,72 @@ function drawHUD() {
     ctx.font = '800 ' + Math.round(Math.min(46, VW / 11)) + 'px -apple-system, system-ui, sans-serif';
     ctx.fillText(flashText, VW / 2, VH * 0.34 + 50);
     ctx.globalAlpha = 1;
+  }
+
+  if (waveState === 'picking') drawCards();
+}
+
+// Break a string into lines that fit a given width, using whatever font is
+// currently set on the context.
+function wrapLines(text, maxW) {
+  const words = text.split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+    else cur = test;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// The between-waves choice. Three cards, tap one, it stacks forever.
+function drawCards() {
+  ctx.fillStyle = 'rgba(8,10,14,0.86)';
+  ctx.fillRect(0, 0, VW, VH);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#6ee787';
+  ctx.font = '800 ' + Math.round(Math.min(36, VW / 15)) + 'px -apple-system, system-ui, sans-serif';
+  ctx.fillText('WAVE ' + wave + ' CLEAR', VW / 2, VH * 0.2);
+  ctx.fillStyle = 'rgba(238,242,248,0.7)';
+  ctx.font = '600 15px -apple-system, system-ui, sans-serif';
+  ctx.fillText('Pick one to keep forever', VW / 2, VH * 0.2 + 28);
+
+  const n = cards.length;
+  const gap = 14;
+  const cw = Math.min(210, (VW - gap * (n + 1)) / n);
+  const ch = Math.min(160, Math.max(120, VH * 0.28));
+  const x0 = (VW - (n * cw + (n - 1) * gap)) / 2;
+  const y = VH * 0.42;
+
+  cardRects = [];
+  for (let i = 0; i < n; i++) {
+    const x = x0 + i * (cw + gap);
+    cardRects.push({ x: x, y: y, w: cw, h: ch });
+
+    ctx.fillStyle = '#1b2230';
+    ctx.fillRect(x, y, cw, ch);
+    ctx.strokeStyle = '#ffd84d';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, cw, ch);
+
+    const mid = x + cw / 2;
+    ctx.fillStyle = '#ffd84d';
+    ctx.font = '800 18px -apple-system, system-ui, sans-serif';
+    const nameLines = wrapLines(cards[i].name, cw - 22);
+    nameLines.forEach((ln, k) => ctx.fillText(ln, mid, y + 42 + k * 22));
+
+    ctx.fillStyle = 'rgba(238,242,248,0.78)';
+    ctx.font = '600 14px -apple-system, system-ui, sans-serif';
+    const blurbLines = wrapLines(cards[i].blurb, cw - 22);
+    const by = y + 42 + nameLines.length * 22 + 12;
+    blurbLines.forEach((ln, k) => ctx.fillText(ln, mid, by + k * 19));
+
+    ctx.fillStyle = 'rgba(255,216,77,0.7)';
+    ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText('TAP', mid, y + ch - 14);
   }
 }
 
@@ -1000,6 +1403,22 @@ function draw() {
     ctx.fillRect(Math.round(b.x - cam.x), Math.round(b.y - cam.y), b.s, b.s);
   }
   ctx.globalAlpha = 1;
+
+  // Hearts dropped by kills. They blink when they are about to vanish.
+  for (const h of hearts) {
+    if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) continue;
+    const hx = Math.round(h.x - cam.x);
+    const hy = Math.round(h.y - cam.y + Math.sin(h.bob) * 3);
+    ctx.fillStyle = '#e8544f';
+    ctx.beginPath();
+    ctx.arc(hx - 4, hy - 3, 4.6, 0, 6.283);
+    ctx.arc(hx + 4, hy - 3, 4.6, 0, 6.283);
+    ctx.moveTo(hx - 8.4, hy - 1.4);
+    ctx.lineTo(hx, hy + 8);
+    ctx.lineTo(hx + 8.4, hy - 1.4);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // Sort so characters lower on the screen draw in front
   const drawList = enemies.slice();
