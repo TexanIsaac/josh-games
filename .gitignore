@@ -1,5 +1,6 @@
 .server.log
 .fwrule.log
 .elevate-firewall.ps1
+.check.js
 .DS_Store
 Thumbs.db

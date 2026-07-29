@@ -5,57 +5,80 @@
     font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
     -webkit-user-select: none; user-select: none;
     -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
   }
   canvas { display: block; touch-action: none; }
+
+  /* Reading the safe area in JavaScript. The canvas fills the whole screen
+     including behind the camera notch and the home indicator, but the HUD has
+     to stay inside these insets or it ends up under them. This hidden element
+     is the only way to get the values out of CSS and into the game. */
+  #safeprobe {
+    position: fixed; top: 0; left: 0; width: 0; height: 0;
+    visibility: hidden; pointer-events: none;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
 
   #title {
     position: fixed; inset: 0; z-index: 10;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 0.9rem; text-align: center; padding: 2rem;
-    background: radial-gradient(circle at 50% 35%, #1b2430, #0d0f14 70%);
+    gap: 0.75rem; text-align: center;
+    padding: calc(2rem + env(safe-area-inset-top, 0px)) 1.5rem
+             calc(2rem + env(safe-area-inset-bottom, 0px));
+    background: radial-gradient(circle at 50% 34%, #1d2735, #0d0f14 72%);
   }
   #title h1 {
-    margin: 0; font-size: clamp(2.2rem, 9vw, 4.4rem);
-    font-weight: 800; letter-spacing: -0.02em; line-height: 0.95;
+    margin: 0; font-size: clamp(2.3rem, 10vw, 4.8rem);
+    font-weight: 800; letter-spacing: -0.025em; line-height: 0.92;
+    text-wrap: balance;
   }
   #title h1 span { color: #6ee787; display: block; }
-  #title p { margin: 0; opacity: 0.72; font-size: clamp(0.95rem, 3.4vw, 1.15rem); line-height: 1.55; max-width: 30rem; }
-  #tapline { margin-top: 0.6rem; font-weight: 700; font-size: 1.2rem; color: #ffd84d; }
-  #credit {
-    margin-top: 1.4rem; font-size: 0.95rem; letter-spacing: 0.14em;
-    text-transform: uppercase; color: #f5cd30; font-weight: 700;
+  #title p {
+    margin: 0; opacity: 0.74; line-height: 1.55; max-width: 32rem;
+    font-size: clamp(0.95rem, 3.4vw, 1.1rem);
   }
-  #credit span { display: block; margin-top: 0.3rem; font-size: 1.5rem;
-    letter-spacing: -0.01em; text-transform: none; color: #eef2f8; }
-  #byline {
-    position: fixed; right: 12px; top: 10px; z-index: 5;
-    font: 600 11px -apple-system, system-ui, sans-serif;
-    color: rgba(238,242,248,0.4); letter-spacing: 0.05em; pointer-events: none;
+  #tapline {
+    margin-top: 0.5rem; font-weight: 800; font-size: 1.25rem; color: #ffd84d;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
+  @media (prefers-reduced-motion: reduce) { #tapline { animation: none } }
+
+  #credit {
+    margin-top: 1.5rem; font-size: 0.8rem; letter-spacing: 0.18em;
+    text-transform: uppercase; color: rgba(238,242,248,0.45); font-weight: 700;
+  }
+  #credit span {
+    display: block; margin-top: 0.35rem; font-size: 1.45rem;
+    letter-spacing: -0.01em; text-transform: none; color: #f5cd30; font-weight: 800;
   }
 
-  /* A blank white screen is the worst thing that can happen to a kid mid-build,
-     so any crash gets caught and explained in plain language instead. */
   #oops {
     position: fixed; inset: 0; z-index: 99; display: none;
-    padding: 2rem; background: #1a1113; color: #ffd9d9;
+    padding: calc(2rem + env(safe-area-inset-top, 0px)) 1.5rem;
+    background: #1a1113; color: #ffd9d9;
     font: 0.95rem/1.65 ui-monospace, monospace; overflow: auto;
   }
   #oops h2 { color: #ff8f8f; font-family: -apple-system, system-ui, sans-serif; margin: 0 0 0.5rem; }
   #oops code { color: #ffe08a; }
 </style>
 
+<div id="safeprobe"></div>
+
 <div id="title">
   <h1>Zombie<span>Noobs</span></h1>
   <p>You are a noob with nothing but your fists. Punch zombies to rank up.
      Get bitten too many times and you join them.</p>
-  <p style="opacity:0.55;font-size:0.95rem">Just steer. You swing on your own
-     when something is close enough.</p>
+  <p style="opacity:0.5;font-size:0.95rem">Just steer. You swing on your own
+     whenever something gets close.</p>
   <div id="tapline">Tap to play</div>
   <div id="credit">A game by<span>Josh Alexander</span></div>
 </div>
 
 <canvas id="game"></canvas>
-<div id="byline">Zombie Noobs &nbsp;|&nbsp; by Josh Alexander</div>
 
 <div id="oops">
   <h2>The game hit a snag</h2>
@@ -97,67 +120,210 @@
 //  The whole game is his idea: noobs with fists, zombies that bite and infect
 //  you, and the four ranks you earn at 7, 22 and 37 kills.
 //
-//  HOW TO CHANGE THE GAME:
-//  Everything you are likely to want to tweak lives in the TUNE block and the
-//  MAP block directly below. Change a number, save, then refresh on the iPad.
-//  You cannot break anything permanently. If you do break it, the game will
-//  tell you what happened instead of just going blank.
+//  HOW TO CHANGE IT
+//  Everything worth changing is in the TUNE, MAP and UPGRADES blocks below.
+//  Change something, save, refresh. You cannot break it permanently, and if you
+//  do break it the game tells you what happened instead of going blank.
 // ===========================================================================
 
+
 // ---------------------------------------------------------------------------
-//  TUNE  --  Joshua's numbers. Change these freely.
+//  SOUND
+//  ZzFX - Zuper Zmall Zound Zynth - Micro Edition
+//  MIT License - Copyright 2019 Frank Force
+//  https://github.com/KilledByAPixel/ZzFX
+//
+//  Every sound in this game is built out of numbers by this function. There are
+//  no sound files to download, which is why the whole game is one page.
+//
+//  Changed from the original in two small ways: the audio is created on your
+//  first tap instead of when the page loads, because iPads refuse to make any
+//  noise until you touch the screen, and it checks the mute button.
+// ---------------------------------------------------------------------------
+const zzfxV = .28;
+let zzfxX = null;
+let muted = false;
+
+function audioStart() {
+  if (!zzfxX) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try { zzfxX = new AC(); } catch (err) { return false; }
+  }
+  if (zzfxX.state !== 'running' && zzfxX.resume) zzfxX.resume();
+  return true;
+}
+
+const zzfx = (
+  volume = 1, randomness = .05, frequency = 220, attack = 0, sustain = 0,
+  release = .1, shape = 0, shapeCurve = 1, slide = 0, deltaSlide = 0,
+  pitchJump = 0, pitchJumpTime = 0, repeatTime = 0, noise = 0, modulation = 0,
+  bitCrush = 0, delay = 0, sustainVolume = 1, decay = 0, tremolo = 0, filter = 0
+) => {
+  if (!zzfxX || muted) return;
+  const sampleRate = 44100;
+  let PI2 = Math.PI * 2, abs = Math.abs, sign = v => v < 0 ? -1 : 1,
+    startSlide = slide *= 500 * PI2 / sampleRate / sampleRate,
+    startFrequency = frequency *=
+      (1 + randomness * 2 * Math.random() - randomness) * PI2 / sampleRate,
+    modOffset = 0, repeat = 0, crush = 0, jump = 1,
+    length, b = [], t = 0, i = 0, s = 0, f,
+    source = zzfxX.createBufferSource(), buffer,
+    quality = 2, w = PI2 * abs(filter) * 2 / sampleRate,
+    cos = Math.cos(w), alpha = Math.sin(w) / 2 / quality,
+    a0 = 1 + alpha, a1 = -2 * cos / a0, a2 = (1 - alpha) / a0,
+    b0 = (1 + sign(filter) * cos) / 2 / a0,
+    b1 = -(sign(filter) + cos) / a0, b2 = b0,
+    x2 = 0, x1 = 0, y2 = 0, y1 = 0;
+
+  const minAttack = 9;
+  attack = attack * sampleRate || minAttack;
+  decay *= sampleRate; sustain *= sampleRate; release *= sampleRate;
+  delay *= sampleRate;
+  deltaSlide *= 500 * PI2 / sampleRate ** 3;
+  modulation *= PI2 / sampleRate;
+  pitchJump *= PI2 / sampleRate;
+  pitchJumpTime *= sampleRate;
+  repeatTime = repeatTime * sampleRate | 0;
+  volume *= zzfxV;
+
+  for (length = attack + decay + sustain + release + delay | 0;
+       i < length; b[i++] = s * volume) {
+    if (!(++crush % (bitCrush * 100 | 0))) {
+      s = shape ? shape > 1 ? shape > 2 ? shape > 3 ? shape > 4 ?
+        (t / PI2 % 1 < shapeCurve / 2) * 2 - 1 :
+        Math.sin(t ** 3) :
+        Math.max(Math.min(Math.tan(t), 1), -1) :
+        1 - (2 * t / PI2 % 2 + 2) % 2 :
+        1 - 4 * abs(Math.round(t / PI2) - t / PI2) :
+        Math.sin(t);
+
+      s = (repeatTime ?
+            1 - tremolo + tremolo * Math.sin(PI2 * i / repeatTime) : 1) *
+        (shape > 4 ? s : sign(s) * abs(s) ** shapeCurve) *
+        (i < attack ? i / attack :
+         i < attack + decay ? 1 - ((i - attack) / decay) * (1 - sustainVolume) :
+         i < attack + decay + sustain ? sustainVolume :
+         i < length - delay ? (length - i - delay) / release * sustainVolume : 0);
+
+      s = delay ? s / 2 + (delay > i ? 0 :
+        (i < length - delay ? 1 : (length - i) / delay) *
+        b[i - delay | 0] / 2 / volume) : s;
+
+      if (filter) s = y1 = b2 * x2 + b1 * (x2 = x1) + b0 * (x1 = s) - a2 * y2 - a1 * (y2 = y1);
+    }
+    f = (frequency += slide += deltaSlide) * Math.cos(modulation * modOffset++);
+    t += f + f * noise * Math.sin(i ** 5);
+    if (jump && ++jump > pitchJumpTime) {
+      frequency += pitchJump; startFrequency += pitchJump; jump = 0;
+    }
+    if (repeatTime && !(++repeat % repeatTime)) {
+      frequency = startFrequency; slide = startSlide; jump ||= 1;
+    }
+  }
+
+  buffer = zzfxX.createBuffer(1, b.length, sampleRate);
+  buffer.getChannelData(0).set(b);
+  source.buffer = buffer;
+  source.connect(zzfxX.destination);
+  source.start();
+  return source;
+};
+
+// The Heart and Game Over settings come straight from the ZzFX examples. The
+// rest are built from the same 21 numbers, tuned for this game.
+const SFX = {
+  punch:    () => zzfx(1.1, .05, 92,  .01, .02, .13, 4, 1.2, -4,  0, 0, 0, 0, 1.2, 0, 0,  0,  .5, .03),
+  knife:    () => zzfx(.85, .06, 680, .01, .02, .09, 2, 1.8, -40, 0, 0, 0, 0, .6,  0, 0,  0,  .4),
+  gun:      () => zzfx(1.3, .05, 330, .01, .02, .16, 4, 1.6, -12, 0, 0, 0, 0, 1.5, 0, .1, 0,  .4, .04),
+  acid:     () => zzfx(.85, .12, 175, .02, .06, .2,  2, 1.4, 3,   0, 0, 0, 0, .4,  0, 0,  .05, .7, .06),
+  smash:    () => zzfx(1.5, .05, 58,  .02, .05, .28, 4, 1.4, -3,  0, 0, 0, 0, 1.8, 0, .15, .05, .6, .08),
+  hurt:     () => zzfx(1,   .06, 175, .01, .03, .14, 2, 1.9, -8),
+  bite:     () => zzfx(1.1, .1,  108, .01, .04, .18, 4, 1.3, -5,  0, 0, 0, 0, 1,   0, 0,  0,  .5, .04),
+  die:      () => zzfx(1,   .06, 290, .02, .06, .24, 1, 1.5, -9,  0, 0, 0, 0, .4,  0, 0,  0,  .5, .05),
+  heart:    () => zzfx(1,   .05, 537, .02, .02, .22, 1, 1.59, -6.98, 4.97),
+  gameover: () => zzfx(1,   .05, 925, .04, .3,  .6,  1, .3,  0,  6.27, -184, .09, .17),
+  rankup:   () => { [0, 90, 180, 300].forEach((ms, k) =>
+                      setTimeout(() => zzfx(.9, .02, 420 + k * 190, .01, .07, .16, 1, 1.4), ms)); },
+  waveclear:() => { [0, 110, 220].forEach((ms, k) =>
+                      setTimeout(() => zzfx(.85, .02, 520 + k * 210, .01, .09, .2, 1, 1.2), ms)); },
+  pick:     () => zzfx(.8, .03, 880, .01, .05, .13, 1, 1.6, 0, 0, 320, .04),
+  turn:     () => zzfx(1.2, .1, 430, .03, .12, .38, 2, 1.2, -6, 0, -130, .1, 0, .35),
+  boss:     () => zzfx(1.6, .05, 68, .06, .22, .5, 4, 1.2, 0, 0, 0, 0, .2, 1.4, 0, .2, .1, .7, .1),
+  ui:       () => zzfx(.5, .02, 620, .01, .02, .06, 1, 1.4),
+};
+
+
+// ---------------------------------------------------------------------------
+//  TUNE  --  Josh's numbers. Change these freely.
 // ---------------------------------------------------------------------------
 const TUNE = {
 
-  // How many kills to reach each rank. These are Joshua's original numbers.
+  // How many kills to reach each rank. These are Josh's original numbers.
   KILLS_FOR_KNIFER: 7,
   KILLS_FOR_GUNNER: 22,
   KILLS_FOR_RIOTER: 37,
 
   // How tough you are.
   PLAYER_HEALTH: 100,
-  PLAYER_SPEED: 205,          // pixels per second
-  HEAL_PER_SECOND: 4,         // slow regen so you are never stuck at 1 hp
-  HEAL_DELAY: 2.6,            // seconds after being hit before healing starts
+  PLAYER_SPEED: 205,
+  HEAL_PER_SECOND: 4,
+  HEAL_DELAY: 2.6,
 
-  // Getting infected. Each bite adds to a meter. Fill it and you turn zombie.
-  BITE_PER_HIT: 26,           // lower number = takes more bites to turn
-  BITE_COOLDOWN_DRAIN: 9,     // how fast the meter drains per second
+  // Getting infected. Each bite fills a meter. Fill it and you turn zombie.
+  BITE_PER_HIT: 26,
+  BITE_COOLDOWN_DRAIN: 9,
 
-  // You swing by yourself whenever an enemy is close enough, so all you have to
-  // do is steer. Set this to false if you would rather press the button.
+  // You swing by yourself whenever an enemy is close, so all you do is steer.
+  // Set this to false if you would rather press a button.
   AUTO_ATTACK: true,
 
   // The enemies.
   ENEMY_HEALTH: 60,
   ENEMY_SPEED: 118,
-  ENEMY_MAX_ON_SCREEN: 26,
-  SPAWN_EVERY: 1.5,           // seconds between spawns inside a wave
-  SPAWN_SPEEDUP: 0.986,       // spawns get slightly faster each time
+  ENEMY_MAX_ON_SCREEN: 28,
+  SPAWN_EVERY: 1.4,
+  SPAWN_SPEEDUP: 0.986,
 
-  // Waves. Clear one and you get to pick an upgrade before the next starts.
-  WAVE_FIRST_COUNT: 5,        // how many enemies in wave 1
-  WAVE_GROWTH: 2,             // how many more each wave after that
-  WAVE_TOUGHER: 0.09,         // enemies gain this much health per wave
-  UPGRADE_CHOICES: 3,         // how many cards you choose from
+  // Waves. Clear one and you pick an upgrade before the next starts.
+  WAVE_FIRST_COUNT: 5,
+  WAVE_GROWTH: 2,
+  UPGRADE_CHOICES: 3,
 
-  // Hearts that zombies drop.
-  HEART_CHANCE: 0.16,         // 0.16 means about 1 in 6 kills drops one
+  // How much tougher enemies get each wave, and it compounds. Your upgrades
+  // multiply together too, so if this only added a flat amount each wave you
+  // would out-scale the enemies completely and everything would melt on contact.
+  WAVE_TOUGHER: 0.13,
+
+  // Every this many waves, one big one shows up.
+  BOSS_EVERY: 5,
+  BOSS_HEALTH: 9,             // times a normal enemy
+  BOSS_ARMOR: 0.3,            // shrugs off this much of every hit
+  BOSS_SIZE: 1.9,
+  BOSS_SPEED: 0.62,
+
+  // Hearts that drop from kills.
+  HEART_CHANCE: 0.16,
   HEART_HEAL: 28,
+
+  // Kills close together build a streak, and a streak hits harder.
+  STREAK_WINDOW: 2.6,         // seconds before a streak resets
+  STREAK_BONUS: 0.035,        // extra damage per streak step
 
   // Feel. Turn these up for more chaos.
   SCREEN_SHAKE: 1.0,
   BLOOD: 1.0,
-  HITSTOP: 1.0,               // tiny freeze on every hit. Set to 0 to turn off.
+  HITSTOP: 1.0,
 };
 
+
 // ---------------------------------------------------------------------------
-//  MAP  --  Draw the level with keyboard characters.
+//  MAP  --  draw the level with keyboard characters.
 //    #  wall            .  floor
 //    C  crate (cover)   P  where you start
 //    Z  enemy spawn point
-//  Rows do not have to be the same length. The game squares it up for you and
-//  always seals the outside edge, so you cannot accidentally make a hole.
+//  Rows do not have to be the same length. The game squares it up, seals the
+//  outside edge, and fills in any room that got walled off by accident.
 // ---------------------------------------------------------------------------
 const MAP = `
 ############################################
@@ -186,128 +352,252 @@ const MAP = `
 ############################################
 `;
 
+
 // ---------------------------------------------------------------------------
-//  RANKS  --  four on each side, mirrored, exactly as Joshua described.
+//  RANKS  --  four on each side, mirrored, exactly as Josh described.
 // ---------------------------------------------------------------------------
 const NOOB_RANKS = [
-  { name: 'Noob',        weapon: 'fists',       at: 0,                      reach: 44, dmg: 22, rate: 0.34, armor: 0,    ranged: false },
-  { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER,  reach: 60, dmg: 46, rate: 0.27, armor: 0,    ranged: false },
-  { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER,  reach: 520, dmg: 58, rate: 0.30, armor: 0,    ranged: true  },
-  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER,  reach: 66, dmg: 44, rate: 0.30, armor: 0.45, ranged: false },
+  { name: 'Noob',        weapon: 'fists',       at: 0,                     reach: 44,  dmg: 22, rate: .34, armor: 0,   ranged: false },
+  { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER, reach: 60,  dmg: 46, rate: .27, armor: 0,   ranged: false },
+  { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER, reach: 520, dmg: 58, rate: .30, armor: 0,   ranged: true  },
+  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER, reach: 66,  dmg: 44, rate: .30, armor: .45, ranged: false },
 ];
 
-// The zombie side gets the same shape: basic melee, better melee, ranged, tank.
+// The zombie side gets the same shape: melee, better melee, ranged, tank.
 const ZOMBIE_RANKS = [
-  { name: 'Zombie',         weapon: 'bite',   at: 0,                      reach: 42, dmg: 20, rate: 0.46, armor: 0,    ranged: false },
-  { name: 'Zombie Ripper',  weapon: 'claws',  at: TUNE.KILLS_FOR_KNIFER,  reach: 56, dmg: 40, rate: 0.30, armor: 0,    ranged: false },
-  { name: 'Zombie Spitter', weapon: 'acid',   at: TUNE.KILLS_FOR_GUNNER,  reach: 470, dmg: 44, rate: 0.52, armor: 0,    ranged: true  },
-  { name: 'Zombie Brute',   weapon: 'smash',  at: TUNE.KILLS_FOR_RIOTER,  reach: 68, dmg: 52, rate: 0.42, armor: 0.45, ranged: false },
+  { name: 'Zombie',         weapon: 'bite',  at: 0,                     reach: 42,  dmg: 20, rate: .46, armor: 0,   ranged: false },
+  { name: 'Zombie Ripper',  weapon: 'claws', at: TUNE.KILLS_FOR_KNIFER, reach: 56,  dmg: 40, rate: .30, armor: 0,   ranged: false },
+  { name: 'Zombie Spitter', weapon: 'acid',  at: TUNE.KILLS_FOR_GUNNER, reach: 470, dmg: 44, rate: .52, armor: 0,   ranged: true  },
+  { name: 'Zombie Brute',   weapon: 'smash', at: TUNE.KILLS_FOR_RIOTER, reach: 68,  dmg: 52, rate: .42, armor: .45, ranged: false },
 ];
+
 
 // ---------------------------------------------------------------------------
-//  UPGRADES  --  clear a wave, then pick one of three cards.
-//  Every pick stacks forever, so a long run turns you into a monster. That
-//  choice between waves is the thing that makes you want one more go.
-//  Add your own by copying a line. "mul" multiplies, "add" adds.
+//  ENEMY TYPES  --  not every zombie should be the same one.
+//  "weight" is how often it shows up. Bigger number, more common.
+// ---------------------------------------------------------------------------
+const ENEMY_TYPES = [
+  { key: 'walker', label: 'Walker', hp: 1,   speed: 1,    size: 1,    weight: 68 },
+  { key: 'runner', label: 'Runner', hp: .55, speed: 1.75, size: .84,  weight: 24 },
+  { key: 'brute',  label: 'Brute',  hp: 2.7, speed: .68,  size: 1.34, weight: 8  },
+];
+const TYPE_WEIGHT_TOTAL = ENEMY_TYPES.reduce((s, t) => s + t.weight, 0);
+
+function rollEnemyType() {
+  let r = Math.random() * TYPE_WEIGHT_TOTAL;
+  for (const t of ENEMY_TYPES) { r -= t.weight; if (r <= 0) return t; }
+  return ENEMY_TYPES[0];
+}
+
+
+// ---------------------------------------------------------------------------
+//  UPGRADES  --  clear a wave, pick one of three. Every pick stacks forever.
+//  Add your own by copying a line.
 // ---------------------------------------------------------------------------
 const UPGRADES = [
-  { name: 'Stronger Hits',   blurb: '+30% damage',        apply: u => u.dmg   *= 1.30 },
-  { name: 'Faster Feet',     blurb: '+14% speed',         apply: u => u.speed *= 1.14 },
-  { name: 'Quicker Swings',  blurb: 'attack 15% faster',  apply: u => u.rate  *= 0.85 },
-  { name: 'Longer Reach',    blurb: '+16% reach',         apply: u => u.reach *= 1.16 },
-  { name: 'Tougher',         blurb: '+30 max health',     apply: u => u.hpAdd += 30   },
-  { name: 'Thicker Skin',    blurb: '+10% armor',         apply: u => u.armorAdd += 0.10 },
-  { name: 'Strong Stomach',  blurb: 'bites infect 25% less', apply: u => u.biteRes *= 0.75 },
-  { name: 'Fast Healer',     blurb: 'heal twice as fast', apply: u => u.heal  *= 2.0  },
+  { name: 'Stronger Hits',  blurb: '+30% damage',           apply: u => u.dmg   *= 1.30 },
+  { name: 'Heavy Hands',    blurb: '+55% damage, 10% slower', apply: u => { u.dmg *= 1.55; u.speed *= .90; } },
+  { name: 'Faster Feet',    blurb: '+14% speed',            apply: u => u.speed *= 1.14 },
+  { name: 'Track Star',     blurb: '+26% speed',            apply: u => u.speed *= 1.26 },
+  { name: 'Quicker Swings', blurb: 'attack 15% faster',     apply: u => u.rate  *= .85  },
+  { name: 'Blur',           blurb: 'attack 28% faster',     apply: u => u.rate  *= .72  },
+  { name: 'Longer Reach',   blurb: '+16% reach',            apply: u => u.reach *= 1.16 },
+  { name: 'Tougher',        blurb: '+30 max health',        apply: u => u.hpAdd += 30   },
+  { name: 'Big Heart',      blurb: '+60 max health',        apply: u => u.hpAdd += 60   },
+  { name: 'Thicker Skin',   blurb: '+10% armor',            apply: u => u.armorAdd += .10 },
+  { name: 'Strong Stomach', blurb: 'bites infect 25% less', apply: u => u.biteRes *= .75 },
+  { name: 'Immune-ish',     blurb: 'bites infect 45% less', apply: u => u.biteRes *= .55 },
+  { name: 'Fast Healer',    blurb: 'heal twice as fast',    apply: u => u.heal  *= 2    },
+  { name: 'Lucky Drops',    blurb: 'twice as many hearts',  apply: u => u.luck  *= 2    },
+  { name: 'Vampire',        blurb: 'heal 4 on every kill',  apply: u => u.lifesteal += 4 },
 ];
 
-// A player with no upgrades yet. Enemies always use this.
 function freshUpgrades() {
-  return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0, biteRes: 1, heal: 1 };
+  return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0,
+           biteRes: 1, heal: 1, luck: 1, lifesteal: 0 };
 }
 const NO_UP = freshUpgrades();
 
+
 // ---------------------------------------------------------------------------
-//  Crash catcher
+//  Crash catcher. A blank white screen is the worst thing that can happen
+//  mid-build, so anything that goes wrong gets explained in plain words.
 // ---------------------------------------------------------------------------
 window.onerror = function (msg, src, line, col) {
-  document.getElementById('oops').style.display = 'block';
-  document.getElementById('oopsmsg').textContent = msg + '  (line ' + line + ', column ' + col + ')';
+  const el = document.getElementById('oops');
+  if (el) {
+    el.style.display = 'block';
+    document.getElementById('oopsmsg').textContent =
+      msg + '  (line ' + line + ', column ' + col + ')';
+  }
   return true;
 };
 
+
 // ---------------------------------------------------------------------------
-//  Canvas, sized for a retina screen so it is sharp on the iPad
+//  Canvas, safe area, and where the buttons sit
 // ---------------------------------------------------------------------------
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const probe = document.getElementById('safeprobe');
 let VW = 0, VH = 0;
+
+// Margins that keep the HUD clear of the notch and the home indicator.
+const PAD = { l: 14, t: 14, r: 14, b: 14 };
+const btn = {};
+let miniRect = { x: 0, y: 0, w: 0, h: 0 };
+
+function readInsets() {
+  if (!probe) return { t: 0, r: 0, b: 0, l: 0 };
+  const cs = getComputedStyle(probe);
+  return {
+    t: parseFloat(cs.paddingTop) || 0,
+    r: parseFloat(cs.paddingRight) || 0,
+    b: parseFloat(cs.paddingBottom) || 0,
+    l: parseFloat(cs.paddingLeft) || 0,
+  };
+}
+
+function layout() {
+  const ins = readInsets();
+  PAD.l = 14 + ins.l; PAD.t = 14 + ins.t;
+  PAD.r = 14 + ins.r; PAD.b = 14 + ins.b;
+
+  // Buttons are 46px so they clear the 44px minimum tap target on a tablet.
+  const s = 46, g = 9;
+  const top = PAD.t;
+  btn.pause = { x: VW - PAD.r - s,                 y: top, w: s, h: s, key: 'pause' };
+  btn.mute  = { x: VW - PAD.r - s * 2 - g,         y: top, w: s, h: s, key: 'mute'  };
+  btn.full  = { x: VW - PAD.r - s * 3 - g * 2,     y: top, w: s, h: s, key: 'full'  };
+
+  // Minimap tucks in under the buttons, top right.
+  const mw = Math.min(150, Math.max(96, VW * 0.17));
+  const mh = mw * (GH / GW);
+  miniRect = { x: VW - PAD.r - mw, y: top + s + 10, w: mw, h: mh };
+
+  // The hit button lives bottom right where a thumb naturally rests. Auto-attack
+  // means you never have to press it, but it is there for anyone who wants to,
+  // and it is the only way to attack if AUTO_ATTACK gets switched off.
+  const hr = 52;
+  btn.hit = { x: VW - PAD.r - hr * 2, y: VH - PAD.b - hr * 2, w: hr * 2, h: hr * 2,
+              cx: VW - PAD.r - hr, cy: VH - PAD.b - hr, r: hr };
+}
+
+// ---------------------------------------------------------------------------
+//  Making it look like Roblox
+//
+//  The thing that makes a Roblox screenshot instantly recognisable is studs:
+//  the little round bumps on top of every brick, and the grey studded baseplate
+//  underneath everything. So every tile is a brick with studs on top, and every
+//  block gets a lighter top face and a darker side so it reads as solid.
+//
+//  Drawing a few thousand studs one at a time every frame would crawl on an
+//  iPad, so each kind of tile is painted once into its own small offscreen
+//  canvas and then stamped down. The studs end up free.
+// ---------------------------------------------------------------------------
+
+// Lighten (positive) or darken (negative) a #rrggbb colour.
+function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const cl = v => Math.max(0, Math.min(255, Math.round(v)));
+  const r = cl(((n >> 16) & 255) + amt);
+  const g = cl(((n >> 8) & 255) + amt);
+  const b = cl((n & 255) + amt);
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+// Four studs on a tile, two by two, each a disc with a bright top and a shaded
+// underside so it looks like a cylinder standing up.
+function paintStuds(g, base) {
+  const spots = [[10, 10], [30, 10], [10, 30], [30, 30]];
+  for (const s of spots) {
+    g.fillStyle = shade(base, -26);
+    g.beginPath(); g.arc(s[0], s[1] + 1.2, 7, 0, 6.283); g.fill();
+    g.fillStyle = shade(base, 16);
+    g.beginPath(); g.arc(s[0], s[1], 7, 0, 6.283); g.fill();
+    g.fillStyle = shade(base, 34);
+    g.beginPath(); g.arc(s[0] - 1, s[1] - 1.4, 4.6, 0, 6.283); g.fill();
+  }
+}
+
+let tileFloorA = null, tileFloorB = null, tileWall = null, tileCrate = null;
+let tilesDpr = 0;
+
+function makeTile(dpr, paint) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.ceil(TILE * dpr));
+  c.height = Math.max(1, Math.ceil(TILE * dpr));
+  const g = c.getContext('2d');
+  if (!g) return null;
+  g.scale(dpr, dpr);
+  paint(g);
+  return c;
+}
+
+function buildTiles(dpr) {
+  // The baseplate. Two shades checkered so the floor has some texture.
+  const floorA = '#4c5a4a', floorB = '#47543f';
+  tileFloorA = makeTile(dpr, g => {
+    g.fillStyle = floorA; g.fillRect(0, 0, TILE, TILE);
+    paintStuds(g, floorA);
+  });
+  tileFloorB = makeTile(dpr, g => {
+    g.fillStyle = floorB; g.fillRect(0, 0, TILE, TILE);
+    paintStuds(g, floorB);
+  });
+
+  // A grey brick standing taller than the floor, so it gets a bright top face
+  // and a dark front edge to sell the height.
+  const wall = '#9aa3ae';
+  tileWall = makeTile(dpr, g => {
+    g.fillStyle = shade(wall, -46); g.fillRect(0, 0, TILE, TILE);
+    g.fillStyle = wall; g.fillRect(0, 0, TILE, TILE - 6);
+    g.fillStyle = shade(wall, 20); g.fillRect(0, 0, TILE, 3);
+    paintStuds(g, wall);
+    g.fillStyle = shade(wall, -60); g.fillRect(0, TILE - 6, TILE, 2);
+  });
+
+  // A wooden brick for cover.
+  const crate = '#b07a3c';
+  tileCrate = makeTile(dpr, g => {
+    g.fillStyle = shade(crate, -50); g.fillRect(0, 0, TILE, TILE);
+    g.fillStyle = crate; g.fillRect(1, 1, TILE - 2, TILE - 6);
+    g.fillStyle = shade(crate, 22); g.fillRect(1, 1, TILE - 2, 3);
+    paintStuds(g, crate);
+    g.fillStyle = shade(crate, -62); g.fillRect(1, TILE - 6, TILE - 2, 2);
+  });
+
+  tilesDpr = dpr;
+}
+
+// A blocky part with a lit top face and a shaded right side. Every bit of every
+// character is built out of these, which is what makes them look moulded.
+function part(x, y, w, h, color) {
+  ctx.fillStyle = shade(color, -34);
+  ctx.fillRect(x + w - 2, y, 2, h);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w - 2, h);
+  ctx.fillStyle = shade(color, 26);
+  ctx.fillRect(x, y, w - 2, 2.4);
+}
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   VW = window.innerWidth;
   VH = window.innerHeight;
+  if (dpr !== tilesDpr) buildTiles(dpr);
   canvas.width = Math.floor(VW * dpr);
   canvas.height = Math.floor(VH * dpr);
   canvas.style.width = VW + 'px';
   canvas.style.height = VH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = false;
+  layout();
 }
-window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 120));
-resize();
+
 
 // ---------------------------------------------------------------------------
-//  Sound, made from scratch so there are no sound files to keep track of
-// ---------------------------------------------------------------------------
-let AC = null;
-function initAudio() {
-  const C = window.AudioContext || window.webkitAudioContext;
-  if (C && !AC) { AC = new C(); }
-  if (AC && AC.state !== 'running') { AC.resume(); }
-}
-
-function beep(freq, dur, type, vol) {
-  if (!AC) return;
-  const o = AC.createOscillator();
-  const g = AC.createGain();
-  o.type = type || 'square';
-  o.frequency.value = freq;
-  g.gain.setValueAtTime(vol || 0.14, AC.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g); g.connect(AC.destination);
-  o.start(); o.stop(AC.currentTime + dur);
-}
-
-function noise(dur, vol, filterHz) {
-  if (!AC) return;
-  const n = Math.floor(AC.sampleRate * dur);
-  const buf = AC.createBuffer(1, n, AC.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) { d[i] = (Math.random() * 2 - 1) * (1 - i / n); }
-  const s = AC.createBufferSource(); s.buffer = buf;
-  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filterHz || 1400;
-  const g = AC.createGain(); g.gain.value = vol || 0.2;
-  s.connect(f); f.connect(g); g.connect(AC.destination);
-  s.start();
-}
-
-const SFX = {
-  punch:   () => noise(0.09, 0.22, 900),
-  knife:   () => { noise(0.07, 0.18, 4200); beep(880, 0.05, 'sawtooth', 0.05); },
-  gun:     () => { noise(0.11, 0.3, 2600); beep(160, 0.09, 'square', 0.1); },
-  acid:    () => beep(220, 0.16, 'sawtooth', 0.09),
-  smash:   () => { noise(0.16, 0.3, 420); beep(70, 0.16, 'square', 0.12); },
-  hurt:    () => beep(150, 0.14, 'sawtooth', 0.14),
-  bite:    () => { beep(95, 0.17, 'sawtooth', 0.16); noise(0.1, 0.16, 700); },
-  die:     () => { beep(300, 0.08, 'square', 0.1); setTimeout(() => beep(180, 0.14, 'square', 0.09), 70); },
-  rankup:  () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.13), i * 85)); },
-  turn:    () => { [400, 320, 250, 180].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'sawtooth', 0.14), i * 95)); },
-};
-
-// ---------------------------------------------------------------------------
-//  The level, loaded from the MAP text above
+//  The level, loaded from the MAP text
 // ---------------------------------------------------------------------------
 const TILE = 40;
 const WALL = 1, CRATE = 2;
@@ -324,7 +614,6 @@ function loadMap() {
     const row = [];
     for (let x = 0; x < GW; x++) {
       const ch = rows[y][x] || '.';
-      // Always seal the border, no matter what got typed.
       const edge = (x === 0 || y === 0 || x === GW - 1 || y === GH - 1);
       if (edge) { row.push(WALL); continue; }
       if (ch === '#') { row.push(WALL); continue; }
@@ -341,10 +630,10 @@ function loadMap() {
   sealPockets();
 }
 
-// Any floor tile with no walkable path back to where you start is a sealed
-// pocket. Nothing could ever get in or out of one, so they get filled in with
-// wall. This also means the map can be redrawn without accidentally making a
-// room that traps enemies and leaves a wave impossible to finish.
+// Any floor tile with no walkable path back to the start is a sealed pocket.
+// Nothing could get in or out, so it gets filled in. This means the map can be
+// redrawn without accidentally making a room that traps enemies and leaves a
+// wave impossible to finish.
 function sealPockets() {
   const size = GW * GH;
   const seen = new Uint8Array(size);
@@ -366,8 +655,7 @@ function sealPockets() {
       if (grid[ny][nx] !== 0) continue;
       const ni = ny * GW + nx;
       if (seen[ni]) continue;
-      seen[ni] = 1;
-      q[tail++] = ni;
+      seen[ni] = 1; q[tail++] = ni;
     }
   }
 
@@ -377,8 +665,6 @@ function sealPockets() {
       if (grid[y][x] === 0 && !seen[y * GW + x]) { grid[y][x] = WALL; filled++; }
     }
   }
-
-  // A spawn point inside a pocket we just filled is no longer usable.
   spawnPoints = spawnPoints.filter(
     p => grid[Math.floor(p.y / TILE)][Math.floor(p.x / TILE)] === 0);
   if (spawnPoints.length === 0) spawnPoints.push({ x: playerStart.x, y: playerStart.y });
@@ -386,6 +672,9 @@ function sealPockets() {
 }
 loadMap();
 const WORLD_W = GW * TILE, WORLD_H = GH * TILE;
+resize();
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 140));
 
 function solidAt(px, py) {
   const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
@@ -398,149 +687,20 @@ function blocked(x, y, r) {
       || solidAt(x - r, y + r) || solidAt(x + r, y + r);
 }
 
-// Move one axis at a time so you slide along walls instead of sticking to them.
+// One axis at a time, so you slide along a wall instead of sticking to it.
 function moveEntity(e, dx, dy) {
   if (dx !== 0 && !blocked(e.x + dx, e.y, e.r)) e.x += dx;
   if (dy !== 0 && !blocked(e.x, e.y + dy, e.r)) e.y += dy;
 }
 
-// ---------------------------------------------------------------------------
-//  Game state
-// ---------------------------------------------------------------------------
-const NOOB = 'noob', ZOMB = 'zombie';
-let player, enemies, shots, bits, popups, hearts;
-let spawnTimer, spawnGap, running, best;
-
-// Wave state. 'fighting' means enemies are still coming or still alive.
-// 'picking' freezes the action while the three upgrade cards are on screen.
-let wave, waveState, waveToSpawn, cards, cardRects;
-let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
-
-// Screen shake, aimed. Random jitter in every direction reads as a glitch or a
-// loose cable. Shoving the camera along the direction of the blow, plus a sliver
-// of rotation, reads as force. That difference is most of "game feel".
-const shake = { mag: 0, dx: 0, dy: 0, rot: 0 };
-
-best = Number(localStorage.getItem('zn_best') || 0);
-
-function rankFor(side, kills) {
-  const table = side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
-  let idx = 0;
-  for (let i = 0; i < table.length; i++) { if (kills >= table[i].at) idx = i; }
-  return idx;
-}
-
-function newPlayer() {
-  return {
-    x: playerStart.x, y: playerStart.y, r: 13,
-    side: NOOB, kills: { noob: 0, zombie: 0 },
-    rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
-    face: 1, aimx: 1, aimy: 0, wob: 0,
-    cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
-    up: freshUpgrades(),
-  };
-}
-
-function reset() {
-  player = newPlayer();
-  enemies = []; shots = []; bits = []; popups = []; hearts = [];
-  wave = 0; waveState = 'fighting'; waveToSpawn = 0; cards = []; cardRects = [];
-  startWave(1);
-  spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
-  shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
-  flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
-  running = true;
-}
-
-function myRanks() { return player.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS; }
-function myKills() { return player.kills[player.side]; }
-function enemySide() { return player.side === NOOB ? ZOMB : NOOB; }
-
-// Anyone on the other side from you, still standing.
-function hostileCount() {
-  let n = 0;
-  for (const e of enemies) { if (e.hp > 0 && e.side !== player.side) n++; }
-  return n;
-}
-
-// ---------------------------------------------------------------------------
-//  Waves and upgrades
-// ---------------------------------------------------------------------------
-function waveCount(n) { return TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH; }
-
-function startWave(n) {
-  wave = n;
-  waveState = 'fighting';
-  waveToSpawn = waveCount(n);
-  spawnTimer = 0.5;
-  spawnGap = TUNE.SPAWN_EVERY;
-  announce('WAVE ' + n);
-}
-
-function finishWave() {
-  waveState = 'picking';
-  // Deal three different cards at random out of the list.
-  const pool = UPGRADES.slice();
-  cards = [];
-  const want = Math.min(TUNE.UPGRADE_CHOICES, pool.length);
-  for (let i = 0; i < want; i++) {
-    cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
-  }
-  cardRects = [];
-  SFX.rankup();
-}
-
-function choose(card) {
-  card.apply(player.up);
-  // Max health may have just gone up, so refresh it and fill the bar as a treat.
-  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
-  player.hp = player.maxhp;
-  popup(player.x, player.y - 30, card.name, '#ffd84d');
-  cards = []; cardRects = [];
-  startWave(wave + 1);
-}
-
-function dropHeart(x, y) {
-  hearts.push({ x: x, y: y, life: 16, bob: Math.random() * 6.28 });
-}
-
-// ---------------------------------------------------------------------------
-//  Enemies and allies. An "enemy" is anyone on the opposite side from you.
-// ---------------------------------------------------------------------------
-function spawnEnemy(side, atX, atY) {
-  let p;
-  if (atX !== undefined) {
-    p = { x: atX, y: atY };
-  } else {
-    // Pick a spawn point that is not right on top of the player.
-    let tries = 0;
-    do {
-      p = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-      tries++;
-    } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
-  }
-  // Enemies get a little beefier every wave, so the upgrades you pick have
-  // something to keep up with.
-  const hp = Math.round(TUNE.ENEMY_HEALTH * (1 + (wave - 1) * TUNE.WAVE_TOUGHER));
-  enemies.push({
-    x: p.x, y: p.y, r: 13, side: side,
-    hp: hp, maxhp: hp,
-    rank: 0, cool: Math.random() * 0.6, face: 1, swing: 0, hurtFlash: 0,
-    squash: 0, wob: Math.random() * 6.28,
-    // Used by the anti-wedge check below.
-    lastX: p.x, lastY: p.y, stuckT: 0,
-  });
-}
 
 // ---------------------------------------------------------------------------
 //  Walking around walls
 //
-//  Enemies used to head straight for you and jam against the first wall in the
-//  way, so three of them could sit stuck in a corner and a wave would never
-//  finish. This counts the number of steps from every open tile back to the
-//  tile you are standing on, and each enemy simply walks to whichever
-//  neighbouring tile has a smaller number. That is enough to come around
-//  corners and through doorways.
+//  Enemies used to head straight at you and jam on the first wall in the way,
+//  so a wave could never be finished. This counts the steps from every open
+//  tile back to the tile you are standing on, and each enemy walks to whichever
+//  neighbour has a smaller number. That is enough to come around corners.
 // ---------------------------------------------------------------------------
 let flow = null, flowTimer = 0, flowGX = -1, flowGY = -1, flowQueue = null;
 
@@ -573,9 +733,6 @@ function buildFlow(tx, ty) {
   }
 }
 
-// Which way to walk from here to get closer to the player. Returns null when
-// the map has nothing useful to say, and the caller falls back to walking
-// straight at the target.
 function flowDir(x, y) {
   if (!flow) return null;
   const gx = Math.floor(x / TILE), gy = Math.floor(y / TILE);
@@ -597,12 +754,145 @@ function flowDir(x, y) {
     }
   }
   if (bx === 0 && by === 0) return null;
-
-  // Aim for the middle of the next tile so they do not scrape along the wall.
-  const cxp = (gx + bx) * TILE + TILE / 2;
-  const cyp = (gy + by) * TILE + TILE / 2;
+  const cxp = (gx + bx) * TILE + TILE / 2, cyp = (gy + by) * TILE + TILE / 2;
   const ang = Math.atan2(cyp - y, cxp - x);
   return { x: Math.cos(ang), y: Math.sin(ang) };
+}
+
+
+// ---------------------------------------------------------------------------
+//  Game state
+// ---------------------------------------------------------------------------
+const NOOB = 'noob', ZOMB = 'zombie';
+let player, enemies, shots, bits, popups, hearts;
+let spawnTimer, spawnGap, running, paused, best;
+let wave, waveState, waveToSpawn, bossPending, cards, cardRects;
+let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
+let streak = 0, streakTimer = 0, bestStreak = 0;
+
+// Aimed screen shake. Random jitter reads as a glitch or a loose cable. Shoving
+// the camera along the direction of the blow, plus a sliver of rotation, reads
+// as force. That difference is most of what people mean by "game feel".
+const shake = { mag: 0, dx: 0, dy: 0, rot: 0 };
+
+best = Number(localStorage.getItem('zn_best') || 0);
+bestStreak = Number(localStorage.getItem('zn_streak') || 0);
+muted = localStorage.getItem('zn_muted') === '1';
+
+function rankFor(side, kills) {
+  const table = side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
+  let idx = 0;
+  for (let i = 0; i < table.length; i++) { if (kills >= table[i].at) idx = i; }
+  return idx;
+}
+
+function newPlayer() {
+  return {
+    x: playerStart.x, y: playerStart.y, r: 13,
+    side: NOOB, kills: { noob: 0, zombie: 0 },
+    rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
+    face: 1, aimx: 1, aimy: 0, wob: 0,
+    cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
+    up: freshUpgrades(),
+  };
+}
+
+function reset() {
+  player = newPlayer();
+  enemies = []; shots = []; bits = []; popups = []; hearts = [];
+  wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
+  cards = []; cardRects = [];
+  streak = 0; streakTimer = 0;
+  shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
+  flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
+  paused = false;
+  startWave(1);
+  spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
+  running = true;
+}
+
+function myRanks() { return player.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS; }
+function myKills() { return player.kills[player.side]; }
+function enemySide() { return player.side === NOOB ? ZOMB : NOOB; }
+
+function hostileCount() {
+  let n = 0;
+  for (const e of enemies) { if (e.hp > 0 && e.side !== player.side) n++; }
+  return n;
+}
+
+
+// ---------------------------------------------------------------------------
+//  Waves and upgrades
+// ---------------------------------------------------------------------------
+function waveCount(n) { return TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH; }
+function isBossWave(n) { return n % TUNE.BOSS_EVERY === 0; }
+
+function startWave(n) {
+  wave = n;
+  waveState = 'fighting';
+  waveToSpawn = waveCount(n);
+  bossPending = isBossWave(n);
+  spawnTimer = 0.5;
+  spawnGap = TUNE.SPAWN_EVERY;
+  if (bossPending) { announce('WAVE ' + n + ' -- BOSS'); SFX.boss(); }
+  else announce('WAVE ' + n);
+}
+
+function finishWave() {
+  waveState = 'picking';
+  const pool = UPGRADES.slice();
+  cards = [];
+  const want = Math.min(TUNE.UPGRADE_CHOICES, pool.length);
+  for (let i = 0; i < want; i++) {
+    cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  cardRects = [];
+  SFX.waveclear();
+}
+
+function choose(card) {
+  card.apply(player.up);
+  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
+  player.hp = player.maxhp;
+  popup(player.x, player.y - 30, card.name, '#ffd84d');
+  SFX.pick();
+  cards = []; cardRects = [];
+  startWave(wave + 1);
+}
+
+function dropHeart(x, y) {
+  hearts.push({ x: x, y: y, life: 16, bob: Math.random() * 6.28 });
+}
+
+
+// ---------------------------------------------------------------------------
+//  Enemies. An "enemy" is anyone on the opposite side from you, and allies you
+//  infected live in the same list.
+// ---------------------------------------------------------------------------
+function spawnEnemy(side, boss) {
+  let p;
+  let tries = 0;
+  do {
+    p = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+    tries++;
+  } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
+
+  const type = boss ? ENEMY_TYPES[0] : rollEnemyType();
+  const waveScale = Math.pow(1 + TUNE.WAVE_TOUGHER, wave - 1);
+  let hp = TUNE.ENEMY_HEALTH * type.hp * waveScale;
+  let size = type.size;
+  let speed = type.speed;
+  if (boss) { hp *= TUNE.BOSS_HEALTH; size = TUNE.BOSS_SIZE; speed = TUNE.BOSS_SPEED; }
+  hp = Math.round(hp);
+
+  enemies.push({
+    x: p.x, y: p.y, r: Math.round(13 * size), side: side,
+    hp: hp, maxhp: hp, type: type.key, size: size, spd: speed, boss: !!boss,
+    rank: 0, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
+    squash: 0, wob: Math.random() * 6.28,
+    lastX: p.x, lastY: p.y, stuckT: 0,
+  });
 }
 
 function nearestTarget(from, wantSide) {
@@ -619,29 +909,87 @@ function nearestTarget(from, wantSide) {
   return { target: found, dist: bestD };
 }
 
+
 // ---------------------------------------------------------------------------
-//  Controls. Pointer events cover both the iPad and a laptop with one path.
-//  Left side of the screen steers, right side attacks. Two thumbs at once
-//  works because each finger is tracked by its own pointerId.
+//  Controls. Left half steers, and that is the whole game. Two thumbs at once
+//  works because every finger is tracked by its own pointerId.
 // ---------------------------------------------------------------------------
 const stick = { active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
 const fire = { active: false, id: null };
 const keys = {};
 const STICK_MAX = 62;
 
+function hit(r, x, y) {
+  return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function toggleMute() {
+  muted = !muted;
+  localStorage.setItem('zn_muted', muted ? '1' : '0');
+  if (!muted) SFX.ui();
+}
+
+function togglePause() {
+  paused = !paused;
+  if (!muted) SFX.ui();
+  if (!paused) requestWake();
+}
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  const on = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (!on) {
+      const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (fn) fn.call(el);
+    } else {
+      const fn = document.exitFullscreen || document.webkitExitFullscreen;
+      if (fn) fn.call(document);
+    }
+  } catch (err) { /* not available on this browser, no harm done */ }
+  if (!muted) SFX.ui();
+}
+
+// Keeps the iPad from dimming and locking mid-game. Needs a tap to arm it, and
+// the browser drops it whenever the game is not the thing on screen.
+let wakeLock = null;
+function requestWake() {
+  try {
+    if ('wakeLock' in navigator && navigator.wakeLock.request) {
+      navigator.wakeLock.request('screen').then(l => {
+        wakeLock = l;
+        l.addEventListener('release', () => { wakeLock = null; });
+      }).catch(() => {});
+    }
+  } catch (err) { /* unsupported, not important */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && running && !paused) requestWake();
+});
+
 function onDown(e) {
   if (!running) return;
+
+  // Buttons win over everything else.
+  if (hit(btn.pause, e.clientX, e.clientY)) { togglePause(); return; }
+  if (hit(btn.mute,  e.clientX, e.clientY)) { toggleMute();  return; }
+  if (hit(btn.full,  e.clientX, e.clientY)) { toggleFullscreen(); return; }
+
+  if (paused) { togglePause(); return; }
 
   // Cards are up: the only thing a tap can do is pick one.
   if (waveState === 'picking') {
     for (let i = 0; i < cardRects.length; i++) {
-      const r = cardRects[i];
-      if (e.clientX >= r.x && e.clientX <= r.x + r.w &&
-          e.clientY >= r.y && e.clientY <= r.y + r.h) {
-        choose(cards[i]);
-        return;
-      }
+      if (hit(cardRects[i], e.clientX, e.clientY)) { choose(cards[i]); return; }
     }
+    return;
+  }
+
+  // The hit button, checked before the steering so a thumb on it never gets
+  // mistaken for the stick.
+  if (hit(btn.hit, e.clientX, e.clientY) && !fire.active) {
+    fire.active = true; fire.id = e.pointerId;
+    tryAttack(player, true);
     return;
   }
 
@@ -653,6 +1001,7 @@ function onDown(e) {
     fire.active = true; fire.id = e.pointerId;
   }
 }
+
 function onMove(e) {
   if (stick.active && e.pointerId === stick.id) {
     let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
@@ -661,18 +1010,23 @@ function onMove(e) {
     stick.dx = dx; stick.dy = dy;
   }
 }
+
 function onUp(e) {
   if (stick.active && e.pointerId === stick.id) { stick.active = false; stick.dx = 0; stick.dy = 0; }
   if (fire.active && e.pointerId === fire.id) { fire.active = false; }
 }
+
 canvas.addEventListener('pointerdown', onDown);
 canvas.addEventListener('pointermove', onMove);
 canvas.addEventListener('pointerup', onUp);
 canvas.addEventListener('pointercancel', onUp);
 
-// Keyboard, for building and testing on the laptop.
-addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
-addEventListener('keyup',   e => { keys[e.key.toLowerCase()] = false; });
+addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === 'p') togglePause();
+  if (e.key.toLowerCase() === 'm') toggleMute();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
 function inputVector() {
   let dx = 0, dy = 0;
@@ -686,9 +1040,10 @@ function inputVector() {
   if (keys['s'] || keys['arrowdown'])  dy += 1;
   const len = Math.hypot(dx, dy);
   if (len > 1) { dx /= len; dy /= len; }
-  return { dx, dy };
+  return { dx: dx, dy: dy };
 }
 function firing() { return fire.active || keys[' '] || keys['j']; }
+
 
 // ---------------------------------------------------------------------------
 //  Effects
@@ -702,14 +1057,16 @@ function spray(x, y, color, count, dirAngle) {
       ? Math.random() * 6.283
       : dirAngle + (Math.random() - 0.5) * 1.6;
     const sp = 40 + Math.random() * 170;
-    bits.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-                life: 0.35 + Math.random() * 0.45, max: 0.8, c: color,
+    bits.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: .35 + Math.random() * .45, max: .8, c: color,
                 s: 2 + Math.random() * 3 });
   }
 }
+
 function popup(x, y, text, color) {
-  popups.push({ x, y, text, color, life: 0.9 });
+  popups.push({ x: x, y: y, text: text, color: color, life: .9 });
 }
+
 function addShake(amount, dirX, dirY) {
   const a = amount * TUNE.SCREEN_SHAKE;
   shake.mag = Math.min(18, shake.mag + a);
@@ -721,47 +1078,62 @@ function addShake(amount, dirX, dirY) {
     shake.dx = Math.cos(r); shake.dy = Math.sin(r);
   }
   // Under a degree. Any more and it looks like the screen is falling over.
-  shake.rot = (Math.random() < 0.5 ? -1 : 1) * Math.min(0.018, a * 0.0022);
+  shake.rot = (Math.random() < .5 ? -1 : 1) * Math.min(.018, a * .0022);
 }
 
-// Freeze the whole game for a few dozen milliseconds when something connects.
-// Costs nothing and does more for how a punch feels than any other single line.
+// Freeze everything for a few dozen milliseconds when something connects.
 function addHitstop(sec) { hitstop = Math.max(hitstop, sec * TUNE.HITSTOP); }
 
-function announce(text) {
-  flashText = text; flashTime = 1.5; slowmo = 0.55;
-}
+function announce(text) { flashText = text; flashTime = 1.5; slowmo = .55; }
+
 
 // ---------------------------------------------------------------------------
 //  Damage
 // ---------------------------------------------------------------------------
 function hurtEnemy(e, dmg, fromX, fromY) {
   const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
-  const armor = table[e.rank].armor;
-  e.hp -= dmg * (1 - armor);
-  e.hurtFlash = 0.14;
-  e.squash = 0.14;
+  const armor = Math.min(.85, table[e.rank].armor + (e.boss ? TUNE.BOSS_ARMOR : 0));
+  const dealt = dmg * (1 - armor);
+  e.hp -= dealt;
+  e.hurtFlash = .14;
+  e.squash = .14;
   const a = Math.atan2(e.y - fromY, e.x - fromX);
   spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', 7, a);
-  moveEntity(e, Math.cos(a) * 9, Math.sin(a) * 9);
-  addHitstop(0.045);
+  moveEntity(e, Math.cos(a) * (9 / e.size), Math.sin(a) * (9 / e.size));
+  addHitstop(.045);
+  if (e.hp > 0) popup(e.x, e.y - 18, String(Math.round(dealt)), 'rgba(255,255,255,0.75)');
   if (e.hp <= 0) killEnemy(e, a);
 }
 
 function killEnemy(e, dirAngle) {
   e.hp = 0;
-  spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', 18, dirAngle);
+  spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', e.boss ? 46 : 18, dirAngle);
   SFX.die();
-  addHitstop(0.075);
-  addShake(3.5,
+  addHitstop(e.boss ? .13 : .075);
+  addShake(e.boss ? 9 : 3.5,
     dirAngle === undefined ? undefined : Math.cos(dirAngle),
     dirAngle === undefined ? undefined : Math.sin(dirAngle));
+
   const wasEnemyOfPlayer = (e.side !== player.side);
   if (wasEnemyOfPlayer) {
     player.kills[player.side]++;
-    if (Math.random() < TUNE.HEART_CHANCE) dropHeart(e.x, e.y);
+
+    // Kills close together build a streak, and a streak hits harder.
+    streak++;
+    streakTimer = TUNE.STREAK_WINDOW;
+    if (streak > bestStreak) {
+      bestStreak = streak;
+      localStorage.setItem('zn_streak', String(bestStreak));
+    }
+
+    if (player.up.lifesteal > 0) {
+      player.hp = Math.min(player.maxhp, player.hp + player.up.lifesteal);
+    }
+    if (Math.random() < TUNE.HEART_CHANCE * player.up.luck) dropHeart(e.x, e.y);
+
     const k = myKills();
-    popup(e.x, e.y - 20, '+1', '#ffd84d');
+    popup(e.x, e.y - 22, e.boss ? 'BOSS DOWN' : '+1', e.boss ? '#ff9f43' : '#ffd84d');
+
     const newRank = rankFor(player.side, k);
     if (newRank > player.rank) {
       player.rank = newRank;
@@ -775,16 +1147,17 @@ function killEnemy(e, dirAngle) {
 }
 
 // When you are a zombie and you bite a noob, that noob turns and fights for you.
-// This is the mechanic Joshua asked for: zombies can infect the noobs.
+// This is the mechanic Josh asked for: zombies can infect the noobs.
 function infectEnemy(e) {
   e.side = ZOMB;
   e.rank = 0;
-  e.hp = TUNE.ENEMY_HEALTH;
-  e.maxhp = TUNE.ENEMY_HEALTH;
+  e.hp = e.maxhp;
   spray(e.x, e.y, '#6ee787', 20);
   popup(e.x, e.y - 22, 'INFECTED', '#6ee787');
   SFX.turn();
   player.kills[ZOMB]++;
+  streak++; streakTimer = TUNE.STREAK_WINDOW;
+
   const newRank = rankFor(ZOMB, player.kills[ZOMB]);
   if (player.side === ZOMB && newRank > player.rank) {
     player.rank = newRank;
@@ -799,14 +1172,15 @@ function infectEnemy(e) {
 
 function hurtPlayer(dmg, biteAmount) {
   if (player.invuln > 0) return;
-  const armor = Math.min(0.8, myRanks()[player.rank].armor + player.up.armorAdd);
+  const armor = Math.min(.8, myRanks()[player.rank].armor + player.up.armorAdd);
   player.hp -= dmg * (1 - armor);
   player.hurtTimer = TUNE.HEAL_DELAY;
-  player.squash = 0.16;
+  player.squash = .16;
   addShake(4.5);
-  addHitstop(0.05);
+  addHitstop(.05);
   SFX.hurt();
   spray(player.x, player.y, '#c0392b', 6);
+  streak = 0;
 
   if (biteAmount > 0 && player.side === NOOB) {
     player.bite = Math.min(100, player.bite + biteAmount * player.up.biteRes);
@@ -816,24 +1190,32 @@ function hurtPlayer(dmg, biteAmount) {
   if (player.hp <= 0) flipSide();
 }
 
-// The core loop of Joshua's design: you go back and forth between the two
-// sides instead of ever getting a game over screen.
+// The core loop of Josh's design: you go back and forth between the two sides
+// instead of ever getting a game over screen.
 function flipSide() {
   const wasNoob = player.side === NOOB;
   player.side = wasNoob ? ZOMB : NOOB;
   player.rank = rankFor(player.side, player.kills[player.side]);
+  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
   player.hp = player.maxhp;
   player.bite = 0;
-  player.invuln = 2.0;
+  player.invuln = 2;
+  streak = 0;
   spray(player.x, player.y, wasNoob ? '#6ee787' : '#ffd84d', 34);
   addShake(11);
   SFX.turn();
   announce(wasNoob ? 'YOU TURNED ZOMBIE' : 'BACK ON THE NOOBS');
 
-  // Everyone who was on your old side is now against you, and the enemies
-  // already on the field switch roles too, so the fight keeps going.
-  for (const e of enemies) { if (Math.random() < 0.5) e.side = wasNoob ? NOOB : ZOMB; }
+  // Everyone on your old side is now against you, and some of the ones already
+  // on the field switch over too, so the fight keeps going either way. A boss is
+  // never handed over: it stays against whichever side you are on now.
+  const newEnemySide = player.side === NOOB ? ZOMB : NOOB;
+  for (const e of enemies) {
+    if (e.boss) { e.side = newEnemySide; continue; }
+    if (Math.random() < .5) e.side = wasNoob ? NOOB : ZOMB;
+  }
 }
+
 
 // ---------------------------------------------------------------------------
 //  Attacking
@@ -843,9 +1225,10 @@ function tryAttack(who, isPlayer) {
   const rk = table[who.rank];
   if (who.cool > 0) return;
 
-  // Upgrades are yours alone. Enemies always fight at base stats.
+  // Upgrades and streaks are yours alone. Enemies fight at base stats.
   const up = isPlayer ? player.up : NO_UP;
-  const dmg = rk.dmg * up.dmg;
+  const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
+  const dmg = rk.dmg * up.dmg * streakMul;
   const reach = rk.reach * up.reach;
   const rate = rk.rate * up.rate;
 
@@ -859,25 +1242,23 @@ function tryAttack(who, isPlayer) {
   if (rk.ranged) {
     if (dist > reach) return;
     who.cool = rate;
-    who.swing = 0.12;
+    who.swing = .12;
     const isAcid = rk.weapon === 'acid';
     shots.push({
       x: who.x + ax / dist * 16, y: who.y + ay / dist * 16,
       vx: ax / dist * (isAcid ? 430 : 760), vy: ay / dist * (isAcid ? 430 : 760),
-      dmg: dmg, side: who.side, life: 1.4,
-      acid: isAcid, bites: isAcid,
+      dmg: dmg, side: who.side, life: 1.4, acid: isAcid, bites: isAcid,
     });
     // The camera kicks backward from the shot, the way recoil would push you.
     if (isPlayer) addShake(isAcid ? 1.4 : 2.8, -ax / dist, -ay / dist);
-    who.squash = 0.1;
+    who.squash = .1;
     (isAcid ? SFX.acid : SFX.gun)();
     return;
   }
 
-  // Melee: has to be close.
   if (dist > reach) return;
   who.cool = rate;
-  who.swing = 0.16;
+  who.swing = .16;
 
   if (rk.weapon === 'knife') SFX.knife();
   else if (rk.weapon === 'smash') SFX.smash();
@@ -885,16 +1266,18 @@ function tryAttack(who, isPlayer) {
 
   // The one swinging gets shoved back and squashed too. Two bodies reacting to
   // one hit sells it far better than only the target flinching.
-  who.squash = 0.12;
+  who.squash = .12;
   moveEntity(who, -ax / dist * 4, -ay / dist * 4);
 
   if (found.target === player) {
-    // Zombie melee infects as well as hurts.
     const biteAmt = who.side === ZOMB ? TUNE.BITE_PER_HIT : 0;
     hurtPlayer(dmg, biteAmt);
   } else {
-    // Player is a zombie biting a noob: infect instead of just killing.
-    if (who.side === ZOMB && found.target.side === NOOB && isPlayer) {
+    // Biting a noob turns it into an ally. A boss is the exception: it cannot be
+    // infected, so a boss always has to be taken down the hard way. Without this
+    // you could bite the boss once and walk away with a huge free bodyguard, and
+    // boss waves would stop meaning anything.
+    if (who.side === ZOMB && found.target.side === NOOB && isPlayer && !found.target.boss) {
       infectEnemy(found.target);
     } else {
       hurtEnemy(found.target, dmg, who.x, who.y);
@@ -903,79 +1286,88 @@ function tryAttack(who, isPlayer) {
   if (isPlayer) addShake(rk.weapon === 'smash' ? 4.5 : 1.8, ax / dist, ay / dist);
 }
 
+
 // ---------------------------------------------------------------------------
 //  Update
 // ---------------------------------------------------------------------------
-function update(dt) {
-  // While the upgrade cards are up the fight holds still, but particles and
-  // floating text keep moving so the screen does not look locked up.
-  if (waveState === 'picking') {
-    for (const b of bits) {
-      b.x += b.vx * dt; b.y += b.vy * dt;
-      b.vx *= 0.92; b.vy *= 0.92; b.life -= dt;
-    }
-    bits = bits.filter(b => b.life > 0);
-    for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
-    popups = popups.filter(p => p.life > 0);
-    if (flashTime > 0) flashTime -= dt;
-    shake.mag = Math.max(0, shake.mag - dt * 40);
-    return;
+function driftEffects(dt) {
+  for (const b of bits) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.vx *= .92; b.vy *= .92; b.life -= dt;
   }
+  bits = bits.filter(b => b.life > 0);
+  for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
+  popups = popups.filter(p => p.life > 0);
+  if (flashTime > 0) flashTime -= dt;
+  shake.mag = Math.max(0, shake.mag - dt * 40);
+}
 
-  // Player movement
+function update(dt) {
+  // While the cards are up the fight holds still, but particles and floating
+  // text keep moving so the screen does not look locked up.
+  if (waveState === 'picking') { driftEffects(dt); return; }
+
   const mv = inputVector();
   const sp = TUNE.PLAYER_SPEED * player.up.speed * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
   if (mv.dx !== 0) player.face = mv.dx > 0 ? 1 : -1;
 
-  // Aim at whoever is closest, because twin-stick aiming on a touchscreen is
-  // no fun. You point yourself in the right direction automatically.
+  // Aim at whoever is closest, because twin-stick aiming on a touchscreen is no
+  // fun for anybody, least of all an eight year old.
   const near = nearestTarget(player, enemySide());
   if (near.target) {
     const a = Math.atan2(near.target.y - player.y, near.target.x - player.x);
     player.aimx = Math.cos(a); player.aimy = Math.sin(a);
-    if (Math.abs(player.aimx) > 0.25 && mv.dx === 0) player.face = player.aimx > 0 ? 1 : -1;
+    if (Math.abs(player.aimx) > .25 && mv.dx === 0) player.face = player.aimx > 0 ? 1 : -1;
   }
 
   player.cool = Math.max(0, player.cool - dt);
   player.swing = Math.max(0, player.swing - dt);
   player.squash = Math.max(0, player.squash - dt * 7);
   player.invuln = Math.max(0, player.invuln - dt);
-  player.wob += dt * 6;
   player.hurtTimer = Math.max(0, player.hurtTimer - dt);
+  player.wob += dt * 6;
+
   if (player.hurtTimer === 0 && player.hp < player.maxhp) {
-    player.hp = Math.min(player.maxhp, player.hp + TUNE.HEAL_PER_SECOND * player.up.heal * dt);
+    player.hp = Math.min(player.maxhp,
+      player.hp + TUNE.HEAL_PER_SECOND * player.up.heal * dt);
   }
   if (player.side === NOOB && player.bite > 0) {
     player.bite = Math.max(0, player.bite - TUNE.BITE_COOLDOWN_DRAIN * dt);
   }
-  // You swing on your own when something is in range. Steering is the only job,
-  // which is what makes this playable with one thumb at eight years old.
+
+  if (streakTimer > 0) {
+    streakTimer -= dt;
+    if (streakTimer <= 0) streak = 0;
+  }
+
+  // You swing on your own when something is in range.
   if (TUNE.AUTO_ATTACK || firing()) tryAttack(player, true);
 
-  // Rebuild the step map whenever you cross into a new tile, and on a timer as
-  // a backstop. It is only about a thousand tiles, so this is cheap.
+  // Rebuild the step map when you cross into a new tile, and on a timer as a
+  // backstop. It is only about a thousand tiles, so this is cheap.
   const pgx = Math.floor(player.x / TILE), pgy = Math.floor(player.y / TILE);
   flowTimer -= dt;
   if (pgx !== flowGX || pgy !== flowGY || flowTimer <= 0 || !flow) {
     buildFlow(pgx, pgy);
-    flowGX = pgx; flowGY = pgy; flowTimer = 0.35;
+    flowGX = pgx; flowGY = pgy; flowTimer = .35;
   }
 
-  // Feed the current wave in a few at a time rather than all at once.
+  // Feed the wave in a few at a time rather than all at once.
   if (waveToSpawn > 0) {
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
       spawnTimer = spawnGap;
-      spawnGap = Math.max(0.42, spawnGap * TUNE.SPAWN_SPEEDUP);
+      spawnGap = Math.max(.42, spawnGap * TUNE.SPAWN_SPEEDUP);
       if (enemies.length < TUNE.ENEMY_MAX_ON_SCREEN) {
-        spawnEnemy(enemySide());
+        // The boss comes in first on a boss wave, so you meet it head on.
+        if (bossPending) { spawnEnemy(enemySide(), true); bossPending = false; }
+        else spawnEnemy(enemySide(), false);
         waveToSpawn--;
       }
     }
   }
 
-  // Hearts that dropped from kills.
   for (const h of hearts) {
     h.life -= dt;
     h.bob += dt * 4;
@@ -983,13 +1375,11 @@ function update(dt) {
       h.life = 0;
       player.hp = Math.min(player.maxhp, player.hp + TUNE.HEART_HEAL);
       popup(player.x, player.y - 26, '+' + TUNE.HEART_HEAL, '#6ee787');
-      beep(880, 0.08, 'square', 0.1);
-      beep(1180, 0.1, 'square', 0.08);
+      SFX.heart();
     }
   }
   hearts = hearts.filter(h => h.life > 0);
 
-  // Enemies and allies
   for (const e of enemies) {
     if (e.hp <= 0) continue;
     e.cool = Math.max(0, e.cool - dt);
@@ -1010,31 +1400,28 @@ function update(dt) {
         // Use the step map when chasing the player, since that is the one that
         // has to work. Chasing anyone else falls back to heading straight over.
         const dir = (found.target === player) ? flowDir(e.x, e.y) : null;
-        if (dir) {
-          sx = dir.x; sy = dir.y;
-        } else {
+        if (dir) { sx = dir.x; sy = dir.y; }
+        else {
           const a = Math.atan2(found.target.y - e.y, found.target.x - e.x);
-          // A little side-to-side wobble so they do not march in a dead line.
-          const wob = Math.sin(e.wob) * 0.32;
+          const wob = Math.sin(e.wob) * .32;
           sx = Math.cos(a + wob); sy = Math.sin(a + wob);
         }
-        moveEntity(e, sx * TUNE.ENEMY_SPEED * dt, sy * TUNE.ENEMY_SPEED * dt);
+        const spd = TUNE.ENEMY_SPEED * e.spd;
+        moveEntity(e, sx * spd * dt, sy * spd * dt);
         e.face = sx > 0 ? 1 : -1;
 
-        // Belt and braces. If something is genuinely wedged and getting nowhere,
-        // move it back to a spawn point rather than leave a wave unfinishable.
+        // Belt and braces. If something is genuinely wedged, put it back at a
+        // spawn point rather than leave a wave unfinishable.
         e.stuckT += dt;
         if (e.stuckT > 2.5) {
           if (Math.hypot(e.x - e.lastX, e.y - e.lastY) < 14) {
-            const sp = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-            e.x = sp.x; e.y = sp.y;
+            const sp2 = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+            e.x = sp2.x; e.y = sp2.y;
             spray(e.x, e.y, '#5b6474', 6);
           }
           e.lastX = e.x; e.lastY = e.y; e.stuckT = 0;
         }
-      } else {
-        e.stuckT = 0; e.lastX = e.x; e.lastY = e.y;
-      }
+      } else { e.stuckT = 0; e.lastX = e.x; e.lastY = e.y; }
       tryAttack(e, false);
     }
   }
@@ -1044,40 +1431,29 @@ function update(dt) {
   // standing. Allies you infected do not count against you.
   if (waveToSpawn === 0 && hostileCount() === 0) { finishWave(); return; }
 
-  // Shots
   for (const s of shots) {
     s.x += s.vx * dt; s.y += s.vy * dt;
     s.life -= dt;
     if (solidAt(s.x, s.y)) { s.life = 0; spray(s.x, s.y, '#8a8f98', 4); continue; }
     const wantSide = s.side === NOOB ? ZOMB : NOOB;
     if (player.side === wantSide && Math.hypot(player.x - s.x, player.y - s.y) < player.r + 5) {
-      hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * 0.7 : 0);
+      hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * .7 : 0);
       s.life = 0; continue;
     }
     for (const e of enemies) {
       if (e.side !== wantSide || e.hp <= 0) continue;
       if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + 5) {
-        hurtEnemy(e, s.dmg, s.x - s.vx * 0.01, s.y - s.vy * 0.01);
+        hurtEnemy(e, s.dmg, s.x - s.vx * .01, s.y - s.vy * .01);
         s.life = 0; break;
       }
     }
   }
   shots = shots.filter(s => s.life > 0);
 
-  // Particles and floating text
-  for (const b of bits) {
-    b.x += b.vx * dt; b.y += b.vy * dt;
-    b.vx *= 0.92; b.vy *= 0.92;
-    b.life -= dt;
-  }
-  bits = bits.filter(b => b.life > 0);
-  for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
-  popups = popups.filter(p => p.life > 0);
-
-  shake.mag = Math.max(0, shake.mag - dt * 40);
-  if (flashTime > 0) flashTime -= dt;
+  driftEffects(dt);
   if (slowmo > 0) slowmo = Math.max(0, slowmo - dt);
 }
+
 
 // ---------------------------------------------------------------------------
 //  Drawing
@@ -1093,7 +1469,7 @@ function updateCamera() {
   if (WORLD_H < VH) cam.y = (WORLD_H - VH) / 2;
 }
 
-// A blocky character in the classic noob colours. Drawn upright and flipped
+// A blocky character in the classic noob colours, drawn upright and flipped
 // left or right, which reads clearly from above without needing real 3D.
 function drawGuy(g, side, rankIdx, isPlayer) {
   const x = Math.round(g.x - cam.x), y = Math.round(g.y - cam.y);
@@ -1101,73 +1477,77 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
 
-  const skin  = isNoob ? '#f5cd30' : '#7fa05a';
-  const torso = isNoob ? '#0a9bf5' : '#46543a';
-  const legs  = isNoob ? '#6aa84f' : '#333f2c';
+  let skin  = isNoob ? '#f5cd30' : '#7fa05a';
+  let torso = isNoob ? '#0a9bf5' : '#46543a';
+  let legs  = isNoob ? '#6aa84f' : '#333f2c';
+  // Runners and brutes are tinted so you can tell at a glance what is coming.
+  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#4fd6ff' : '#7fae3f'; }
+  if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#6b4a8f'; }
+  if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
+
   const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.3;
 
   ctx.save();
   ctx.translate(x, y + bob);
 
-  // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.ellipse(0, 15, 14, 5.5, 0, 0, 6.283);
+  ctx.ellipse(0, 15 * (g.size || 1), 14 * (g.size || 1), 5.5, 0, 0, 6.283);
   ctx.fill();
 
-  const flash = (g.hurtFlash > 0) || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
-  if (flash) { ctx.globalAlpha = 0.72; }
+  const flash = (g.hurtFlash > 0)
+    || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
+  if (flash) ctx.globalAlpha = .72;
 
   const f = (g.face || 1);
-  const big = rk.weapon === 'smash' ? 1.16 : 1;
-  // Squash and stretch: widen and flatten for a moment on impact, then spring
-  // back. Cartoons have used this forever and it still works.
+  const big = (g.size || 1) * (rk.weapon === 'smash' ? 1.12 : 1);
+  // Squash and stretch: widen and flatten for a moment on impact.
   const sq = g.squash || 0;
-  ctx.scale(f * big * (1 + sq * 1.3), big * (1 - sq * 0.9));
+  ctx.scale(f * big * (1 + sq * 1.3), big * (1 - sq * .9));
 
-  // Legs
-  ctx.fillStyle = legs;
-  ctx.fillRect(-8, 2, 6, 13);
-  ctx.fillRect(2, 2, 6, 13);
-  // Torso
-  ctx.fillStyle = torso;
-  ctx.fillRect(-9, -8, 18, 11);
-  // Arms
-  ctx.fillStyle = skin;
-  ctx.fillRect(-13, -8, 4, 10);
-  ctx.fillRect(9, -8, 4, 10);
-  // Head
-  ctx.fillStyle = skin;
-  ctx.fillRect(-8, -22, 16, 14);
-  // Face
-  ctx.fillStyle = '#20242c';
-  ctx.fillRect(-4, -18, 2.5, 3);
-  ctx.fillRect(2, -18, 2.5, 3);
+  // Built the way a Roblox character is: separate blocky parts with real gaps
+  // between them, each with a lit top face and a shaded side.
+  // Two legs, with a gap.
+  part(-8.5, 2, 7, 14, legs);
+  part(1.5, 2, 7, 14, legs);
+  // Two arms, held out from the body.
+  part(-13.5, -8, 4.5, 11, skin);
+  part(9, -8, 4.5, 11, skin);
+  // Torso.
+  part(-9, -8.5, 18, 11.5, torso);
+  // Head, sitting slightly wider than the neck like the real thing.
+  part(-8, -23, 16, 14.5, skin);
+
+  // The classic noob face: two eyes and a big happy grin. Zombies get the same
+  // blocky face but with a jagged mouth instead.
+  ctx.fillStyle = '#241c14';
+  ctx.fillRect(-4.6, -19, 2.8, 4);
+  ctx.fillRect(1.8, -19, 2.8, 4);
   if (isNoob) {
-    ctx.fillRect(-3, -13, 6, 1.6);
+    // A wide smile, drawn as a shallow curve so it reads at this size.
+    ctx.strokeStyle = '#241c14';
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.arc(0, -14.6, 3.6, 0.15, Math.PI - 0.15);
+    ctx.stroke();
   } else {
-    // Zombies get a jagged mouth so they read as the bad side instantly.
-    ctx.fillRect(-5, -14, 10, 3);
-    ctx.fillStyle = skin;
-    ctx.fillRect(-3, -14, 1.6, 3);
-    ctx.fillRect(1.5, -14, 1.6, 3);
+    ctx.fillRect(-5, -14.4, 10, 3.2);
+    ctx.fillStyle = shade(skin, 10);
+    ctx.fillRect(-3.2, -14.4, 1.7, 3.2);
+    ctx.fillRect(1.5, -14.4, 1.7, 3.2);
   }
 
-  // Weapon, held on the side the character is facing
   const swinging = g.swing > 0;
   const push = swinging ? 6 : 0;
   if (rk.weapon === 'knife') {
     ctx.fillStyle = '#2b2f38'; ctx.fillRect(12 + push, -6, 4, 3);
     ctx.fillStyle = '#dfe6f0'; ctx.fillRect(16 + push, -6.5, 11, 3.2);
   } else if (rk.weapon === 'pistol') {
-    ctx.fillStyle = '#22262e'; ctx.fillRect(12, -6, 12, 4);
-    ctx.fillRect(13, -3, 4, 5);
+    ctx.fillStyle = '#22262e'; ctx.fillRect(12, -6, 12, 4); ctx.fillRect(13, -3, 4, 5);
     if (swinging) { ctx.fillStyle = '#ffd84d'; ctx.fillRect(24, -6, 7, 4); }
   } else if (rk.weapon === 'riot shield') {
-    ctx.fillStyle = 'rgba(190,205,225,0.5)';
-    ctx.fillRect(11, -20, 7, 30);
-    ctx.fillStyle = '#8c99ab'; ctx.fillRect(11, -20, 7, 2.5);
-    ctx.fillRect(11, 7.5, 7, 2.5);
+    ctx.fillStyle = 'rgba(190,205,225,0.5)'; ctx.fillRect(11, -20, 7, 30);
+    ctx.fillStyle = '#8c99ab'; ctx.fillRect(11, -20, 7, 2.5); ctx.fillRect(11, 7.5, 7, 2.5);
   } else if (rk.weapon === 'claws') {
     ctx.fillStyle = '#d8dee8';
     for (let i = 0; i < 3; i++) ctx.fillRect(13 + push, -8 + i * 4, 8, 1.8);
@@ -1177,25 +1557,22 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   } else if (rk.weapon === 'smash') {
     ctx.fillStyle = '#5b6b45'; ctx.fillRect(11 + push, -9, 9, 9);
   } else if (swinging) {
-    // Fists and bite get a simple swipe arc.
     ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(10, -3, 13, -0.9, 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(10, -3, 13, -.9, .9); ctx.stroke();
   }
 
   ctx.restore();
 
-  // Health bar over anyone who is hurt
   if (!isPlayer && g.hp < g.maxhp) {
-    const w = 26, h = 3.5;
+    const w = g.boss ? 52 : 26, h = g.boss ? 5 : 3.5;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - w / 2, y - 32, w, h);
-    ctx.fillStyle = isNoob ? '#4da3ff' : '#8ecf4a';
-    ctx.fillRect(x - w / 2, y - 32, w * Math.max(0, g.hp / g.maxhp), h);
+    ctx.fillRect(x - w / 2, y - 32 * (g.size || 1), w, h);
+    ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');
+    ctx.fillRect(x - w / 2, y - 32 * (g.size || 1), w * Math.max(0, g.hp / g.maxhp), h);
   }
 }
 
 function drawWorld() {
-  // Floor: the classic grey baseplate look, drawn only where you can see it.
   const x0 = Math.max(0, Math.floor(cam.x / TILE));
   const y0 = Math.max(0, Math.floor(cam.y / TILE));
   const x1 = Math.min(GW - 1, Math.ceil((cam.x + VW) / TILE));
@@ -1205,28 +1582,98 @@ function drawWorld() {
     for (let gx = x0; gx <= x1; gx++) {
       const t = grid[gy][gx];
       const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
-      if (t === 0) {
-        ctx.fillStyle = ((gx + gy) % 2 === 0) ? '#2b303a' : '#272c35';
+      // Every tile is a studded brick, stamped from a canvas painted once.
+      const img = t === 0 ? (((gx + gy) % 2 === 0) ? tileFloorA : tileFloorB)
+                : t === WALL ? tileWall : tileCrate;
+      if (img) {
+        ctx.drawImage(img, px, py, TILE, TILE);
+      } else {
+        // Only reached if offscreen canvases are unavailable.
+        ctx.fillStyle = t === 0 ? '#4c5a4a' : t === WALL ? '#9aa3ae' : '#b07a3c';
         ctx.fillRect(px, py, TILE, TILE);
-      } else if (t === WALL) {
-        ctx.fillStyle = '#4a5262';
-        ctx.fillRect(px, py, TILE, TILE);
-        ctx.fillStyle = '#5b6474';
-        ctx.fillRect(px, py, TILE, 5);
-        ctx.fillStyle = '#3a4150';
-        ctx.fillRect(px, py + TILE - 4, TILE, 4);
-      } else if (t === CRATE) {
-        ctx.fillStyle = '#8a6234';
-        ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
-        ctx.fillStyle = '#a3763f';
-        ctx.fillRect(px + 3, py + 3, TILE - 6, 5);
-        ctx.strokeStyle = '#6b4b28'; ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(px + 4, py + 4); ctx.lineTo(px + TILE - 4, py + TILE - 4);
-        ctx.moveTo(px + TILE - 4, py + 4); ctx.lineTo(px + 4, py + TILE - 4);
-        ctx.stroke();
       }
     }
+  }
+}
+
+// A little map in the corner, because the level is bigger than the screen and
+// otherwise you have no idea where the next one is coming from.
+function drawMinimap() {
+  const m = miniRect;
+  const sx = m.w / GW, sy = m.h / GH;
+
+  ctx.fillStyle = 'rgba(8,10,14,0.62)';
+  ctx.fillRect(m.x, m.y, m.w, m.h);
+
+  ctx.fillStyle = 'rgba(120,133,155,0.75)';
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
+      if (grid[gy][gx] === WALL) {
+        ctx.fillRect(m.x + gx * sx, m.y + gy * sy, Math.ceil(sx), Math.ceil(sy));
+      }
+    }
+  }
+
+  for (const h of hearts) {
+    ctx.fillStyle = '#e8544f';
+    ctx.fillRect(m.x + (h.x / TILE) * sx - 1, m.y + (h.y / TILE) * sy - 1, 2.5, 2.5);
+  }
+  for (const e of enemies) {
+    const hostile = e.side !== player.side;
+    ctx.fillStyle = e.boss ? '#ff9f43' : (hostile ? '#ff6b6b' : '#6ee787');
+    const s = e.boss ? 4 : 2.5;
+    ctx.fillRect(m.x + (e.x / TILE) * sx - s / 2, m.y + (e.y / TILE) * sy - s / 2, s, s);
+  }
+
+  ctx.fillStyle = '#ffd84d';
+  ctx.fillRect(m.x + (player.x / TILE) * sx - 2, m.y + (player.y / TILE) * sy - 2, 4, 4);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1;
+  ctx.strokeRect(m.x, m.y, m.w, m.h);
+}
+
+function drawIconButton(r, kind, on) {
+  ctx.fillStyle = 'rgba(20,26,36,0.62)';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  ctx.fillStyle = 'rgba(238,242,248,0.82)';
+
+  if (kind === 'pause') {
+    if (on) {
+      // Paused, so the button offers play instead.
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, cy - 8); ctx.lineTo(cx + 8, cy); ctx.lineTo(cx - 5, cy + 8);
+      ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillRect(cx - 6, cy - 8, 4, 16);
+      ctx.fillRect(cx + 2, cy - 8, 4, 16);
+    }
+  } else if (kind === 'mute') {
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, cy - 4); ctx.lineTo(cx - 3, cy - 4); ctx.lineTo(cx + 2, cy - 9);
+    ctx.lineTo(cx + 2, cy + 9); ctx.lineTo(cx - 3, cy + 4); ctx.lineTo(cx - 8, cy + 4);
+    ctx.closePath(); ctx.fill();
+    if (on) {
+      ctx.strokeStyle = '#ff8f8f'; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(cx + 5, cy - 6); ctx.lineTo(cx + 12, cy + 6); ctx.stroke();
+    } else {
+      ctx.strokeStyle = 'rgba(238,242,248,0.82)'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(cx + 4, cy, 4, -.9, .9); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx + 4, cy, 8, -.9, .9); ctx.stroke();
+    }
+  } else if (kind === 'full') {
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = 'rgba(238,242,248,0.82)';
+    const a = 8;
+    ctx.beginPath();
+    ctx.moveTo(cx - a, cy - a + 5); ctx.lineTo(cx - a, cy - a); ctx.lineTo(cx - a + 5, cy - a);
+    ctx.moveTo(cx + a - 5, cy - a); ctx.lineTo(cx + a, cy - a); ctx.lineTo(cx + a, cy - a + 5);
+    ctx.moveTo(cx + a, cy + a - 5); ctx.lineTo(cx + a, cy + a); ctx.lineTo(cx + a - 5, cy + a);
+    ctx.moveTo(cx - a + 5, cy + a); ctx.lineTo(cx - a, cy + a); ctx.lineTo(cx - a, cy + a - 5);
+    ctx.stroke();
   }
 }
 
@@ -1235,56 +1682,88 @@ function drawHUD() {
   const rk = ranks[player.rank];
   const k = myKills();
   const next = ranks[player.rank + 1];
+  const accent = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
 
-  // Rank name and kill count
   ctx.textAlign = 'left';
-  ctx.fillStyle = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
-  ctx.font = '800 20px -apple-system, system-ui, sans-serif';
-  ctx.fillText(rk.name, 16, 32);
+  ctx.fillStyle = accent;
+  ctx.font = '800 21px -apple-system, system-ui, sans-serif';
+  ctx.fillText(rk.name, PAD.l, PAD.t + 19);
 
-  ctx.fillStyle = 'rgba(238,242,248,0.72)';
+  ctx.fillStyle = 'rgba(238,242,248,0.7)';
   ctx.font = '600 13px -apple-system, system-ui, sans-serif';
-  ctx.fillText(k + ' kills   best ' + best, 16, 51);
+  ctx.fillText(k + ' kills   best ' + best, PAD.l, PAD.t + 38);
 
-  // Progress to the next rank
+  const barY = PAD.t + 47;
   if (next) {
     const span = next.at - rk.at;
     const done = Math.max(0, Math.min(1, (k - rk.at) / span));
-    const bw = 168;
-    ctx.fillStyle = 'rgba(255,255,255,0.13)';
-    ctx.fillRect(16, 60, bw, 7);
-    ctx.fillStyle = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
-    ctx.fillRect(16, 60, bw * done, 7);
+    const bw = 172;
+    ctx.fillStyle = 'rgba(255,255,255,0.13)'; ctx.fillRect(PAD.l, barY, bw, 7);
+    ctx.fillStyle = accent; ctx.fillRect(PAD.l, barY, bw * done, 7);
     ctx.fillStyle = 'rgba(238,242,248,0.62)';
     ctx.font = '600 12px -apple-system, system-ui, sans-serif';
-    ctx.fillText((next.at - k) + ' more to ' + next.name, 16, 82);
+    ctx.fillText((next.at - k) + ' more to ' + next.name, PAD.l, barY + 21);
   } else {
     ctx.fillStyle = '#ff9f43';
     ctx.font = '700 12px -apple-system, system-ui, sans-serif';
-    ctx.fillText('TOP RANK', 16, 74);
+    ctx.fillText('TOP RANK', PAD.l, barY + 12);
   }
 
-  // Health
-  const hw = 168;
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fillRect(16, VH - 34, hw, 12);
+  // Health and infection, above the home indicator.
+  const hw = 172;
+  const hy = VH - PAD.b - 12;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(PAD.l, hy, hw, 12);
   ctx.fillStyle = '#e8544f';
-  ctx.fillRect(16, VH - 34, hw * Math.max(0, player.hp / player.maxhp), 12);
+  ctx.fillRect(PAD.l, hy, hw * Math.max(0, player.hp / player.maxhp), 12);
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
-  ctx.strokeRect(16, VH - 34, hw, 12);
+  ctx.strokeRect(PAD.l, hy, hw, 12);
+  ctx.fillStyle = 'rgba(238,242,248,0.75)';
+  ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+  ctx.fillText(Math.ceil(player.hp) + ' / ' + Math.round(player.maxhp), PAD.l + hw + 8, hy + 10);
 
-  // Infection meter, only while you are still a noob
   if (player.side === NOOB && player.bite > 0) {
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(16, VH - 52, hw, 10);
-    ctx.fillStyle = '#6ee787';
-    ctx.fillRect(16, VH - 52, hw * (player.bite / 100), 10);
+    const iy = hy - 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(PAD.l, iy, hw, 10);
+    ctx.fillStyle = '#6ee787'; ctx.fillRect(PAD.l, iy, hw * (player.bite / 100), 10);
     ctx.fillStyle = '#6ee787';
     ctx.font = '700 11px -apple-system, system-ui, sans-serif';
-    ctx.fillText('INFECTION', 16 + hw + 8, VH - 43);
+    ctx.fillText('INFECTION', PAD.l + hw + 8, iy + 9);
   }
 
-  // The joystick, drawn where the thumb actually is
+  // Wave and streak, across the top middle.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(238,242,248,0.55)';
+  ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+  ctx.fillText(isBossWave(wave) ? 'WAVE ' + wave + '  BOSS' : 'WAVE ' + wave, VW / 2, PAD.t + 13);
+  ctx.fillStyle = 'rgba(238,242,248,0.34)';
+  ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+  ctx.fillText((hostileCount() + waveToSpawn) + ' left', VW / 2, PAD.t + 29);
+
+  if (streak >= 3) {
+    ctx.fillStyle = '#ff9f43';
+    ctx.font = '800 16px -apple-system, system-ui, sans-serif';
+    ctx.fillText(streak + ' STREAK', VW / 2, PAD.t + 51);
+  }
+
+  drawMinimap();
+
+  drawIconButton(btn.full,  'full',  false);
+  drawIconButton(btn.mute,  'mute',  muted);
+  drawIconButton(btn.pause, 'pause', paused);
+
+  // The hit button. Always there, even though auto-attack means you never have
+  // to touch it, because pressing it is half the fun.
+  const hb = btn.hit;
+  ctx.fillStyle = fire.active ? 'rgba(255,216,77,0.34)' : 'rgba(255,255,255,0.10)';
+  ctx.beginPath(); ctx.arc(hb.cx, hb.cy, hb.r, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = fire.active ? 'rgba(255,216,77,0.75)' : 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(hb.cx, hb.cy, hb.r, 0, 6.283); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '800 15px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(rk.ranged ? 'SHOOT' : 'HIT', hb.cx, hb.cy + 5);
+
   if (stick.active) {
     ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(stick.ox, stick.oy, STICK_MAX, 0, 6.283); ctx.stroke();
@@ -1292,43 +1771,22 @@ function drawHUD() {
     ctx.beginPath(); ctx.arc(stick.ox + stick.dx, stick.oy + stick.dy, 24, 0, 6.283); ctx.fill();
   }
 
-  // Wave number and how much of it is left, across the top middle.
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(238,242,248,0.55)';
-  ctx.font = '800 13px -apple-system, system-ui, sans-serif';
-  ctx.fillText('WAVE ' + wave, VW / 2, 27);
-  ctx.fillStyle = 'rgba(238,242,248,0.34)';
-  ctx.font = '600 11px -apple-system, system-ui, sans-serif';
-  ctx.fillText((hostileCount() + waveToSpawn) + ' left', VW / 2, 43);
-
-  // The attack button only shows up if auto-attack is switched off, so it never
-  // sits there implying you have to press it.
-  if (!TUNE.AUTO_ATTACK) {
-    ctx.fillStyle = fire.active ? 'rgba(255,216,77,0.3)' : 'rgba(255,255,255,0.09)';
-    ctx.beginPath(); ctx.arc(VW - 78, VH - 88, 46, 0, 6.283); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.font = '700 13px -apple-system, system-ui, sans-serif';
-    ctx.fillText(rk.ranged ? 'SHOOT' : 'HIT', VW - 78, VH - 83);
-  }
-
-  // The big rank-up banner
   if (flashText && flashTime > 0) {
-    const a = Math.min(1, flashTime / 0.4);
-    ctx.globalAlpha = a;
+    ctx.globalAlpha = Math.min(1, flashTime / .4);
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(0, VH * 0.34, VW, 76);
+    ctx.fillRect(0, VH * .34, VW, 76);
     ctx.fillStyle = '#ffd84d';
     ctx.font = '800 ' + Math.round(Math.min(46, VW / 11)) + 'px -apple-system, system-ui, sans-serif';
-    ctx.fillText(flashText, VW / 2, VH * 0.34 + 50);
+    ctx.fillText(flashText, VW / 2, VH * .34 + 50);
     ctx.globalAlpha = 1;
   }
 
   if (waveState === 'picking') drawCards();
+  if (paused) drawPause();
 }
 
-// Break a string into lines that fit a given width, using whatever font is
-// currently set on the context.
+// Break a string into lines that fit a width, using the current font.
 function wrapLines(text, maxW) {
   const words = text.split(' ');
   const lines = [];
@@ -1342,7 +1800,6 @@ function wrapLines(text, maxW) {
   return lines;
 }
 
-// The between-waves choice. Three cards, tap one, it stacks forever.
 function drawCards() {
   ctx.fillStyle = 'rgba(8,10,14,0.86)';
   ctx.fillRect(0, 0, VW, VH);
@@ -1350,40 +1807,37 @@ function drawCards() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#6ee787';
   ctx.font = '800 ' + Math.round(Math.min(36, VW / 15)) + 'px -apple-system, system-ui, sans-serif';
-  ctx.fillText('WAVE ' + wave + ' CLEAR', VW / 2, VH * 0.2);
+  ctx.fillText('WAVE ' + wave + ' CLEAR', VW / 2, VH * .19);
   ctx.fillStyle = 'rgba(238,242,248,0.7)';
   ctx.font = '600 15px -apple-system, system-ui, sans-serif';
-  ctx.fillText('Pick one to keep forever', VW / 2, VH * 0.2 + 28);
+  ctx.fillText('Pick one to keep forever', VW / 2, VH * .19 + 28);
 
   const n = cards.length;
   const gap = 14;
-  const cw = Math.min(210, (VW - gap * (n + 1)) / n);
-  const ch = Math.min(160, Math.max(120, VH * 0.28));
+  const cw = Math.min(210, (VW - PAD.l - PAD.r - gap * (n - 1)) / n);
+  const ch = Math.min(170, Math.max(126, VH * .28));
   const x0 = (VW - (n * cw + (n - 1) * gap)) / 2;
-  const y = VH * 0.42;
+  const y = VH * .40;
 
   cardRects = [];
   for (let i = 0; i < n; i++) {
     const x = x0 + i * (cw + gap);
     cardRects.push({ x: x, y: y, w: cw, h: ch });
 
-    ctx.fillStyle = '#1b2230';
-    ctx.fillRect(x, y, cw, ch);
-    ctx.strokeStyle = '#ffd84d';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, cw, ch);
+    ctx.fillStyle = '#1b2230'; ctx.fillRect(x, y, cw, ch);
+    ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = 2; ctx.strokeRect(x, y, cw, ch);
 
     const mid = x + cw / 2;
     ctx.fillStyle = '#ffd84d';
     ctx.font = '800 18px -apple-system, system-ui, sans-serif';
     const nameLines = wrapLines(cards[i].name, cw - 22);
-    nameLines.forEach((ln, k) => ctx.fillText(ln, mid, y + 42 + k * 22));
+    nameLines.forEach((ln, kk) => ctx.fillText(ln, mid, y + 42 + kk * 22));
 
     ctx.fillStyle = 'rgba(238,242,248,0.78)';
     ctx.font = '600 14px -apple-system, system-ui, sans-serif';
     const blurbLines = wrapLines(cards[i].blurb, cw - 22);
     const by = y + 42 + nameLines.length * 22 + 12;
-    blurbLines.forEach((ln, k) => ctx.fillText(ln, mid, by + k * 19));
+    blurbLines.forEach((ln, kk) => ctx.fillText(ln, mid, by + kk * 19));
 
     ctx.fillStyle = 'rgba(255,216,77,0.7)';
     ctx.font = '700 11px -apple-system, system-ui, sans-serif';
@@ -1391,26 +1845,54 @@ function drawCards() {
   }
 }
 
+function drawPause() {
+  ctx.fillStyle = 'rgba(8,10,14,0.88)';
+  ctx.fillRect(0, 0, VW, VH);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#eef2f8';
+  ctx.font = '800 ' + Math.round(Math.min(44, VW / 12)) + 'px -apple-system, system-ui, sans-serif';
+  ctx.fillText('Paused', VW / 2, VH * .3);
+
+  const lines = [
+    'Wave ' + wave,
+    myRanks()[player.rank].name,
+    player.kills.noob + ' kills as a noob',
+    player.kills.zombie + ' kills as a zombie',
+    'Best run: ' + best + '    Best streak: ' + bestStreak,
+  ];
+  ctx.font = '600 15px -apple-system, system-ui, sans-serif';
+  lines.forEach((ln, i) => {
+    ctx.fillStyle = i === 0 ? '#ffd84d' : 'rgba(238,242,248,0.72)';
+    ctx.fillText(ln, VW / 2, VH * .3 + 44 + i * 25);
+  });
+
+  ctx.fillStyle = 'rgba(238,242,248,0.45)';
+  ctx.font = '700 13px -apple-system, system-ui, sans-serif';
+  ctx.fillText('Tap anywhere to keep going', VW / 2, VH * .3 + 44 + lines.length * 25 + 22);
+
+  ctx.fillStyle = 'rgba(238,242,248,0.3)';
+  ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+  ctx.fillText('ZOMBIE NOOBS  by Josh Alexander', VW / 2, VH - PAD.b - 6);
+}
+
 function draw() {
   updateCamera();
   ctx.save();
-  if (shake.mag > 0.3) {
+  if (shake.mag > .3) {
     const j = shake.mag;
-    // Rotate around the middle of the screen, then shove along the impact
-    // direction with only a little random jitter mixed in.
     ctx.translate(VW / 2, VH / 2);
     ctx.rotate(shake.rot * (j / 18));
     ctx.translate(-VW / 2, -VH / 2);
-    ctx.translate(shake.dx * j * 0.75 + (Math.random() - 0.5) * j * 0.45,
-                  shake.dy * j * 0.75 + (Math.random() - 0.5) * j * 0.45);
+    ctx.translate(shake.dx * j * .75 + (Math.random() - .5) * j * .45,
+                  shake.dy * j * .75 + (Math.random() - .5) * j * .45);
   }
 
   ctx.fillStyle = '#0d0f14';
-  ctx.fillRect(-30, -30, VW + 60, VH + 60);
+  ctx.fillRect(-40, -40, VW + 80, VH + 80);
 
   drawWorld();
 
-  // Particles under the characters
   for (const b of bits) {
     ctx.globalAlpha = Math.max(0, b.life / b.max);
     ctx.fillStyle = b.c;
@@ -1418,7 +1900,6 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  // Hearts dropped by kills. They blink when they are about to vanish.
   for (const h of hearts) {
     if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) continue;
     const hx = Math.round(h.x - cam.x);
@@ -1427,14 +1908,10 @@ function draw() {
     ctx.beginPath();
     ctx.arc(hx - 4, hy - 3, 4.6, 0, 6.283);
     ctx.arc(hx + 4, hy - 3, 4.6, 0, 6.283);
-    ctx.moveTo(hx - 8.4, hy - 1.4);
-    ctx.lineTo(hx, hy + 8);
-    ctx.lineTo(hx + 8.4, hy - 1.4);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(hx - 8.4, hy - 1.4); ctx.lineTo(hx, hy + 8); ctx.lineTo(hx + 8.4, hy - 1.4);
+    ctx.closePath(); ctx.fill();
   }
 
-  // Sort so characters lower on the screen draw in front
   const drawList = enemies.slice();
   drawList.push(player);
   drawList.sort((a, b) => a.y - b.y);
@@ -1443,7 +1920,6 @@ function draw() {
     else drawGuy(g, g.side, g.rank, false);
   }
 
-  // Shots
   for (const s of shots) {
     ctx.fillStyle = s.acid ? '#8ecf4a' : '#ffe08a';
     const px = Math.round(s.x - cam.x), py = Math.round(s.y - cam.y);
@@ -1451,10 +1927,9 @@ function draw() {
     else ctx.fillRect(px - 3, py - 1.5, 7, 3);
   }
 
-  // Floating text
   ctx.textAlign = 'center';
   for (const p of popups) {
-    ctx.globalAlpha = Math.min(1, p.life / 0.5);
+    ctx.globalAlpha = Math.min(1, p.life / .5);
     ctx.fillStyle = p.color;
     ctx.font = '800 15px -apple-system, system-ui, sans-serif';
     ctx.fillText(p.text, Math.round(p.x - cam.x), Math.round(p.y - cam.y));
@@ -1465,25 +1940,27 @@ function draw() {
   drawHUD();
 }
 
+
 // ---------------------------------------------------------------------------
 //  Main loop
 // ---------------------------------------------------------------------------
 let last = 0;
 function loop(now) {
   if (!last) last = now;
-  // Clamp dt so tabbing away does not teleport everything across the map.
-  const raw = Math.min(0.05, (now - last) / 1000);
+  const raw = Math.min(.05, (now - last) / 1000);
   last = now;
 
   if (running) {
-    if (hitstop > 0) {
+    if (paused) {
+      draw();
+    } else if (hitstop > 0) {
       // Everything holds still for a few dozen milliseconds. Keep drawing so it
-      // reads as a freeze frame on the moment of impact, not as a dropped frame.
+      // reads as a freeze frame on the impact, not as a dropped frame.
       hitstop -= raw;
       draw();
     } else {
       let dt = raw;
-      if (slowmo > 0) dt *= 0.45;
+      if (slowmo > 0) dt *= .45;
       update(dt);
       draw();
     }
@@ -1491,13 +1968,16 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+
 // ---------------------------------------------------------------------------
 //  Start
 // ---------------------------------------------------------------------------
 const titleEl = document.getElementById('title');
 function startGame() {
-  initAudio();
+  audioStart();
+  requestWake();
   titleEl.style.display = 'none';
+  resize();
   reset();
   last = 0;
   requestAnimationFrame(loop);
