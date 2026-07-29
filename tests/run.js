@@ -82,7 +82,9 @@ eval(code + `
    NOOB_RANKS, ZOMBIE_RANKS, UPGRADES, ENEMY_TYPES, TUNE, hostileCount,
    buildFlow, flowDir, solidAt, grid, GW, GH, TILE, spawnPoints, playerStart,
    freshUpgrades, waveCount, wrapLines, shade, rollEnemyType, resize,
-   isBossWave, togglePause, toggleMute, spawnEnemy,
+   isBossWave, togglePause, toggleMute, spawnEnemy, drawStanding, drawFloor,
+   drawBlock, WALL_H, CRATE_H, WALL_COLOR, CRATE_COLOR, visibleTiles,
+   get _standing(){return _standing},
    get btn(){return btn}, get miniRect(){return miniRect}, get PAD(){return PAD},
    get flow(){return flow}, get player(){return player}, get enemies(){return enemies},
    get wave(){return wave}, get waveState(){return waveState}, get cards(){return cards},
@@ -154,6 +156,37 @@ ok('characters are built from shaded blocky parts', /function part\(/.test(src))
 ok('the noob has the classic smiley face', /classic noob face/.test(src));
 ok('arms and legs are separate parts with gaps',
   /Two legs, with a gap/.test(src) && /Two arms/.test(src));
+
+group('The world has real height, not a flat top-down view');
+ok('blocks stand up off the floor', G.WALL_H > 0, 'walls are ' + G.WALL_H + 'px tall');
+ok('crates are lower than walls, so they read as cover',
+  G.CRATE_H > 0 && G.CRATE_H < G.WALL_H, 'crate ' + G.CRATE_H + 'px vs wall ' + G.WALL_H + 'px');
+ok('a block draws a top face and a side face', /function drawBlock/.test(src)
+  && /Front face, in shadow/.test(src) && /Top face with the studs/.test(src));
+ok('the floor is drawn separately, underneath', typeof G.drawFloor === 'function');
+ok('there is a back-to-front pass for everything standing up',
+  typeof G.drawStanding === 'function');
+ok('drawBlock runs without throwing',
+  (() => { try { G.drawBlock(10, 10, G.WALL_H, null, G.WALL_COLOR); return true; }
+           catch (e) { console.log('    ' + e.message); return false; } })());
+
+// Depth ordering is the thing that makes the height believable, and it is
+// exactly the sort of logic that breaks quietly, so check the sort really ran.
+G.reset();
+for (let i = 0; i < 240; i++) G.update(1 / 60);
+G.drawStanding();
+const order = G._standing;
+let outOfOrder = 0;
+for (let i = 1; i < order.length; i++) { if (order[i].y < order[i - 1].y) outOfOrder++; }
+ok('everything standing is sorted back to front', outOfOrder === 0,
+  order.length + ' items, ' + outOfOrder + ' out of order');
+ok('the player is included in that pass', order.indexOf(G.player) !== -1);
+ok('hearts are depth-sorted with the characters, not drawn flat',
+  /__heart/.test(src) && /drawHeartAt/.test(src));
+ok('visibleTiles pads a row for tall blocks', (() => {
+  const v = G.visibleTiles();
+  return v.x0 >= 0 && v.y0 >= 0 && v.x1 <= G.GW - 1 && v.y1 <= G.GH - 1;
+})());
 
 // --- layout -----------------------------------------------------------------
 group('HUD stays inside the safe area');

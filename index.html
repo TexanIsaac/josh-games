@@ -521,6 +521,11 @@ function makeTile(dpr, paint) {
   return c;
 }
 
+// How tall the blocks stand. This is what turns a flat top-down view into
+// something that looks like it is made of bricks with real height.
+const WALL_H = 26, CRATE_H = 15;
+const WALL_COLOR = '#9aa3ae', CRATE_COLOR = '#b07a3c';
+
 function buildTiles(dpr) {
   // The baseplate. Two shades checkered so the floor has some texture.
   const floorA = '#4c5a4a', floorB = '#47543f';
@@ -533,28 +538,35 @@ function buildTiles(dpr) {
     paintStuds(g, floorB);
   });
 
-  // A grey brick standing taller than the floor, so it gets a bright top face
-  // and a dark front edge to sell the height.
-  const wall = '#9aa3ae';
+  // These two are only the TOP faces of a block. The sides get drawn separately
+  // at the right height, which is what gives the world its depth.
   tileWall = makeTile(dpr, g => {
-    g.fillStyle = shade(wall, -46); g.fillRect(0, 0, TILE, TILE);
-    g.fillStyle = wall; g.fillRect(0, 0, TILE, TILE - 6);
-    g.fillStyle = shade(wall, 20); g.fillRect(0, 0, TILE, 3);
-    paintStuds(g, wall);
-    g.fillStyle = shade(wall, -60); g.fillRect(0, TILE - 6, TILE, 2);
+    g.fillStyle = WALL_COLOR; g.fillRect(0, 0, TILE, TILE);
+    g.fillStyle = shade(WALL_COLOR, 16); g.fillRect(0, 0, TILE, 2.5);
+    paintStuds(g, WALL_COLOR);
   });
-
-  // A wooden brick for cover.
-  const crate = '#b07a3c';
   tileCrate = makeTile(dpr, g => {
-    g.fillStyle = shade(crate, -50); g.fillRect(0, 0, TILE, TILE);
-    g.fillStyle = crate; g.fillRect(1, 1, TILE - 2, TILE - 6);
-    g.fillStyle = shade(crate, 22); g.fillRect(1, 1, TILE - 2, 3);
-    paintStuds(g, crate);
-    g.fillStyle = shade(crate, -62); g.fillRect(1, TILE - 6, TILE - 2, 2);
+    g.fillStyle = CRATE_COLOR; g.fillRect(0, 0, TILE, TILE);
+    g.fillStyle = shade(CRATE_COLOR, 18); g.fillRect(0, 0, TILE, 2.5);
+    paintStuds(g, CRATE_COLOR);
   });
 
   tilesDpr = dpr;
+}
+
+// One block, standing up off the floor. The top face is lifted by its height and
+// the front face fills the gap underneath, so you are looking slightly down at a
+// solid brick instead of at a flat square.
+function drawBlock(px, py, h, topImg, baseColor) {
+  // Front face, in shadow.
+  ctx.fillStyle = shade(baseColor, -54);
+  ctx.fillRect(px, py + TILE - h, TILE, h);
+  // A brighter lip right under the top face, the way light catches an edge.
+  ctx.fillStyle = shade(baseColor, -30);
+  ctx.fillRect(px, py + TILE - h, TILE, 3);
+  // Top face with the studs on it.
+  if (topImg) ctx.drawImage(topImg, px, py - h, TILE, TILE);
+  else { ctx.fillStyle = baseColor; ctx.fillRect(px, py - h, TILE, TILE); }
 }
 
 // A blocky part with a lit top face and a shaded right side. Every bit of every
@@ -849,7 +861,7 @@ function choose(card) {
 }
 
 function dropHeart(x, y) {
-  hearts.push({ x: x, y: y, life: 16, bob: Math.random() * 6.28 });
+  hearts.push({ x: x, y: y, life: 16, bob: Math.random() * 6.28, __heart: true });
 }
 
 
@@ -1559,27 +1571,81 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   }
 }
 
-function drawWorld() {
-  const x0 = Math.max(0, Math.floor(cam.x / TILE));
-  const y0 = Math.max(0, Math.floor(cam.y / TILE));
-  const x1 = Math.min(GW - 1, Math.ceil((cam.x + VW) / TILE));
-  const y1 = Math.min(GH - 1, Math.ceil((cam.y + VH) / TILE));
+// Which tiles are on screen. Padded a row either side because a tall block
+// sticks up out of its own tile and a low one pokes down.
+function visibleTiles() {
+  return {
+    x0: Math.max(0, Math.floor(cam.x / TILE) - 1),
+    y0: Math.max(0, Math.floor(cam.y / TILE) - 1),
+    x1: Math.min(GW - 1, Math.ceil((cam.x + VW) / TILE) + 1),
+    y1: Math.min(GH - 1, Math.ceil((cam.y + VH) / TILE) + 2),
+  };
+}
 
-  for (let gy = y0; gy <= y1; gy++) {
-    for (let gx = x0; gx <= x1; gx++) {
-      const t = grid[gy][gx];
+// The baseplate goes down flat, first, under everything.
+function drawFloor() {
+  const v = visibleTiles();
+  for (let gy = v.y0; gy <= v.y1; gy++) {
+    for (let gx = v.x0; gx <= v.x1; gx++) {
+      if (grid[gy][gx] !== 0) continue;
       const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
-      // Every tile is a studded brick, stamped from a canvas painted once.
-      const img = t === 0 ? (((gx + gy) % 2 === 0) ? tileFloorA : tileFloorB)
-                : t === WALL ? tileWall : tileCrate;
-      if (img) {
-        ctx.drawImage(img, px, py, TILE, TILE);
-      } else {
-        // Only reached if offscreen canvases are unavailable.
-        ctx.fillStyle = t === 0 ? '#4c5a4a' : t === WALL ? '#9aa3ae' : '#b07a3c';
-        ctx.fillRect(px, py, TILE, TILE);
-      }
+      const img = ((gx + gy) % 2 === 0) ? tileFloorA : tileFloorB;
+      if (img) ctx.drawImage(img, px, py, TILE, TILE);
+      else { ctx.fillStyle = '#4c5a4a'; ctx.fillRect(px, py, TILE, TILE); }
     }
+  }
+}
+
+function drawHeartAt(h) {
+  if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) return;
+  const hx = Math.round(h.x - cam.x);
+  const hy = Math.round(h.y - cam.y + Math.sin(h.bob) * 3) - 8;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(hx, hy + 12, 7, 3, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = '#e8544f';
+  ctx.beginPath();
+  ctx.arc(hx - 4, hy - 3, 4.6, 0, 6.283);
+  ctx.arc(hx + 4, hy - 3, 4.6, 0, 6.283);
+  ctx.moveTo(hx - 8.4, hy - 1.4); ctx.lineTo(hx, hy + 8); ctx.lineTo(hx + 8.4, hy - 1.4);
+  ctx.closePath(); ctx.fill();
+}
+
+// Everything that stands up off the floor, drawn back to front so a block or a
+// character nearer the bottom of the screen covers whatever is behind it. That
+// overlap is what makes the world read as solid rather than painted on.
+const _standing = [];
+function drawStanding() {
+  _standing.length = 0;
+  for (const e of enemies) _standing.push(e);
+  for (const h of hearts) _standing.push(h);
+  _standing.push(player);
+  _standing.sort((a, b) => a.y - b.y);
+
+  const v = visibleTiles();
+  let si = 0;
+  for (let gy = v.y0; gy <= v.y1; gy++) {
+    // Anything standing behind this row of blocks goes down first.
+    const rowTop = gy * TILE;
+    while (si < _standing.length && _standing[si].y <= rowTop) {
+      const o = _standing[si++];
+      if (o.__heart) drawHeartAt(o);
+      else if (o === player) drawGuy(player, player.side, player.rank, true);
+      else drawGuy(o, o.side, o.rank, false);
+    }
+    for (let gx = v.x0; gx <= v.x1; gx++) {
+      const t = grid[gy][gx];
+      if (t === 0) continue;
+      const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
+      if (t === WALL) drawBlock(px, py, WALL_H, tileWall, WALL_COLOR);
+      else drawBlock(px, py, CRATE_H, tileCrate, CRATE_COLOR);
+    }
+  }
+  // Whatever is in front of every block on screen.
+  while (si < _standing.length) {
+    const o = _standing[si++];
+    if (o.__heart) drawHeartAt(o);
+    else if (o === player) drawGuy(player, player.side, player.rank, true);
+    else drawGuy(o, o.side, o.rank, false);
   }
 }
 
@@ -1878,8 +1944,9 @@ function draw() {
   ctx.fillStyle = '#0d0f14';
   ctx.fillRect(-40, -40, VW + 80, VH + 80);
 
-  drawWorld();
+  drawFloor();
 
+  // Blood and debris lie flat on the plate, underneath anything standing on it.
   for (const b of bits) {
     ctx.globalAlpha = Math.max(0, b.life / b.max);
     ctx.fillStyle = b.c;
@@ -1887,25 +1954,7 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  for (const h of hearts) {
-    if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) continue;
-    const hx = Math.round(h.x - cam.x);
-    const hy = Math.round(h.y - cam.y + Math.sin(h.bob) * 3);
-    ctx.fillStyle = '#e8544f';
-    ctx.beginPath();
-    ctx.arc(hx - 4, hy - 3, 4.6, 0, 6.283);
-    ctx.arc(hx + 4, hy - 3, 4.6, 0, 6.283);
-    ctx.moveTo(hx - 8.4, hy - 1.4); ctx.lineTo(hx, hy + 8); ctx.lineTo(hx + 8.4, hy - 1.4);
-    ctx.closePath(); ctx.fill();
-  }
-
-  const drawList = enemies.slice();
-  drawList.push(player);
-  drawList.sort((a, b) => a.y - b.y);
-  for (const g of drawList) {
-    if (g === player) drawGuy(player, player.side, player.rank, true);
-    else drawGuy(g, g.side, g.rank, false);
-  }
+  drawStanding();
 
   for (const s of shots) {
     ctx.fillStyle = s.acid ? '#8ecf4a' : '#ffe08a';
