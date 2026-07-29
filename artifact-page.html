@@ -148,7 +148,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v9';
+const VERSION = 'v10';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -612,7 +612,23 @@ function shade(hex, amt) {
 //  made an earlier version look like Lego instead of Roblox.
 // ---------------------------------------------------------------------------
 const WALL_H = 58, CRATE_H = 26;
-const WALL_COLOR = '#9aa3ae', CRATE_COLOR = '#b07a3c';
+// Actual Roblox brick colours. A Roblox build is not one shade of grey: it is
+// mostly white and stone grey with the odd bright block, so walls now pick a
+// colour from the tile they sit on. Same tile always gets the same colour, so
+// the place looks built rather than randomly repainted every frame.
+const BRICKS = ['#f2f3f5', '#c8c8cb', '#f2f3f5', '#c8c8cb', '#c4281c', '#0d69ac', '#f5cd30'];
+const WALL_COLOR = '#c8c8cb', CRATE_COLOR = '#b07a3c';
+function brickAt(gx, gy) {
+  // A cheap repeatable hash, so a given tile keeps its colour.
+  const h = (gx * 73856093) ^ (gy * 19349663);
+  return BRICKS[Math.abs(h) % BRICKS.length];
+}
+
+// Sunlit grass, and a sky to sit against. Roblox is bright: the old near-black
+// background and dim grey-green plate were most of what made this look nothing
+// like it.
+const GRASS_A = '#8fb356', GRASS_B = '#87ab4e';
+const SKY = '#a8d4ea';
 
 const ISO_X = 0.66, ISO_Y = 0.35;
 
@@ -2059,10 +2075,10 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // bodies disappeared into the ground and only the head read. Brighter skin and
   // warm clothes fix that without making them look like noobs.
   let skin  = isNoob ? '#f5cd30' : '#9ed36a';
-  let torso = isNoob ? '#0a9bf5' : '#5a2b4a';
-  let legs  = isNoob ? '#6aa84f' : '#2f3340';
+  let torso = isNoob ? '#0d69ac' : '#5a2b4a';
+  let legs  = isNoob ? '#4e8f3a' : '#2f3340';
   // Runners and brutes are tinted so you can tell at a glance what is coming.
-  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#4fd6ff' : '#d98a2b'; }
+  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#12a8e8' : '#b06a18'; }
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
   // You, while boss mode is running.
@@ -2106,31 +2122,43 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const hs = 1 - sq * .35;
   const ws = 1 + sq * .25;
 
-  const legH = 15 * s * hs, torsoH = 14 * s * hs, headH = 15 * s * hs;
-  const hw = 9 * s * ws;              // half the width of the torso
-  const dep = 9 * s;                  // how deep the body is
+  const legH = 15.2 * s * hs, torsoH = 15.2 * s * hs, headH = 11.4 * s * hs;
+  const hw = 7.6 * s * ws;            // half the width of the torso
+  const dep = 7.6 * s;                // one stud deep
   const y0 = g.y - dep / 2;
 
-  // Legs, two boxes with a gap between them.
-  drawBox(g.x - hw, y0, z, 7.5 * s * ws, dep, legH, legs);
-  drawBox(g.x + hw - 7.5 * s * ws, y0, z, 7.5 * s * ws, dep, legH, legs);
-  // Arms, hanging off either side.
-  drawBox(g.x - hw - 4.8 * s, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
-  drawBox(g.x + hw, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
-  // Shoes on the bottom of each leg.
+  // Built to real Roblox proportions. A Roblox character is measured in studs:
+  // the torso is two wide and two tall, each arm and leg is one wide and two
+  // tall, and the head is two wide. The arms sit flush against the torso and the
+  // legs sit flush against each other, with no gaps anywhere. Getting those
+  // proportions right is most of what makes the silhouette recognisable.
+  const U = 7.6 * s;              // one stud
+  const armW = U * ws, legW = U * ws;
+  const torsoW = U * 2 * ws;
+  const cx0 = g.x;
+
+  // Legs, side by side, touching.
+  drawBox(cx0 - legW, y0, z, legW, dep, legH, legs);
+  drawBox(cx0, y0, z, legW, dep, legH, legs);
+  // Shoes.
   const shoe = shade(legs, -34);
-  drawBox(g.x - hw, y0 - 1, z, 7.5 * s * ws, dep + 1, 3.4 * s, shoe);
-  drawBox(g.x + hw - 7.5 * s * ws, y0 - 1, z, 7.5 * s * ws, dep + 1, 3.4 * s, shoe);
-  // Hands on the end of each arm.
-  drawBox(g.x - hw - 4.8 * s, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, 3.2 * s, shade(skin, -18));
-  drawBox(g.x + hw, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, 3.2 * s, shade(skin, -18));
+  drawBox(cx0 - legW, y0 - .6, z, legW, dep + .6, 3.2 * s, shoe);
+  drawBox(cx0, y0 - .6, z, legW, dep + .6, 3.2 * s, shoe);
+  // Arms, flush against each side of the torso.
+  const armZ = z + legH;
+  drawBox(cx0 - torsoW / 2 - armW, y0, armZ, armW, dep, torsoH, skin);
+  drawBox(cx0 + torsoW / 2, y0, armZ, armW, dep, torsoH, skin);
+  // Hands on the bottom of each arm.
+  drawBox(cx0 - torsoW / 2 - armW, y0 - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
+  drawBox(cx0 + torsoW / 2, y0 - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
   // Torso.
-  drawBox(g.x - hw, y0, z + legH, hw * 2, dep, torsoH, torso);
-  // A collar where the torso meets the neck.
-  drawBox(g.x - hw * .55, y0 + 1, z + legH + torsoH - 1.5, hw * 1.1, dep - 2, 2.6 * s, shade(torso, 22));
-  // Head, a cube sitting on the shoulders.
-  const headW = 15 * s * ws;
-  drawBox(g.x - headW / 2, y0, z + legH + torsoH, headW, dep, headH, skin);
+  drawBox(cx0 - torsoW / 2, y0, z + legH, torsoW, dep, torsoH, torso);
+  // A collar where the torso meets the head.
+  drawBox(cx0 - torsoW * .3, y0 + .8, z + legH + torsoH - 1.4, torsoW * .6, dep - 1.6,
+          2.4 * s, shade(torso, 24));
+  // Head, two studs wide like the real thing.
+  const headW = U * 2 * ws;
+  drawBox(cx0 - headW / 2, y0, z + legH + torsoH, headW, dep, headH, skin);
 
   // The classic noob face, painted on the front of the head cube.
   const fx = isoX(g.x, y0 + dep);
@@ -2232,7 +2260,10 @@ function drawFloor() {
       if (gy > 0 && grid[gy - 1][gx] !== 0) shadowed += 2;      // the lit side
       if (gx < GW - 1 && grid[gy][gx + 1] !== 0) shadowed++;
       if (gy < GH - 1 && grid[gy + 1][gx] !== 0) shadowed++;
-      const base = ((gx + gy) % 2 === 0) ? '#4c5a4a' : '#475440';
+      // The sun comes over your shoulder, so a block also throws a shadow
+      // diagonally onto the ground in front of it.
+      if (gx > 0 && gy > 0 && grid[gy - 1][gx - 1] !== 0) shadowed += 2;
+      const base = ((gx + gy) % 2 === 0) ? GRASS_A : GRASS_B;
       ctx.fillStyle = shadowed ? shade(base, -Math.min(26, shadowed * 8)) : base;
       ctx.beginPath();
       ctx.moveTo(cx, cy - h);
@@ -2361,7 +2392,8 @@ function drawStanding() {
       if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
       const h = t === WALL ? WALL_H : CRATE_H;
       const fade = hidesSomeone(wx, wy, h) ? TUNE.WALL_FADE : undefined;
-      drawBox(wx, wy, 0, TILE, TILE, h, t === WALL ? WALL_COLOR : CRATE_COLOR, fade);
+      const col = t === WALL ? brickAt(gx, gy) : CRATE_COLOR;
+      drawBox(wx, wy, 0, TILE, TILE, h, col, fade);
     }
   }
   while (si < _standing.length) drawOne(_standing[si++]);
@@ -2741,7 +2773,7 @@ function draw() {
                   shake.dy * j * .75 + (Math.random() - .5) * j * .45);
   }
 
-  ctx.fillStyle = '#0d0f14';
+  ctx.fillStyle = SKY;
   ctx.fillRect(-60, -60, VW + 120, VH + 120);
 
   // Everything from here on is drawn in world coordinates. This one transform

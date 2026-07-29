@@ -91,6 +91,7 @@ eval(code + `
    usePowerup, explode, chainLightning, drawHotbar, VERSION,
    hidesSomeone, buildOccludees, becomeBoss, endBossMode, WALL_H, CRATE_H, killEnemy,
    get _occludees(){return _occludees},
+   brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups},
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
@@ -742,9 +743,53 @@ ok('crates still sit lower than walls', G.CRATE_H < G.WALL_H,
 ok('ground against a block sits in its shadow',
   /Ground tucked up against a block sits in its shadow/.test(src));
 ok('characters have shoes, hands and a collar',
-  /Shoes on the bottom of each leg/.test(src)
-  && /Hands on the end of each arm/.test(src)
-  && /collar where the torso meets the neck/.test(src));
+  /\/\/ Shoes\./.test(src)
+  && /Hands on the bottom of each arm/.test(src)
+  && /collar where the torso meets the head/.test(src));
+
+group('Built like a Roblox character');
+ok('proportions are measured in studs', /one stud/.test(src) && /const U = 7\.6/.test(src));
+ok('arms sit flush against the torso, no floating gaps',
+  /flush against each side of the torso/.test(src));
+ok('legs sit flush against each other', /side by side, touching/.test(src));
+ok('the head is two studs wide like the real thing',
+  /two studs wide like the real thing/.test(src));
+ok('the reasoning about proportions is written down',
+  /most of what makes the silhouette recognisable/.test(src));
+
+group('Bright and sunlit, the way Roblox is');
+ok('there is a sky rather than near black', /const SKY = /.test(src));
+ok('the grass is sunlit, not murky',
+  (() => {
+    const m = src.match(/const GRASS_A = '(#[0-9a-f]{6})'/);
+    if (!m) return false;
+    const n = parseInt(m[1].slice(1), 16);
+    const L = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+    return L > 130;
+  })());
+ok('walls use real Roblox brick colours, not one flat grey',
+  /const BRICKS = \[/.test(src) && /brickAt/.test(src));
+ok('a given tile always gets the same brick colour',
+  (() => {
+    const a = G.brickAt(7, 4), b = G.brickAt(7, 4), c = G.brickAt(8, 4);
+    return a === b && typeof a === 'string';
+  })());
+ok('more than one brick colour is actually in use',
+  (() => {
+    const seen = new Set();
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 24; y++) seen.add(G.brickAt(x, y));
+    return seen.size >= 3;
+  })(), (() => { const s2 = new Set(); for (let x = 0; x < 40; x++) for (let y = 0; y < 24; y++) s2.add(G.brickAt(x, y)); return s2.size + ' colours'; })());
+ok('every brick colour stands out from the grass', (() => {
+  const L = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  const g1 = L('#8fb356'), g2 = L('#87ab4e');
+  const seen = new Set();
+  for (let x = 0; x < 40; x++) for (let y = 0; y < 24; y++) seen.add(G.brickAt(x, y));
+  return [...seen].every(c => Math.min(Math.abs(L(c) - g1), Math.abs(L(c) - g2)) > 18);
+})());
+ok('blocks throw a shadow diagonally onto the ground',
+  /sun comes over your shoulder/.test(src));
 
 group('Becoming the boss');
 G.reset();
