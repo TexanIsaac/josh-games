@@ -1,0 +1,1088 @@
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #0d0f14; color: #eef2f8;
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; touch-action: none; }
+
+  #title {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.9rem; text-align: center; padding: 2rem;
+    background: radial-gradient(circle at 50% 35%, #1b2430, #0d0f14 70%);
+  }
+  #title h1 {
+    margin: 0; font-size: clamp(2.2rem, 9vw, 4.4rem);
+    font-weight: 800; letter-spacing: -0.02em; line-height: 0.95;
+  }
+  #title h1 span { color: #6ee787; display: block; }
+  #title p { margin: 0; opacity: 0.72; font-size: clamp(0.95rem, 3.4vw, 1.15rem); line-height: 1.55; max-width: 30rem; }
+  #tapline { margin-top: 0.6rem; font-weight: 700; font-size: 1.2rem; color: #ffd84d; }
+
+  /* A blank white screen is the worst thing that can happen to a kid mid-build,
+     so any crash gets caught and explained in plain language instead. */
+  #oops {
+    position: fixed; inset: 0; z-index: 99; display: none;
+    padding: 2rem; background: #1a1113; color: #ffd9d9;
+    font: 0.95rem/1.65 ui-monospace, monospace; overflow: auto;
+  }
+  #oops h2 { color: #ff8f8f; font-family: -apple-system, system-ui, sans-serif; margin: 0 0 0.5rem; }
+  #oops code { color: #ffe08a; }
+</style>
+
+<div id="title">
+  <h1>Zombie<span>Noobs</span></h1>
+  <p>You are a noob with nothing but your fists. Punch zombies to rank up.
+     Get bitten too many times and you join them.</p>
+  <div id="tapline">Tap to play</div>
+</div>
+
+<canvas id="game"></canvas>
+
+<div id="oops">
+  <h2>The game hit a snag</h2>
+  <div id="oopsmsg"></div>
+  <p style="opacity:0.75">Usually this is a missing comma, a missing <code>)</code>, or a
+     misspelled name in the TUNE section. Fix it and refresh.</p>
+</div>
+
+<script>
+// The page skeleton is supplied by the host, so these two tags are added here
+// rather than in <head>. Without them the iPad treats the game as a document:
+// pinch to zoom, double-tap to zoom, and a scrolling page under your thumb.
+(function () {
+  var vp = document.querySelector('meta[name="viewport"]');
+  if (!vp) {
+    vp = document.createElement('meta');
+    vp.setAttribute('name', 'viewport');
+    document.head.appendChild(vp);
+  }
+  vp.setAttribute('content',
+    'width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no');
+
+  [['apple-mobile-web-app-capable', 'yes'],
+   ['apple-mobile-web-app-status-bar-style', 'black-translucent']
+  ].forEach(function (pair) {
+    if (document.querySelector('meta[name="' + pair[0] + '"]')) return;
+    var m = document.createElement('meta');
+    m.setAttribute('name', pair[0]);
+    m.setAttribute('content', pair[1]);
+    document.head.appendChild(m);
+  });
+})();
+
+// ===========================================================================
+//  ZOMBIE NOOBS
+//  Game design by Joshua Alexander.
+//
+//  HOW TO CHANGE THE GAME:
+//  Everything you are likely to want to tweak lives in the TUNE block and the
+//  MAP block directly below. Change a number, save, then refresh on the iPad.
+//  You cannot break anything permanently. If you do break it, the game will
+//  tell you what happened instead of just going blank.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+//  TUNE  --  Joshua's numbers. Change these freely.
+// ---------------------------------------------------------------------------
+const TUNE = {
+
+  // How many kills to reach each rank. These are Joshua's original numbers.
+  KILLS_FOR_KNIFER: 7,
+  KILLS_FOR_GUNNER: 22,
+  KILLS_FOR_RIOTER: 37,
+
+  // How tough you are.
+  PLAYER_HEALTH: 100,
+  PLAYER_SPEED: 205,          // pixels per second
+  HEAL_PER_SECOND: 4,         // slow regen so you are never stuck at 1 hp
+  HEAL_DELAY: 2.6,            // seconds after being hit before healing starts
+
+  // Getting infected. Each bite adds to a meter. Fill it and you turn zombie.
+  BITE_PER_HIT: 26,           // lower number = takes more bites to turn
+  BITE_COOLDOWN_DRAIN: 9,     // how fast the meter drains per second
+
+  // The enemies.
+  ENEMY_HEALTH: 60,
+  ENEMY_SPEED: 118,
+  ENEMY_MAX_ON_SCREEN: 26,
+  SPAWN_EVERY: 1.5,           // seconds between spawns
+  SPAWN_SPEEDUP: 0.986,       // spawns get slightly faster each time
+
+  // Feel. Turn these up for more chaos.
+  SCREEN_SHAKE: 1.0,
+  BLOOD: 1.0,
+  HITSTOP: 1.0,               // tiny freeze on every hit. Set to 0 to turn off.
+};
+
+// ---------------------------------------------------------------------------
+//  MAP  --  Draw the level with keyboard characters.
+//    #  wall            .  floor
+//    C  crate (cover)   P  where you start
+//    Z  enemy spawn point
+//  Rows do not have to be the same length. The game squares it up for you and
+//  always seals the outside edge, so you cannot accidentally make a hole.
+// ---------------------------------------------------------------------------
+const MAP = `
+############################################
+#Z......#..........C....#.........#.......Z#
+#.......#..C....C.......#...CC....#........#
+#...C...#.......#####...#.........#...C....#
+#.......#.......#...#...######.#####.......#
+#.####..#...C...#...#.........#....C.......#
+#....#..#.......#...#####..####............#
+#....#......C...#.......#..#......C....C...#
+#....######.....#..CC...#..#...........#####
+#...............#.......#..#...............#
+#..C....#####...#####.###..#####.####...C..#
+#.......#..........P.......................#
+#.......#...........#......#####.####...C..#
+#####...#####..C....#..C...#...............#
+#...........#.......#......#....C......#####
+#..C....C...#..#####........####...........#
+#...........#..#....C...C......#....C..C...#
+#####.###...#..#...........#####...........#
+#.......#...#..######.##...#.......#####...#
+#..C....#......#....#..#...#....C......#...#
+#.......#####..#.C..#..#####...........#...#
+#..C..........C#....#..........C....C..#...#
+#Z......#...........#...C.........#......Z.#
+############################################
+`;
+
+// ---------------------------------------------------------------------------
+//  RANKS  --  four on each side, mirrored, exactly as Joshua described.
+// ---------------------------------------------------------------------------
+const NOOB_RANKS = [
+  { name: 'Noob',        weapon: 'fists',       at: 0,                      reach: 44, dmg: 22, rate: 0.34, armor: 0,    ranged: false },
+  { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER,  reach: 60, dmg: 46, rate: 0.27, armor: 0,    ranged: false },
+  { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER,  reach: 520, dmg: 58, rate: 0.30, armor: 0,    ranged: true  },
+  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER,  reach: 66, dmg: 44, rate: 0.30, armor: 0.45, ranged: false },
+];
+
+// The zombie side gets the same shape: basic melee, better melee, ranged, tank.
+const ZOMBIE_RANKS = [
+  { name: 'Zombie',         weapon: 'bite',   at: 0,                      reach: 42, dmg: 20, rate: 0.46, armor: 0,    ranged: false },
+  { name: 'Zombie Ripper',  weapon: 'claws',  at: TUNE.KILLS_FOR_KNIFER,  reach: 56, dmg: 40, rate: 0.30, armor: 0,    ranged: false },
+  { name: 'Zombie Spitter', weapon: 'acid',   at: TUNE.KILLS_FOR_GUNNER,  reach: 470, dmg: 44, rate: 0.52, armor: 0,    ranged: true  },
+  { name: 'Zombie Brute',   weapon: 'smash',  at: TUNE.KILLS_FOR_RIOTER,  reach: 68, dmg: 52, rate: 0.42, armor: 0.45, ranged: false },
+];
+
+// ---------------------------------------------------------------------------
+//  Crash catcher
+// ---------------------------------------------------------------------------
+window.onerror = function (msg, src, line, col) {
+  document.getElementById('oops').style.display = 'block';
+  document.getElementById('oopsmsg').textContent = msg + '  (line ' + line + ', column ' + col + ')';
+  return true;
+};
+
+// ---------------------------------------------------------------------------
+//  Canvas, sized for a retina screen so it is sharp on the iPad
+// ---------------------------------------------------------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let VW = 0, VH = 0;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  VW = window.innerWidth;
+  VH = window.innerHeight;
+  canvas.width = Math.floor(VW * dpr);
+  canvas.height = Math.floor(VH * dpr);
+  canvas.style.width = VW + 'px';
+  canvas.style.height = VH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+resize();
+
+// ---------------------------------------------------------------------------
+//  Sound, made from scratch so there are no sound files to keep track of
+// ---------------------------------------------------------------------------
+let AC = null;
+function initAudio() {
+  const C = window.AudioContext || window.webkitAudioContext;
+  if (C && !AC) { AC = new C(); }
+  if (AC && AC.state !== 'running') { AC.resume(); }
+}
+
+function beep(freq, dur, type, vol) {
+  if (!AC) return;
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = type || 'square';
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(vol || 0.14, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+  o.connect(g); g.connect(AC.destination);
+  o.start(); o.stop(AC.currentTime + dur);
+}
+
+function noise(dur, vol, filterHz) {
+  if (!AC) return;
+  const n = Math.floor(AC.sampleRate * dur);
+  const buf = AC.createBuffer(1, n, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) { d[i] = (Math.random() * 2 - 1) * (1 - i / n); }
+  const s = AC.createBufferSource(); s.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filterHz || 1400;
+  const g = AC.createGain(); g.gain.value = vol || 0.2;
+  s.connect(f); f.connect(g); g.connect(AC.destination);
+  s.start();
+}
+
+const SFX = {
+  punch:   () => noise(0.09, 0.22, 900),
+  knife:   () => { noise(0.07, 0.18, 4200); beep(880, 0.05, 'sawtooth', 0.05); },
+  gun:     () => { noise(0.11, 0.3, 2600); beep(160, 0.09, 'square', 0.1); },
+  acid:    () => beep(220, 0.16, 'sawtooth', 0.09),
+  smash:   () => { noise(0.16, 0.3, 420); beep(70, 0.16, 'square', 0.12); },
+  hurt:    () => beep(150, 0.14, 'sawtooth', 0.14),
+  bite:    () => { beep(95, 0.17, 'sawtooth', 0.16); noise(0.1, 0.16, 700); },
+  die:     () => { beep(300, 0.08, 'square', 0.1); setTimeout(() => beep(180, 0.14, 'square', 0.09), 70); },
+  rankup:  () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.13), i * 85)); },
+  turn:    () => { [400, 320, 250, 180].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'sawtooth', 0.14), i * 95)); },
+};
+
+// ---------------------------------------------------------------------------
+//  The level, loaded from the MAP text above
+// ---------------------------------------------------------------------------
+const TILE = 40;
+const WALL = 1, CRATE = 2;
+let grid = [], GW = 0, GH = 0, spawnPoints = [], playerStart = { x: 0, y: 0 };
+
+function loadMap() {
+  const rows = MAP.split('\n').filter(r => r.trim().length > 0);
+  GW = Math.max.apply(null, rows.map(r => r.length));
+  GH = rows.length;
+  grid = [];
+  spawnPoints = [];
+
+  for (let y = 0; y < GH; y++) {
+    const row = [];
+    for (let x = 0; x < GW; x++) {
+      const ch = rows[y][x] || '.';
+      // Always seal the border, no matter what got typed.
+      const edge = (x === 0 || y === 0 || x === GW - 1 || y === GH - 1);
+      if (edge) { row.push(WALL); continue; }
+      if (ch === '#') { row.push(WALL); continue; }
+      if (ch === 'C') { row.push(CRATE); continue; }
+      row.push(0);
+      const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
+      if (ch === 'Z') spawnPoints.push({ x: cx, y: cy });
+      if (ch === 'P') playerStart = { x: cx, y: cy };
+    }
+    grid.push(row);
+  }
+  if (spawnPoints.length === 0) spawnPoints.push({ x: TILE * 2, y: TILE * 2 });
+  if (!playerStart.x) playerStart = { x: GW * TILE / 2, y: GH * TILE / 2 };
+}
+loadMap();
+const WORLD_W = GW * TILE, WORLD_H = GH * TILE;
+
+function solidAt(px, py) {
+  const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
+  if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true;
+  return grid[gy][gx] !== 0;
+}
+
+function blocked(x, y, r) {
+  return solidAt(x - r, y - r) || solidAt(x + r, y - r)
+      || solidAt(x - r, y + r) || solidAt(x + r, y + r);
+}
+
+// Move one axis at a time so you slide along walls instead of sticking to them.
+function moveEntity(e, dx, dy) {
+  if (dx !== 0 && !blocked(e.x + dx, e.y, e.r)) e.x += dx;
+  if (dy !== 0 && !blocked(e.x, e.y + dy, e.r)) e.y += dy;
+}
+
+// ---------------------------------------------------------------------------
+//  Game state
+// ---------------------------------------------------------------------------
+const NOOB = 'noob', ZOMB = 'zombie';
+let player, enemies, shots, bits, popups;
+let spawnTimer, spawnGap, running, best;
+let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
+
+// Screen shake, aimed. Random jitter in every direction reads as a glitch or a
+// loose cable. Shoving the camera along the direction of the blow, plus a sliver
+// of rotation, reads as force. That difference is most of "game feel".
+const shake = { mag: 0, dx: 0, dy: 0, rot: 0 };
+
+best = Number(localStorage.getItem('zn_best') || 0);
+
+function rankFor(side, kills) {
+  const table = side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
+  let idx = 0;
+  for (let i = 0; i < table.length; i++) { if (kills >= table[i].at) idx = i; }
+  return idx;
+}
+
+function newPlayer() {
+  return {
+    x: playerStart.x, y: playerStart.y, r: 13,
+    side: NOOB, kills: { noob: 0, zombie: 0 },
+    rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
+    face: 1, aimx: 1, aimy: 0, wob: 0,
+    cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
+  };
+}
+
+function reset() {
+  player = newPlayer();
+  enemies = []; shots = []; bits = []; popups = [];
+  spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
+  shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
+  flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
+  running = true;
+}
+
+function myRanks() { return player.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS; }
+function myKills() { return player.kills[player.side]; }
+function enemySide() { return player.side === NOOB ? ZOMB : NOOB; }
+
+// ---------------------------------------------------------------------------
+//  Enemies and allies. An "enemy" is anyone on the opposite side from you.
+// ---------------------------------------------------------------------------
+function spawnEnemy(side, atX, atY) {
+  let p;
+  if (atX !== undefined) {
+    p = { x: atX, y: atY };
+  } else {
+    // Pick a spawn point that is not right on top of the player.
+    let tries = 0;
+    do {
+      p = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+      tries++;
+    } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
+  }
+  enemies.push({
+    x: p.x, y: p.y, r: 13, side: side,
+    hp: TUNE.ENEMY_HEALTH, maxhp: TUNE.ENEMY_HEALTH,
+    rank: 0, cool: Math.random() * 0.6, face: 1, swing: 0, hurtFlash: 0,
+    squash: 0, wob: Math.random() * 6.28,
+  });
+}
+
+function nearestTarget(from, wantSide) {
+  let bestD = Infinity, found = null;
+  if (player.side === wantSide) {
+    const d = Math.hypot(player.x - from.x, player.y - from.y);
+    if (d < bestD) { bestD = d; found = player; }
+  }
+  for (const e of enemies) {
+    if (e.side !== wantSide || e === from || e.hp <= 0) continue;
+    const d = Math.hypot(e.x - from.x, e.y - from.y);
+    if (d < bestD) { bestD = d; found = e; }
+  }
+  return { target: found, dist: bestD };
+}
+
+// ---------------------------------------------------------------------------
+//  Controls. Pointer events cover both the iPad and a laptop with one path.
+//  Left side of the screen steers, right side attacks. Two thumbs at once
+//  works because each finger is tracked by its own pointerId.
+// ---------------------------------------------------------------------------
+const stick = { active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
+const fire = { active: false, id: null };
+const keys = {};
+const STICK_MAX = 62;
+
+function onDown(e) {
+  if (!running) return;
+  const leftHalf = e.clientX < VW * 0.5;
+  if (leftHalf && !stick.active) {
+    stick.active = true; stick.id = e.pointerId;
+    stick.ox = e.clientX; stick.oy = e.clientY; stick.dx = 0; stick.dy = 0;
+  } else if (!fire.active) {
+    fire.active = true; fire.id = e.pointerId;
+  }
+}
+function onMove(e) {
+  if (stick.active && e.pointerId === stick.id) {
+    let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
+    const len = Math.hypot(dx, dy);
+    if (len > STICK_MAX) { dx = dx / len * STICK_MAX; dy = dy / len * STICK_MAX; }
+    stick.dx = dx; stick.dy = dy;
+  }
+}
+function onUp(e) {
+  if (stick.active && e.pointerId === stick.id) { stick.active = false; stick.dx = 0; stick.dy = 0; }
+  if (fire.active && e.pointerId === fire.id) { fire.active = false; }
+}
+canvas.addEventListener('pointerdown', onDown);
+canvas.addEventListener('pointermove', onMove);
+canvas.addEventListener('pointerup', onUp);
+canvas.addEventListener('pointercancel', onUp);
+
+// Keyboard, for building and testing on the laptop.
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup',   e => { keys[e.key.toLowerCase()] = false; });
+
+function inputVector() {
+  let dx = 0, dy = 0;
+  if (stick.active) {
+    const len = Math.hypot(stick.dx, stick.dy);
+    if (len > 8) { dx = stick.dx / STICK_MAX; dy = stick.dy / STICK_MAX; }
+  }
+  if (keys['a'] || keys['arrowleft'])  dx -= 1;
+  if (keys['d'] || keys['arrowright']) dx += 1;
+  if (keys['w'] || keys['arrowup'])    dy -= 1;
+  if (keys['s'] || keys['arrowdown'])  dy += 1;
+  const len = Math.hypot(dx, dy);
+  if (len > 1) { dx /= len; dy /= len; }
+  return { dx, dy };
+}
+function firing() { return fire.active || keys[' '] || keys['j']; }
+
+// ---------------------------------------------------------------------------
+//  Effects
+// ---------------------------------------------------------------------------
+function spray(x, y, color, count, dirAngle) {
+  const n = Math.round(count * TUNE.BLOOD);
+  for (let i = 0; i < n; i++) {
+    // Debris thrown along the line of the blow. An even puff in all directions
+    // looks like a firework; a directed spray looks like something got hit.
+    const a = (dirAngle === undefined)
+      ? Math.random() * 6.283
+      : dirAngle + (Math.random() - 0.5) * 1.6;
+    const sp = 40 + Math.random() * 170;
+    bits.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                life: 0.35 + Math.random() * 0.45, max: 0.8, c: color,
+                s: 2 + Math.random() * 3 });
+  }
+}
+function popup(x, y, text, color) {
+  popups.push({ x, y, text, color, life: 0.9 });
+}
+function addShake(amount, dirX, dirY) {
+  const a = amount * TUNE.SCREEN_SHAKE;
+  shake.mag = Math.min(18, shake.mag + a);
+  if (dirX !== undefined && (dirX !== 0 || dirY !== 0)) {
+    const len = Math.hypot(dirX, dirY) || 1;
+    shake.dx = dirX / len; shake.dy = dirY / len;
+  } else {
+    const r = Math.random() * 6.283;
+    shake.dx = Math.cos(r); shake.dy = Math.sin(r);
+  }
+  // Under a degree. Any more and it looks like the screen is falling over.
+  shake.rot = (Math.random() < 0.5 ? -1 : 1) * Math.min(0.018, a * 0.0022);
+}
+
+// Freeze the whole game for a few dozen milliseconds when something connects.
+// Costs nothing and does more for how a punch feels than any other single line.
+function addHitstop(sec) { hitstop = Math.max(hitstop, sec * TUNE.HITSTOP); }
+
+function announce(text) {
+  flashText = text; flashTime = 1.5; slowmo = 0.55;
+}
+
+// ---------------------------------------------------------------------------
+//  Damage
+// ---------------------------------------------------------------------------
+function hurtEnemy(e, dmg, fromX, fromY) {
+  const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
+  const armor = table[e.rank].armor;
+  e.hp -= dmg * (1 - armor);
+  e.hurtFlash = 0.14;
+  e.squash = 0.14;
+  const a = Math.atan2(e.y - fromY, e.x - fromX);
+  spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', 7, a);
+  moveEntity(e, Math.cos(a) * 9, Math.sin(a) * 9);
+  addHitstop(0.045);
+  if (e.hp <= 0) killEnemy(e, a);
+}
+
+function killEnemy(e, dirAngle) {
+  e.hp = 0;
+  spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', 18, dirAngle);
+  SFX.die();
+  addHitstop(0.075);
+  addShake(3.5,
+    dirAngle === undefined ? undefined : Math.cos(dirAngle),
+    dirAngle === undefined ? undefined : Math.sin(dirAngle));
+  const wasEnemyOfPlayer = (e.side !== player.side);
+  if (wasEnemyOfPlayer) {
+    player.kills[player.side]++;
+    const k = myKills();
+    popup(e.x, e.y - 20, '+1', '#ffd84d');
+    const newRank = rankFor(player.side, k);
+    if (newRank > player.rank) {
+      player.rank = newRank;
+      announce(myRanks()[newRank].name.toUpperCase() + '!');
+      SFX.rankup();
+      addShake(7);
+      player.hp = player.maxhp;
+    }
+    if (k > best) { best = k; localStorage.setItem('zn_best', String(best)); }
+  }
+}
+
+// When you are a zombie and you bite a noob, that noob turns and fights for you.
+// This is the mechanic Joshua asked for: zombies can infect the noobs.
+function infectEnemy(e) {
+  e.side = ZOMB;
+  e.rank = 0;
+  e.hp = TUNE.ENEMY_HEALTH;
+  e.maxhp = TUNE.ENEMY_HEALTH;
+  spray(e.x, e.y, '#6ee787', 20);
+  popup(e.x, e.y - 22, 'INFECTED', '#6ee787');
+  SFX.turn();
+  player.kills[ZOMB]++;
+  const newRank = rankFor(ZOMB, player.kills[ZOMB]);
+  if (player.side === ZOMB && newRank > player.rank) {
+    player.rank = newRank;
+    announce(ZOMBIE_RANKS[newRank].name.toUpperCase() + '!');
+    SFX.rankup();
+  }
+  if (player.side === ZOMB && player.kills[ZOMB] > best) {
+    best = player.kills[ZOMB];
+    localStorage.setItem('zn_best', String(best));
+  }
+}
+
+function hurtPlayer(dmg, biteAmount) {
+  if (player.invuln > 0) return;
+  const armor = myRanks()[player.rank].armor;
+  player.hp -= dmg * (1 - armor);
+  player.hurtTimer = TUNE.HEAL_DELAY;
+  player.squash = 0.16;
+  addShake(4.5);
+  addHitstop(0.05);
+  SFX.hurt();
+  spray(player.x, player.y, '#c0392b', 6);
+
+  if (biteAmount > 0 && player.side === NOOB) {
+    player.bite = Math.min(100, player.bite + biteAmount);
+    SFX.bite();
+    if (player.bite >= 100) { flipSide(); return; }
+  }
+  if (player.hp <= 0) flipSide();
+}
+
+// The core loop of Joshua's design: you go back and forth between the two
+// sides instead of ever getting a game over screen.
+function flipSide() {
+  const wasNoob = player.side === NOOB;
+  player.side = wasNoob ? ZOMB : NOOB;
+  player.rank = rankFor(player.side, player.kills[player.side]);
+  player.hp = player.maxhp;
+  player.bite = 0;
+  player.invuln = 2.0;
+  spray(player.x, player.y, wasNoob ? '#6ee787' : '#ffd84d', 34);
+  addShake(11);
+  SFX.turn();
+  announce(wasNoob ? 'YOU TURNED ZOMBIE' : 'BACK ON THE NOOBS');
+
+  // Everyone who was on your old side is now against you, and the enemies
+  // already on the field switch roles too, so the fight keeps going.
+  for (const e of enemies) { if (Math.random() < 0.5) e.side = wasNoob ? NOOB : ZOMB; }
+}
+
+// ---------------------------------------------------------------------------
+//  Attacking
+// ---------------------------------------------------------------------------
+function tryAttack(who, isPlayer) {
+  const table = who.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
+  const rk = table[who.rank];
+  if (who.cool > 0) return;
+
+  const wantSide = who.side === NOOB ? ZOMB : NOOB;
+  const found = nearestTarget(who, wantSide);
+  if (!found.target) return;
+
+  const ax = found.target.x - who.x, ay = found.target.y - who.y;
+  const dist = Math.hypot(ax, ay) || 1;
+
+  if (rk.ranged) {
+    if (dist > rk.reach) return;
+    who.cool = rk.rate;
+    who.swing = 0.12;
+    const isAcid = rk.weapon === 'acid';
+    shots.push({
+      x: who.x + ax / dist * 16, y: who.y + ay / dist * 16,
+      vx: ax / dist * (isAcid ? 430 : 760), vy: ay / dist * (isAcid ? 430 : 760),
+      dmg: rk.dmg, side: who.side, life: 1.4,
+      acid: isAcid, bites: isAcid,
+    });
+    // The camera kicks backward from the shot, the way recoil would push you.
+    if (isPlayer) addShake(isAcid ? 1.4 : 2.8, -ax / dist, -ay / dist);
+    who.squash = 0.1;
+    (isAcid ? SFX.acid : SFX.gun)();
+    return;
+  }
+
+  // Melee: has to be close.
+  if (dist > rk.reach) return;
+  who.cool = rk.rate;
+  who.swing = 0.16;
+
+  if (rk.weapon === 'knife') SFX.knife();
+  else if (rk.weapon === 'smash') SFX.smash();
+  else SFX.punch();
+
+  // The one swinging gets shoved back and squashed too. Two bodies reacting to
+  // one hit sells it far better than only the target flinching.
+  who.squash = 0.12;
+  moveEntity(who, -ax / dist * 4, -ay / dist * 4);
+
+  if (found.target === player) {
+    // Zombie melee infects as well as hurts.
+    const biteAmt = who.side === ZOMB ? TUNE.BITE_PER_HIT : 0;
+    hurtPlayer(rk.dmg, biteAmt);
+  } else {
+    // Player is a zombie biting a noob: infect instead of just killing.
+    if (who.side === ZOMB && found.target.side === NOOB && isPlayer) {
+      infectEnemy(found.target);
+    } else {
+      hurtEnemy(found.target, rk.dmg, who.x, who.y);
+    }
+  }
+  if (isPlayer) addShake(rk.weapon === 'smash' ? 4.5 : 1.8, ax / dist, ay / dist);
+}
+
+// ---------------------------------------------------------------------------
+//  Update
+// ---------------------------------------------------------------------------
+function update(dt) {
+  // Player movement
+  const mv = inputVector();
+  const sp = TUNE.PLAYER_SPEED * dt;
+  moveEntity(player, mv.dx * sp, mv.dy * sp);
+  if (mv.dx !== 0) player.face = mv.dx > 0 ? 1 : -1;
+
+  // Aim at whoever is closest, because twin-stick aiming on a touchscreen is
+  // no fun. You point yourself in the right direction automatically.
+  const near = nearestTarget(player, enemySide());
+  if (near.target) {
+    const a = Math.atan2(near.target.y - player.y, near.target.x - player.x);
+    player.aimx = Math.cos(a); player.aimy = Math.sin(a);
+    if (Math.abs(player.aimx) > 0.25 && mv.dx === 0) player.face = player.aimx > 0 ? 1 : -1;
+  }
+
+  player.cool = Math.max(0, player.cool - dt);
+  player.swing = Math.max(0, player.swing - dt);
+  player.squash = Math.max(0, player.squash - dt * 7);
+  player.invuln = Math.max(0, player.invuln - dt);
+  player.wob += dt * 6;
+  player.hurtTimer = Math.max(0, player.hurtTimer - dt);
+  if (player.hurtTimer === 0 && player.hp < player.maxhp) {
+    player.hp = Math.min(player.maxhp, player.hp + TUNE.HEAL_PER_SECOND * dt);
+  }
+  if (player.side === NOOB && player.bite > 0) {
+    player.bite = Math.max(0, player.bite - TUNE.BITE_COOLDOWN_DRAIN * dt);
+  }
+  if (firing()) tryAttack(player, true);
+
+  // Spawning
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnTimer = spawnGap;
+    spawnGap = Math.max(0.42, spawnGap * TUNE.SPAWN_SPEEDUP);
+    const alive = enemies.filter(e => e.hp > 0).length;
+    if (alive < TUNE.ENEMY_MAX_ON_SCREEN) spawnEnemy(enemySide());
+  }
+
+  // Enemies and allies
+  for (const e of enemies) {
+    if (e.hp <= 0) continue;
+    e.cool = Math.max(0, e.cool - dt);
+    e.swing = Math.max(0, e.swing - dt);
+    e.hurtFlash = Math.max(0, e.hurtFlash - dt);
+    e.squash = Math.max(0, e.squash - dt * 7);
+    e.wob += dt * 7;
+
+    const wantSide = e.side === NOOB ? ZOMB : NOOB;
+    const found = nearestTarget(e, wantSide);
+    if (found.target) {
+      const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
+      const rk = table[e.rank];
+      const stopAt = rk.ranged ? 240 : rk.reach - 8;
+      if (found.dist > stopAt) {
+        const a = Math.atan2(found.target.y - e.y, found.target.x - e.x);
+        // A little side-to-side wobble so they do not march in a straight line.
+        const wob = Math.sin(e.wob) * 0.32;
+        const sx = Math.cos(a + wob), sy = Math.sin(a + wob);
+        moveEntity(e, sx * TUNE.ENEMY_SPEED * dt, sy * TUNE.ENEMY_SPEED * dt);
+        e.face = sx > 0 ? 1 : -1;
+      }
+      tryAttack(e, false);
+    }
+  }
+  enemies = enemies.filter(e => e.hp > 0);
+
+  // Shots
+  for (const s of shots) {
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    s.life -= dt;
+    if (solidAt(s.x, s.y)) { s.life = 0; spray(s.x, s.y, '#8a8f98', 4); continue; }
+    const wantSide = s.side === NOOB ? ZOMB : NOOB;
+    if (player.side === wantSide && Math.hypot(player.x - s.x, player.y - s.y) < player.r + 5) {
+      hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * 0.7 : 0);
+      s.life = 0; continue;
+    }
+    for (const e of enemies) {
+      if (e.side !== wantSide || e.hp <= 0) continue;
+      if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + 5) {
+        hurtEnemy(e, s.dmg, s.x - s.vx * 0.01, s.y - s.vy * 0.01);
+        s.life = 0; break;
+      }
+    }
+  }
+  shots = shots.filter(s => s.life > 0);
+
+  // Particles and floating text
+  for (const b of bits) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.vx *= 0.92; b.vy *= 0.92;
+    b.life -= dt;
+  }
+  bits = bits.filter(b => b.life > 0);
+  for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
+  popups = popups.filter(p => p.life > 0);
+
+  shake.mag = Math.max(0, shake.mag - dt * 40);
+  if (flashTime > 0) flashTime -= dt;
+  if (slowmo > 0) slowmo = Math.max(0, slowmo - dt);
+}
+
+// ---------------------------------------------------------------------------
+//  Drawing
+// ---------------------------------------------------------------------------
+const cam = { x: 0, y: 0 };
+
+function updateCamera() {
+  cam.x = player.x - VW / 2;
+  cam.y = player.y - VH / 2;
+  cam.x = Math.max(0, Math.min(WORLD_W - VW, cam.x));
+  cam.y = Math.max(0, Math.min(WORLD_H - VH, cam.y));
+  if (WORLD_W < VW) cam.x = (WORLD_W - VW) / 2;
+  if (WORLD_H < VH) cam.y = (WORLD_H - VH) / 2;
+}
+
+// A blocky character in the classic noob colours. Drawn upright and flipped
+// left or right, which reads clearly from above without needing real 3D.
+function drawGuy(g, side, rankIdx, isPlayer) {
+  const x = Math.round(g.x - cam.x), y = Math.round(g.y - cam.y);
+  const isNoob = side === NOOB;
+  const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
+  const rk = table[rankIdx];
+
+  const skin  = isNoob ? '#f5cd30' : '#7fa05a';
+  const torso = isNoob ? '#0a9bf5' : '#46543a';
+  const legs  = isNoob ? '#6aa84f' : '#333f2c';
+  const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.3;
+
+  ctx.save();
+  ctx.translate(x, y + bob);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(0, 15, 14, 5.5, 0, 0, 6.283);
+  ctx.fill();
+
+  const flash = (g.hurtFlash > 0) || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
+  if (flash) { ctx.globalAlpha = 0.72; }
+
+  const f = (g.face || 1);
+  const big = rk.weapon === 'smash' ? 1.16 : 1;
+  // Squash and stretch: widen and flatten for a moment on impact, then spring
+  // back. Cartoons have used this forever and it still works.
+  const sq = g.squash || 0;
+  ctx.scale(f * big * (1 + sq * 1.3), big * (1 - sq * 0.9));
+
+  // Legs
+  ctx.fillStyle = legs;
+  ctx.fillRect(-8, 2, 6, 13);
+  ctx.fillRect(2, 2, 6, 13);
+  // Torso
+  ctx.fillStyle = torso;
+  ctx.fillRect(-9, -8, 18, 11);
+  // Arms
+  ctx.fillStyle = skin;
+  ctx.fillRect(-13, -8, 4, 10);
+  ctx.fillRect(9, -8, 4, 10);
+  // Head
+  ctx.fillStyle = skin;
+  ctx.fillRect(-8, -22, 16, 14);
+  // Face
+  ctx.fillStyle = '#20242c';
+  ctx.fillRect(-4, -18, 2.5, 3);
+  ctx.fillRect(2, -18, 2.5, 3);
+  if (isNoob) {
+    ctx.fillRect(-3, -13, 6, 1.6);
+  } else {
+    // Zombies get a jagged mouth so they read as the bad side instantly.
+    ctx.fillRect(-5, -14, 10, 3);
+    ctx.fillStyle = skin;
+    ctx.fillRect(-3, -14, 1.6, 3);
+    ctx.fillRect(1.5, -14, 1.6, 3);
+  }
+
+  // Weapon, held on the side the character is facing
+  const swinging = g.swing > 0;
+  const push = swinging ? 6 : 0;
+  if (rk.weapon === 'knife') {
+    ctx.fillStyle = '#2b2f38'; ctx.fillRect(12 + push, -6, 4, 3);
+    ctx.fillStyle = '#dfe6f0'; ctx.fillRect(16 + push, -6.5, 11, 3.2);
+  } else if (rk.weapon === 'pistol') {
+    ctx.fillStyle = '#22262e'; ctx.fillRect(12, -6, 12, 4);
+    ctx.fillRect(13, -3, 4, 5);
+    if (swinging) { ctx.fillStyle = '#ffd84d'; ctx.fillRect(24, -6, 7, 4); }
+  } else if (rk.weapon === 'riot shield') {
+    ctx.fillStyle = 'rgba(190,205,225,0.5)';
+    ctx.fillRect(11, -20, 7, 30);
+    ctx.fillStyle = '#8c99ab'; ctx.fillRect(11, -20, 7, 2.5);
+    ctx.fillRect(11, 7.5, 7, 2.5);
+  } else if (rk.weapon === 'claws') {
+    ctx.fillStyle = '#d8dee8';
+    for (let i = 0; i < 3; i++) ctx.fillRect(13 + push, -8 + i * 4, 8, 1.8);
+  } else if (rk.weapon === 'acid') {
+    ctx.fillStyle = '#8ecf4a';
+    ctx.beginPath(); ctx.arc(15, -3, 4.5, 0, 6.283); ctx.fill();
+  } else if (rk.weapon === 'smash') {
+    ctx.fillStyle = '#5b6b45'; ctx.fillRect(11 + push, -9, 9, 9);
+  } else if (swinging) {
+    // Fists and bite get a simple swipe arc.
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(10, -3, 13, -0.9, 0.9); ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Health bar over anyone who is hurt
+  if (!isPlayer && g.hp < g.maxhp) {
+    const w = 26, h = 3.5;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x - w / 2, y - 32, w, h);
+    ctx.fillStyle = isNoob ? '#4da3ff' : '#8ecf4a';
+    ctx.fillRect(x - w / 2, y - 32, w * Math.max(0, g.hp / g.maxhp), h);
+  }
+}
+
+function drawWorld() {
+  // Floor: the classic grey baseplate look, drawn only where you can see it.
+  const x0 = Math.max(0, Math.floor(cam.x / TILE));
+  const y0 = Math.max(0, Math.floor(cam.y / TILE));
+  const x1 = Math.min(GW - 1, Math.ceil((cam.x + VW) / TILE));
+  const y1 = Math.min(GH - 1, Math.ceil((cam.y + VH) / TILE));
+
+  for (let gy = y0; gy <= y1; gy++) {
+    for (let gx = x0; gx <= x1; gx++) {
+      const t = grid[gy][gx];
+      const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
+      if (t === 0) {
+        ctx.fillStyle = ((gx + gy) % 2 === 0) ? '#2b303a' : '#272c35';
+        ctx.fillRect(px, py, TILE, TILE);
+      } else if (t === WALL) {
+        ctx.fillStyle = '#4a5262';
+        ctx.fillRect(px, py, TILE, TILE);
+        ctx.fillStyle = '#5b6474';
+        ctx.fillRect(px, py, TILE, 5);
+        ctx.fillStyle = '#3a4150';
+        ctx.fillRect(px, py + TILE - 4, TILE, 4);
+      } else if (t === CRATE) {
+        ctx.fillStyle = '#8a6234';
+        ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+        ctx.fillStyle = '#a3763f';
+        ctx.fillRect(px + 3, py + 3, TILE - 6, 5);
+        ctx.strokeStyle = '#6b4b28'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px + 4, py + 4); ctx.lineTo(px + TILE - 4, py + TILE - 4);
+        ctx.moveTo(px + TILE - 4, py + 4); ctx.lineTo(px + 4, py + TILE - 4);
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawHUD() {
+  const ranks = myRanks();
+  const rk = ranks[player.rank];
+  const k = myKills();
+  const next = ranks[player.rank + 1];
+
+  // Rank name and kill count
+  ctx.textAlign = 'left';
+  ctx.fillStyle = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
+  ctx.font = '800 20px -apple-system, system-ui, sans-serif';
+  ctx.fillText(rk.name, 16, 32);
+
+  ctx.fillStyle = 'rgba(238,242,248,0.72)';
+  ctx.font = '600 13px -apple-system, system-ui, sans-serif';
+  ctx.fillText(k + ' kills   best ' + best, 16, 51);
+
+  // Progress to the next rank
+  if (next) {
+    const span = next.at - rk.at;
+    const done = Math.max(0, Math.min(1, (k - rk.at) / span));
+    const bw = 168;
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    ctx.fillRect(16, 60, bw, 7);
+    ctx.fillStyle = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
+    ctx.fillRect(16, 60, bw * done, 7);
+    ctx.fillStyle = 'rgba(238,242,248,0.62)';
+    ctx.font = '600 12px -apple-system, system-ui, sans-serif';
+    ctx.fillText((next.at - k) + ' more to ' + next.name, 16, 82);
+  } else {
+    ctx.fillStyle = '#ff9f43';
+    ctx.font = '700 12px -apple-system, system-ui, sans-serif';
+    ctx.fillText('TOP RANK', 16, 74);
+  }
+
+  // Health
+  const hw = 168;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(16, VH - 34, hw, 12);
+  ctx.fillStyle = '#e8544f';
+  ctx.fillRect(16, VH - 34, hw * Math.max(0, player.hp / player.maxhp), 12);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+  ctx.strokeRect(16, VH - 34, hw, 12);
+
+  // Infection meter, only while you are still a noob
+  if (player.side === NOOB && player.bite > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(16, VH - 52, hw, 10);
+    ctx.fillStyle = '#6ee787';
+    ctx.fillRect(16, VH - 52, hw * (player.bite / 100), 10);
+    ctx.fillStyle = '#6ee787';
+    ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText('INFECTION', 16 + hw + 8, VH - 43);
+  }
+
+  // The joystick, drawn where the thumb actually is
+  if (stick.active) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(stick.ox, stick.oy, STICK_MAX, 0, 6.283); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.arc(stick.ox + stick.dx, stick.oy + stick.dy, 24, 0, 6.283); ctx.fill();
+  }
+
+  // Attack button hint on the right
+  ctx.fillStyle = fire.active ? 'rgba(255,216,77,0.3)' : 'rgba(255,255,255,0.09)';
+  ctx.beginPath(); ctx.arc(VW - 78, VH - 88, 46, 0, 6.283); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '700 13px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(rk.ranged ? 'SHOOT' : 'HIT', VW - 78, VH - 83);
+
+  // The big rank-up banner
+  if (flashText && flashTime > 0) {
+    const a = Math.min(1, flashTime / 0.4);
+    ctx.globalAlpha = a;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, VH * 0.34, VW, 76);
+    ctx.fillStyle = '#ffd84d';
+    ctx.font = '800 ' + Math.round(Math.min(46, VW / 11)) + 'px -apple-system, system-ui, sans-serif';
+    ctx.fillText(flashText, VW / 2, VH * 0.34 + 50);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function draw() {
+  updateCamera();
+  ctx.save();
+  if (shake.mag > 0.3) {
+    const j = shake.mag;
+    // Rotate around the middle of the screen, then shove along the impact
+    // direction with only a little random jitter mixed in.
+    ctx.translate(VW / 2, VH / 2);
+    ctx.rotate(shake.rot * (j / 18));
+    ctx.translate(-VW / 2, -VH / 2);
+    ctx.translate(shake.dx * j * 0.75 + (Math.random() - 0.5) * j * 0.45,
+                  shake.dy * j * 0.75 + (Math.random() - 0.5) * j * 0.45);
+  }
+
+  ctx.fillStyle = '#0d0f14';
+  ctx.fillRect(-30, -30, VW + 60, VH + 60);
+
+  drawWorld();
+
+  // Particles under the characters
+  for (const b of bits) {
+    ctx.globalAlpha = Math.max(0, b.life / b.max);
+    ctx.fillStyle = b.c;
+    ctx.fillRect(Math.round(b.x - cam.x), Math.round(b.y - cam.y), b.s, b.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // Sort so characters lower on the screen draw in front
+  const drawList = enemies.slice();
+  drawList.push(player);
+  drawList.sort((a, b) => a.y - b.y);
+  for (const g of drawList) {
+    if (g === player) drawGuy(player, player.side, player.rank, true);
+    else drawGuy(g, g.side, g.rank, false);
+  }
+
+  // Shots
+  for (const s of shots) {
+    ctx.fillStyle = s.acid ? '#8ecf4a' : '#ffe08a';
+    const px = Math.round(s.x - cam.x), py = Math.round(s.y - cam.y);
+    if (s.acid) { ctx.beginPath(); ctx.arc(px, py, 4.5, 0, 6.283); ctx.fill(); }
+    else ctx.fillRect(px - 3, py - 1.5, 7, 3);
+  }
+
+  // Floating text
+  ctx.textAlign = 'center';
+  for (const p of popups) {
+    ctx.globalAlpha = Math.min(1, p.life / 0.5);
+    ctx.fillStyle = p.color;
+    ctx.font = '800 15px -apple-system, system-ui, sans-serif';
+    ctx.fillText(p.text, Math.round(p.x - cam.x), Math.round(p.y - cam.y));
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+  drawHUD();
+}
+
+// ---------------------------------------------------------------------------
+//  Main loop
+// ---------------------------------------------------------------------------
+let last = 0;
+function loop(now) {
+  if (!last) last = now;
+  // Clamp dt so tabbing away does not teleport everything across the map.
+  const raw = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  if (running) {
+    if (hitstop > 0) {
+      // Everything holds still for a few dozen milliseconds. Keep drawing so it
+      // reads as a freeze frame on the moment of impact, not as a dropped frame.
+      hitstop -= raw;
+      draw();
+    } else {
+      let dt = raw;
+      if (slowmo > 0) dt *= 0.45;
+      update(dt);
+      draw();
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------------------
+//  Start
+// ---------------------------------------------------------------------------
+const titleEl = document.getElementById('title');
+function startGame() {
+  initAudio();
+  titleEl.style.display = 'none';
+  reset();
+  last = 0;
+  requestAnimationFrame(loop);
+}
+titleEl.addEventListener('pointerdown', startGame);
+titleEl.addEventListener('click', startGame);
+</script>
