@@ -148,7 +148,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v7';
+const VERSION = 'v8';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -320,6 +320,17 @@ const TUNE = {
   // straight away, so there is nothing to carry around or remember to press.
   POWERUP_CHANCE: 0.085,      // about 1 in 12 kills
   BAG_SLOTS: 6,               // how many kinds you can carry at once
+
+  // Rack up enough points and you turn into the boss for a while: much bigger,
+  // much tougher, and you hit far harder.
+  BOSS_POINTS: 240,           // points needed
+  POINTS_PER_KILL: 10,
+  POINTS_PER_BOSS: 120,
+  BOSS_MODE_TIME: 16,
+  BOSS_MODE_SIZE: 1.85,
+  BOSS_MODE_DMG: 2.6,
+  BOSS_MODE_HP: 2.5,
+  BOSS_MODE_ARMOR: 0.4,
   GRENADE_DMG: 130, GRENADE_RADIUS: 115,
   BOMB_DMG: 210,    BOMB_RADIUS: 180,
   NUKE_DMG: 2200,   NUKE_RADIUS: 3000,
@@ -348,6 +359,9 @@ const TUNE = {
   RANGED_FAR: 310,            // and closes in if you are further than this
   BRUTE_CHARGE_SPEED: 2.7,    // how fast a brute lunges
   BRUTE_CHARGE_TIME: 0.55,    // and for how long
+
+  // How see-through a wall goes while it is hiding somebody behind it.
+  WALL_FADE: 0.34,
 
   // Feel. Turn these up for more chaos.
   SCREEN_SHAKE: 1.0,
@@ -597,7 +611,7 @@ function shade(hex, amt) {
 //  Studs live on the baseplate and nowhere else. Studs on every brick is what
 //  made an earlier version look like Lego instead of Roblox.
 // ---------------------------------------------------------------------------
-const WALL_H = 34, CRATE_H = 20;
+const WALL_H = 58, CRATE_H = 26;
 const WALL_COLOR = '#9aa3ae', CRATE_COLOR = '#b07a3c';
 
 const ISO_X = 0.66, ISO_Y = 0.35;
@@ -624,9 +638,14 @@ function stickToWorld(sdx, sdy) {
 
 // One box, drawn as three faces: the two sides facing the camera, then the top.
 // Sides first and top last means the box always looks solid.
-function drawBox(wx, wy, wz, w, d, h, color) {
+//
+// Each side is shaded twice, lighter at the top and darker towards the ground,
+// which reads as light falling across a surface instead of a flat panel of
+// colour. Flat single-tone faces are most of what makes blocks look cheap.
+function drawBox(wx, wy, wz, w, d, h, color, alpha) {
   const x0 = wx, y0 = wy, x1 = wx + w, y1 = wy + d;
   const zt = wz + h, zb = wz;
+  if (alpha !== undefined) ctx.globalAlpha = alpha;
 
   const axT = isoX(x0, y0), ayT = isoY(x0, y0, zt);
   const bxT = isoX(x1, y0), byT = isoY(x1, y0, zt);
@@ -636,31 +655,58 @@ function drawBox(wx, wy, wz, w, d, h, color) {
   const cxB = cxT, cyB = isoY(x1, y1, zb);
   const dxB = dxT, dyB = isoY(x0, y1, zb);
 
-  // Left side, the one in most shadow.
-  ctx.fillStyle = shade(color, -52);
+  // How far down the face the light gives out.
+  const mix = (ta, tb, k) => ta + (tb - ta) * k;
+  const band = 0.55;
+
+  // Left side, the one in most shadow, lighter at the top than the bottom.
+  ctx.fillStyle = shade(color, -44);
   ctx.beginPath();
   ctx.moveTo(dxT, dyT); ctx.lineTo(cxT, cyT);
   ctx.lineTo(cxB, cyB); ctx.lineTo(dxB, dyB);
   ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(color, -62);
+  ctx.beginPath();
+  ctx.moveTo(dxT, mix(dyT, dyB, band)); ctx.lineTo(cxT, mix(cyT, cyB, band));
+  ctx.lineTo(cxB, cyB); ctx.lineTo(dxB, dyB);
+  ctx.closePath(); ctx.fill();
 
-  // Right side, catching a little more light.
-  ctx.fillStyle = shade(color, -28);
+  // Right side, catching more light.
+  ctx.fillStyle = shade(color, -18);
   ctx.beginPath();
   ctx.moveTo(bxT, byT); ctx.lineTo(cxT, cyT);
   ctx.lineTo(cxB, cyB); ctx.lineTo(bxB, byB);
   ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(color, -38);
+  ctx.beginPath();
+  ctx.moveTo(bxT, mix(byT, byB, band)); ctx.lineTo(cxT, mix(cyT, cyB, band));
+  ctx.lineTo(cxB, cyB); ctx.lineTo(bxB, byB);
+  ctx.closePath(); ctx.fill();
 
   // Top face, fully lit.
-  ctx.fillStyle = shade(color, 14);
+  ctx.fillStyle = shade(color, 16);
   ctx.beginPath();
   ctx.moveTo(axT, ayT); ctx.lineTo(bxT, byT);
   ctx.lineTo(cxT, cyT); ctx.lineTo(dxT, dyT);
   ctx.closePath(); ctx.fill();
 
-  // A thin outline so each piece reads as its own separate block.
-  ctx.strokeStyle = shade(color, -64);
-  ctx.lineWidth = 1;
+  // A bright bevel along the two top edges nearest the light, which is what
+  // makes an edge look like an edge rather than a change of colour.
+  ctx.strokeStyle = shade(color, 46);
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(dxT, dyT); ctx.lineTo(axT, ayT); ctx.lineTo(bxT, byT);
   ctx.stroke();
+
+  // And a dark seam down the corner facing you, so the two sides read as
+  // separate planes instead of blending together.
+  ctx.strokeStyle = shade(color, -70);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cxT, cyT); ctx.lineTo(cxB, cyB);
+  ctx.stroke();
+
+  if (alpha !== undefined) ctx.globalAlpha = 1;
 }
 
 function resize() {
@@ -974,6 +1020,7 @@ function newPlayer() {
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: freshUpgrades(), rageT: 0, speedT: 0,
+    points: 0, bossT: 0, size: 1,
   };
 }
 
@@ -988,6 +1035,9 @@ function reset() {
   shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
   flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
   paused = false;
+  // Starting a fresh game should not inherit a thumb that was still down.
+  stick.active = false; stick.dx = 0; stick.dy = 0; stick.id = null;
+  fire.active = false; fire.id = null;
   startWave(1);
   spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
   running = true;
@@ -1164,6 +1214,32 @@ function dropPowerup(x, y) {
   const p = rollPowerup();
   powerups.push({ x: x, y: y, z: 0, kind: p.kind, name: p.name, color: p.color,
                   life: 18, bob: Math.random() * 6.28, __pow: true });
+}
+
+// You have earned it: turn into the boss. Bigger, tougher, hits like a truck,
+// and it wears off after a while so it stays a treat rather than the new normal.
+function becomeBoss() {
+  player.points = 0;
+  player.bossT = TUNE.BOSS_MODE_TIME;
+  player.size = TUNE.BOSS_MODE_SIZE;
+  player.maxhp = (TUNE.PLAYER_HEALTH + player.up.hpAdd) * TUNE.BOSS_MODE_HP;
+  player.hp = player.maxhp;
+  player.bite = 0;
+  announce('YOU ARE THE BOSS');
+  SFX.boss();
+  addShake(14);
+  spray(player.x, player.y, '#ff9f43', 44);
+  nukeFlash = .7;
+}
+
+// Back to normal size once it runs out.
+function endBossMode() {
+  player.bossT = 0;
+  player.size = 1;
+  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
+  player.hp = Math.min(player.hp, player.maxhp);
+  announce('BOSS MODE OVER');
+  SFX.turn();
 }
 
 function dropHeart(x, y) {
@@ -1498,6 +1574,10 @@ function killEnemy(e, dirAngle) {
     if (Math.random() < TUNE.HEART_CHANCE * player.up.luck) dropHeart(e.x, e.y);
     if (Math.random() < TUNE.POWERUP_CHANCE * player.up.luck) dropPowerup(e.x, e.y);
 
+    // Points towards becoming the boss yourself.
+    player.points += e.boss ? TUNE.POINTS_PER_BOSS : TUNE.POINTS_PER_KILL;
+    if (player.bossT <= 0 && player.points >= TUNE.BOSS_POINTS) becomeBoss();
+
     const k = myKills();
     popup(e.x, e.y - 22, e.boss ? 'BOSS DOWN' : '+1', e.boss ? '#ff9f43' : '#ffd84d');
 
@@ -1539,7 +1619,8 @@ function infectEnemy(e) {
 
 function hurtPlayer(dmg, biteAmount) {
   if (player.invuln > 0) return;
-  const armor = Math.min(.8, myRanks()[player.rank].armor + player.up.armorAdd);
+  const armor = Math.min(.85, myRanks()[player.rank].armor + player.up.armorAdd
+    + (player.bossT > 0 ? TUNE.BOSS_MODE_ARMOR : 0));
   player.hp -= dmg * (1 - armor);
   player.hurtTimer = TUNE.HEAL_DELAY;
   player.squash = .16;
@@ -1560,6 +1641,7 @@ function hurtPlayer(dmg, biteAmount) {
 // The core loop of Josh's design: you go back and forth between the two sides
 // instead of ever getting a game over screen.
 function flipSide() {
+  if (player.bossT > 0) endBossMode();
   const wasNoob = player.side === NOOB;
   player.side = wasNoob ? ZOMB : NOOB;
   player.rank = rankFor(player.side, player.kills[player.side]);
@@ -1596,7 +1678,8 @@ function tryAttack(who, isPlayer) {
   const up = isPlayer ? player.up : NO_UP;
   const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
   const rageMul = (isPlayer && player.rageT > 0) ? TUNE.RAGE_MULT : 1;
-  const dmg = rk.dmg * up.dmg * streakMul * rageMul;
+  const bossMul = (isPlayer && player.bossT > 0) ? TUNE.BOSS_MODE_DMG : 1;
+  const dmg = rk.dmg * up.dmg * streakMul * rageMul * bossMul;
   const reach = rk.reach * up.reach;
   const rate = rk.rate * up.rate;
 
@@ -1718,6 +1801,10 @@ function update(dt) {
     if (streakTimer <= 0) streak = 0;
   }
 
+  if (player.bossT > 0) {
+    player.bossT -= dt;
+    if (player.bossT <= 0) endBossMode();
+  }
   player.rageT = Math.max(0, player.rageT - dt);
   player.speedT = Math.max(0, player.speedT - dt);
   freezeT = Math.max(0, freezeT - dt);
@@ -1971,6 +2058,8 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#4fd6ff' : '#d98a2b'; }
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
+  // You, while boss mode is running.
+  if (isPlayer && player.bossT > 0) { skin = '#ffb340'; torso = '#a8332f'; legs = '#6b2424'; }
 
   const s = g.size || 1;
   const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
@@ -2021,8 +2110,17 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // Arms, hanging off either side.
   drawBox(g.x - hw - 4.8 * s, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
   drawBox(g.x + hw, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
+  // Shoes on the bottom of each leg.
+  const shoe = shade(legs, -34);
+  drawBox(g.x - hw, y0 - 1, z, 7.5 * s * ws, dep + 1, 3.4 * s, shoe);
+  drawBox(g.x + hw - 7.5 * s * ws, y0 - 1, z, 7.5 * s * ws, dep + 1, 3.4 * s, shoe);
+  // Hands on the end of each arm.
+  drawBox(g.x - hw - 4.8 * s, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, 3.2 * s, shade(skin, -18));
+  drawBox(g.x + hw, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, 3.2 * s, shade(skin, -18));
   // Torso.
   drawBox(g.x - hw, y0, z + legH, hw * 2, dep, torsoH, torso);
+  // A collar where the torso meets the neck.
+  drawBox(g.x - hw * .55, y0 + 1, z + legH + torsoH - 1.5, hw * 1.1, dep - 2, 2.6 * s, shade(torso, 22));
   // Head, a cube sitting on the shoulders.
   const headW = 15 * s * ws;
   drawBox(g.x - headW / 2, y0, z + legH + torsoH, headW, dep, headH, skin);
@@ -2119,7 +2217,16 @@ function drawFloor() {
       if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
       const cx = isoX(wx + TILE / 2, wy + TILE / 2);
       const cy = isoY(wx + TILE / 2, wy + TILE / 2, 0);
-      ctx.fillStyle = ((gx + gy) % 2 === 0) ? '#4c5a4a' : '#475440';
+      // Ground tucked up against a block sits in its shadow. Counting the solid
+      // neighbours and darkening to match is cheap and does more for how solid
+      // the world looks than almost anything else.
+      let shadowed = 0;
+      if (gx > 0 && grid[gy][gx - 1] !== 0) shadowed++;
+      if (gy > 0 && grid[gy - 1][gx] !== 0) shadowed += 2;      // the lit side
+      if (gx < GW - 1 && grid[gy][gx + 1] !== 0) shadowed++;
+      if (gy < GH - 1 && grid[gy + 1][gx] !== 0) shadowed++;
+      const base = ((gx + gy) % 2 === 0) ? '#4c5a4a' : '#475440';
+      ctx.fillStyle = shadowed ? shade(base, -Math.min(26, shadowed * 8)) : base;
       ctx.beginPath();
       ctx.moveTo(cx, cy - h);
       ctx.lineTo(cx + w, cy);
@@ -2183,6 +2290,43 @@ function drawOne(o) {
 // one diagonal at a time and anything standing on an earlier diagonal is drawn
 // before the blocks in front of it. That ordering is what makes the boxes look
 // solid instead of transparent.
+// Anyone a wall might be hiding. Rebuilt each frame with their position on
+// screen, so a block can check whether it is standing in front of somebody.
+const _occludees = [];
+function buildOccludees() {
+  _occludees.length = 0;
+  const add = (o, pad) => {
+    _occludees.push({
+      d: o.x + o.y,
+      sx: isoX(o.x, o.y),
+      sy: isoY(o.x, o.y, o.z || 0),
+      pad: pad,
+    });
+  };
+  add(player, 30);
+  for (const e of enemies) { if (e.hp > 0) add(e, 26 * (e.size || 1)); }
+  for (const p of powerups) add(p, 16);
+}
+
+// Would this block be covering somebody standing behind it? Blocks are opaque by
+// default, but a wall you cannot see past is worse than no wall, so any block
+// hiding a character goes see-through while it is in the way.
+function hidesSomeone(wx, wy, h) {
+  const blockD = wx + wy + TILE;
+  const left = isoX(wx, wy + TILE);
+  const right = isoX(wx + TILE, wy);
+  const top = isoY(wx, wy, h);
+  const bottom = isoY(wx + TILE, wy + TILE, 0);
+  for (const o of _occludees) {
+    // Only things BEHIND the block can be hidden by it.
+    if (o.d >= blockD) continue;
+    if (o.sx < left - o.pad || o.sx > right + o.pad) continue;
+    if (o.sy < top - o.pad * 1.6 || o.sy > bottom + o.pad * .4) continue;
+    return true;
+  }
+  return false;
+}
+
 const _standing = [];
 function drawStanding() {
   _standing.length = 0;
@@ -2191,6 +2335,7 @@ function drawStanding() {
   for (const p of powerups) _standing.push(p);
   _standing.push(player);
   _standing.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+  buildOccludees();
 
   let si = 0;
   const lastDiag = GW + GH - 2;
@@ -2207,8 +2352,9 @@ function drawStanding() {
       if (t === 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
       if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
-      if (t === WALL) drawBox(wx, wy, 0, TILE, TILE, WALL_H, WALL_COLOR);
-      else drawBox(wx, wy, 0, TILE, TILE, CRATE_H, CRATE_COLOR);
+      const h = t === WALL ? WALL_H : CRATE_H;
+      const fade = hidesSomeone(wx, wy, h) ? TUNE.WALL_FADE : undefined;
+      drawBox(wx, wy, 0, TILE, TILE, h, t === WALL ? WALL_COLOR : CRATE_COLOR, fade);
     }
   }
   while (si < _standing.length) drawOne(_standing[si++]);
@@ -2369,6 +2515,29 @@ function drawHUD() {
     ctx.fillStyle = '#ff9f43';
     ctx.font = '700 12px -apple-system, system-ui, sans-serif';
     ctx.fillText('TOP RANK', PAD.l, barY + 12);
+  }
+
+  // Progress towards becoming the boss.
+  {
+    const bw3 = 172, py3 = barY + (next ? 30 : 22);
+    if (player.bossT > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(PAD.l, py3, bw3, 8);
+      ctx.fillStyle = '#ff9f43';
+      ctx.fillRect(PAD.l, py3, bw3 * (player.bossT / TUNE.BOSS_MODE_TIME), 8);
+      ctx.fillStyle = '#ff9f43';
+      ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+      ctx.fillText('BOSS MODE  ' + player.bossT.toFixed(1) + 's', PAD.l, py3 + 21);
+    } else {
+      const frac = Math.min(1, player.points / TUNE.BOSS_POINTS);
+      ctx.fillStyle = 'rgba(255,255,255,0.11)';
+      ctx.fillRect(PAD.l, py3, bw3, 8);
+      ctx.fillStyle = '#ff9f43';
+      ctx.fillRect(PAD.l, py3, bw3 * frac, 8);
+      ctx.fillStyle = 'rgba(255,159,67,0.85)';
+      ctx.font = '700 12px -apple-system, system-ui, sans-serif';
+      ctx.fillText(player.points + ' / ' + TUNE.BOSS_POINTS + ' to BOSS', PAD.l, py3 + 21);
+    }
   }
 
   // Health and infection, above the home indicator.

@@ -89,6 +89,8 @@ eval(code + `
    CLIMB_SPEED, FALL_SPEED, STEP_UP, onScreen, updateCamera, moveEntity,
    unstick, BODY, UNSTICK_STEP, POWERUPS, rollPowerup, addToBag, useSlot,
    usePowerup, explode, chainLightning, drawHotbar, VERSION,
+   hidesSomeone, buildOccludees, becomeBoss, endBossMode, WALL_H, CRATE_H,
+   get _occludees(){return _occludees},
    get bag(){return bag}, get powerups(){return powerups},
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
@@ -171,8 +173,12 @@ ok('height lifts things up the screen', G.isoY(0, 0, 40) < G.isoY(0, 0, 0),
   'z=40 sits ' + (G.isoY(0, 0, 0) - G.isoY(0, 0, 40)).toFixed(0) + 'px higher');
 ok('blocks are drawn as boxes with three faces', /function drawBox/.test(src)
   && /Left side, the one in most shadow/.test(src)
-  && /Right side, catching a little more light/.test(src)
+  && /Right side, catching more light/.test(src)
   && /Top face, fully lit/.test(src));
+ok('faces are shaded top to bottom, not one flat tone',
+  /reads as light falling across a surface/.test(src));
+ok('block edges get a bevel and a corner seam',
+  /bright bevel along the two top edges/.test(src) && /dark seam down the corner/.test(src));
 ok('drawBox runs without throwing',
   (() => { try { G.drawBox(0, 0, 0, 40, 40, 34, G.WALL_COLOR); return true; }
            catch (e) { console.log('    ' + e.message); return false; } })());
@@ -325,6 +331,9 @@ ok('enemy health compounds so upgrades cannot outrun it',
 // --- simulated play ---------------------------------------------------------
 function playFor(frames, chase) {
   G.reset();
+  // Earlier groups can leave the stick held over, which made the supposedly idle
+  // run drive into a wall for three minutes and clear nothing.
+  G.stick.active = false; G.stick.dx = 0; G.stick.dy = 0;
   let clears = 0, sawBoss = false, bossAllied = false, err = null;
   try {
     for (let i = 0; i < frames; i++) {
@@ -697,6 +706,81 @@ const anyOverlap = G.bagRects.some(r => overlaps(r, G.btn.hit))
 ok('the item row does not sit under the hit button or the minimap', !anyOverlap);
 ok('slots are big enough to tap', G.bagRects.every(r => r.w >= 38 && r.h >= 38),
   G.bagRects[0].w.toFixed(0) + 'px');
+
+group('Walls fade when they are hiding somebody');
+G.reset();
+ok('there is a fade setting and it is see-through but still visible',
+  G.TUNE.WALL_FADE > 0.1 && G.TUNE.WALL_FADE < 0.7, G.TUNE.WALL_FADE);
+ok('drawBox can be told to draw see-through',
+  (() => { try { G.drawBox(0, 0, 0, 40, 40, G.WALL_H, G.WALL_COLOR, 0.3); return true; }
+           catch (e) { return false; } })());
+// Put the player right behind a wall and check that wall reports itself as hiding
+// somebody, while a wall nowhere near anyone does not.
+let hideSpot = null;
+for (let gy = 2; gy < G.GH - 2 && !hideSpot; gy++) {
+  for (let gx = 2; gx < G.GW - 2 && !hideSpot; gx++) {
+    if (G.grid[gy][gx] === 1 && G.grid[gy - 1][gx] === 0) hideSpot = { gx: gx, gy: gy };
+  }
+}
+ok('found a wall with open ground behind it', hideSpot !== null);
+G.player.x = (hideSpot.gx + 0.5) * G.TILE;
+G.player.y = (hideSpot.gy - 0.5) * G.TILE;
+G.player.z = 0;
+G.buildOccludees();
+ok('the occluder list gets built', G._occludees.length > 0);
+ok('a wall standing in front of the player goes see-through',
+  G.hidesSomeone(hideSpot.gx * G.TILE, hideSpot.gy * G.TILE, G.WALL_H));
+ok('a wall far away from everyone stays solid',
+  !G.hidesSomeone(0, 0, G.WALL_H));
+ok('a wall BEHIND the player is not faded, only ones in front',
+  !G.hidesSomeone((hideSpot.gx - 3) * G.TILE, (hideSpot.gy - 3) * G.TILE, G.WALL_H));
+
+group('More detail, less flat');
+ok('walls are properly tall now', G.WALL_H >= 50, G.WALL_H + 'px');
+ok('crates still sit lower than walls', G.CRATE_H < G.WALL_H,
+  G.CRATE_H + ' vs ' + G.WALL_H);
+ok('ground against a block sits in its shadow',
+  /Ground tucked up against a block sits in its shadow/.test(src));
+ok('characters have shoes, hands and a collar',
+  /Shoes on the bottom of each leg/.test(src)
+  && /Hands on the end of each arm/.test(src)
+  && /collar where the torso meets the neck/.test(src));
+
+group('Becoming the boss');
+G.reset();
+ok('you start with no points', G.player.points === 0);
+ok('the target is reachable but not instant',
+  G.TUNE.BOSS_POINTS / G.TUNE.POINTS_PER_KILL >= 10, 
+  Math.round(G.TUNE.BOSS_POINTS / G.TUNE.POINTS_PER_KILL) + ' kills worth');
+ok('killing a boss is worth far more than a normal kill',
+  G.TUNE.POINTS_PER_BOSS > G.TUNE.POINTS_PER_KILL * 5);
+const normalHp = G.player.maxhp, normalSize = G.player.size;
+G.becomeBoss();
+ok('boss mode starts a countdown', G.player.bossT > 0, G.player.bossT.toFixed(0) + 's');
+ok('points are spent on the transformation', G.player.points === 0);
+ok('you get visibly bigger', G.player.size > normalSize,
+  normalSize + ' to ' + G.player.size);
+ok('and much tougher', G.player.maxhp > normalHp,
+  normalHp + ' to ' + G.player.maxhp);
+ok('and topped right up', G.player.hp === G.player.maxhp);
+G.endBossMode();
+ok('it wears off back to normal size', G.player.size === 1);
+ok('and back to normal health', G.player.maxhp === G.TUNE.PLAYER_HEALTH + G.player.up.hpAdd);
+ok('health never ends up above the new maximum', G.player.hp <= G.player.maxhp);
+// Points must actually accrue during real play.
+G.reset();
+let sawPoints = false, sawBossMode = false;
+for (let i = 0; i < 60 * 240; i++) {
+  G.update(1 / 60);
+  if (G.waveState === 'picking') G.choose(G.cards[0]);
+  if (G.player.points > 0) sawPoints = true;
+  if (G.player.bossT > 0) sawBossMode = true;
+}
+ok('points build up while playing', sawPoints);
+ok('boss mode is actually reachable in normal play', sawBossMode,
+  sawBossMode ? 'reached it' : 'never got there in 4 minutes');
+ok('the transformation does not leave you stuck oversized',
+  G.player.bossT > 0 || G.player.size === 1);
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
