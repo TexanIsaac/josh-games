@@ -83,7 +83,11 @@ eval(code + `
    buildFlow, flowDir, solidAt, grid, GW, GH, TILE, spawnPoints, playerStart,
    freshUpgrades, waveCount, wrapLines, shade, rollEnemyType, resize,
    isBossWave, togglePause, toggleMute, spawnEnemy, drawStanding, drawFloor,
-   drawBlock, WALL_H, CRATE_H, WALL_COLOR, CRATE_COLOR, visibleTiles,
+   drawBox, WALL_H, CRATE_H, WALL_COLOR, CRATE_COLOR, ZOOM,
+   hasLineOfSight, separate, startWave, blockingHostiles,
+   isoX, isoY, stickToWorld, tileTopAt, topUnder, blockedAt, updateHeight,
+   CLIMB_SPEED, FALL_SPEED, STEP_UP, onScreen, updateCamera, moveEntity,
+   unstick, BODY, UNSTICK_STEP,
    get _standing(){return _standing},
    get btn(){return btn}, get miniRect(){return miniRect}, get PAD(){return PAD},
    get flow(){return flow}, get player(){return player}, get enemies(){return enemies},
@@ -147,48 +151,120 @@ ok('shade lightens', G.shade('#808080', 20) === 'rgb(148,148,148)', G.shade('#80
 ok('shade darkens', G.shade('#808080', -20) === 'rgb(108,108,108)', G.shade('#808080', -20));
 ok('shade clamps at white', G.shade('#ffffff', 80) === 'rgb(255,255,255)');
 ok('shade clamps at black', G.shade('#000000', -80) === 'rgb(0,0,0)');
-ok('bricks have studs', /paintStuds/.test(src));
-ok('tiles are pre-rendered, not thousands of studs per frame',
-  /makeTile\(dpr/.test(src) && /drawImage\(img/.test(src));
-ok('floor, wall and crate bricks all exist',
-  /tileFloorA/.test(src) && /tileFloorB/.test(src) && /tileWall/.test(src) && /tileCrate/.test(src));
-ok('characters are built from shaded blocky parts', /function part\(/.test(src));
-ok('the noob has the classic smiley face', /classic noob face/.test(src));
-ok('arms and legs are separate parts with gaps',
-  /Two legs, with a gap/.test(src) && /Two arms/.test(src));
+// Lego has studs on every brick. Roblox has a studded baseplate and smooth
+// parts standing on it. Josh said the studded version looked like Lego.
+ok('the baseplate has studs', /One soft stud per square/.test(src));
+ok('walls and crates are SMOOTH, no studs on them',
+  !/paintStuds\(g, WALL_COLOR/.test(src) && !/paintStuds\(g, CRATE_COLOR/.test(src));
+ok('the Lego-vs-Roblox reasoning is written down', /made it look like Lego/.test(src));
 
-group('The world has real height, not a flat top-down view');
-ok('blocks stand up off the floor', G.WALL_H > 0, 'walls are ' + G.WALL_H + 'px tall');
-ok('crates are lower than walls, so they read as cover',
-  G.CRATE_H > 0 && G.CRATE_H < G.WALL_H, 'crate ' + G.CRATE_H + 'px vs wall ' + G.WALL_H + 'px');
-ok('a block draws a top face and a side face', /function drawBlock/.test(src)
-  && /Front face, in shadow/.test(src) && /Top face with the studs/.test(src));
-ok('the floor is drawn separately, underneath', typeof G.drawFloor === 'function');
-ok('there is a back-to-front pass for everything standing up',
-  typeof G.drawStanding === 'function');
-ok('drawBlock runs without throwing',
-  (() => { try { G.drawBlock(10, 10, G.WALL_H, null, G.WALL_COLOR); return true; }
+group('It is drawn in 3D, not flat top-down')
+ok('there is a tilted projection', typeof G.isoX === 'function' && typeof G.isoY === 'function');
+ok('moving across the ground moves you diagonally on screen',
+  G.isoX(40, 0) !== G.isoX(0, 40) && G.isoY(40, 0) === G.isoY(0, 40),
+  'x+ and y+ separate horizontally but share a depth line');
+ok('height lifts things up the screen', G.isoY(0, 0, 40) < G.isoY(0, 0, 0),
+  'z=40 sits ' + (G.isoY(0, 0, 0) - G.isoY(0, 0, 40)).toFixed(0) + 'px higher');
+ok('blocks are drawn as boxes with three faces', /function drawBox/.test(src)
+  && /Left side, the one in most shadow/.test(src)
+  && /Right side, catching a little more light/.test(src)
+  && /Top face, fully lit/.test(src));
+ok('drawBox runs without throwing',
+  (() => { try { G.drawBox(0, 0, 0, 40, 40, 34, G.WALL_COLOR); return true; }
            catch (e) { console.log('    ' + e.message); return false; } })());
+ok('characters are stacks of boxes', /A character, built out of real boxes/.test(src));
+ok('the camera is zoomed in, not showing the whole map', G.ZOOM > 1.5,
+  'zoom ' + G.ZOOM + 'x');
+ok('walls are taller than crates', G.WALL_H > G.CRATE_H,
+  'wall ' + G.WALL_H + ' vs crate ' + G.CRATE_H);
 
-// Depth ordering is the thing that makes the height believable, and it is
-// exactly the sort of logic that breaks quietly, so check the sort really ran.
-G.reset();
-for (let i = 0; i < 240; i++) G.update(1 / 60);
-G.drawStanding();
-const order = G._standing;
-let outOfOrder = 0;
-for (let i = 1; i < order.length; i++) { if (order[i].y < order[i - 1].y) outOfOrder++; }
-ok('everything standing is sorted back to front', outOfOrder === 0,
-  order.length + ' items, ' + outOfOrder + ' out of order');
-ok('the player is included in that pass', order.indexOf(G.player) !== -1);
-ok('hearts are depth-sorted with the characters, not drawn flat',
-  /__heart/.test(src) && /drawHeartAt/.test(src));
-ok('visibleTiles pads a row for tall blocks', (() => {
-  const v = G.visibleTiles();
-  return v.x0 >= 0 && v.y0 >= 0 && v.x1 <= G.GW - 1 && v.y1 <= G.GH - 1;
+// The stick has to be rotated into the tilted world or the controls feel wrong.
+group('Controls match the tilted view')
+const up = G.stickToWorld(0, -1);
+ok('pushing up on the stick sends you away from the camera',
+  up.dx < 0 && up.dy < 0, 'dx=' + up.dx.toFixed(2) + ' dy=' + up.dy.toFixed(2));
+const right = G.stickToWorld(1, 0);
+ok('pushing right sends you along the other diagonal',
+  right.dx > 0 && right.dy < 0, 'dx=' + right.dx.toFixed(2) + ' dy=' + right.dy.toFixed(2));
+ok('the mapped direction is always a unit length',
+  [[0,-1],[1,0],[0,1],[-1,0],[0.7,0.7]].every(v => {
+    const w = G.stickToWorld(v[0], v[1]);
+    return Math.abs(Math.hypot(w.dx, w.dy) - 1) < 1e-9;
+  }));
+ok('a dead stick means no movement',
+  G.stickToWorld(0, 0).dx === 0 && G.stickToWorld(0, 0).dy === 0);
+
+group('Climbing')
+ok('walls report their height', G.tileTopAt(0, 0) === G.WALL_H,
+  'the border wall is ' + G.tileTopAt(0, 0) + ' tall');
+ok('open floor is at zero', G.tileTopAt(G.playerStart.x, G.playerStart.y) === 0);
+ok('off the edge of the map is unclimbably tall', G.tileTopAt(-50, -50) > G.WALL_H);
+ok('standing on the ground, a wall blocks you',
+  G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, 0));
+ok('standing on top of that wall, it does not block you',
+  !G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, G.WALL_H));
+
+// Find a floor tile with a wall right next to it, then push into the wall.
+let climbSpot = null;
+for (let gy = 1; gy < G.GH - 1 && !climbSpot; gy++) {
+  for (let gx = 1; gx < G.GW - 2 && !climbSpot; gx++) {
+    if (G.grid[gy][gx] === 0 && G.grid[gy][gx + 1] === 1) {
+      climbSpot = { x: (gx + 0.5) * G.TILE, y: (gy + 0.5) * G.TILE };
+    }
+  }
+}
+ok('found a wall to try climbing', climbSpot !== null);
+// Driven the same way the game drives it: push forward and update height every
+// frame, so the climb finishes by stepping up onto the top rather than hovering
+// at the lip.
+const climber = { x: climbSpot.x, y: climbSpot.y, r: 13, z: 0 };
+const startX = climber.x;
+let peakZ = 0, gotOnTop = false;
+for (let i = 0; i < 300; i++) {
+  G.moveEntity(climber, 205 / 60, 0);
+  G.updateHeight(climber, 1, 0, 1 / 60);
+  if (climber.z > peakZ) peakZ = climber.z;
+  // Standing on the wall means being over a tile whose top is wall height.
+  if (climber.z >= G.WALL_H - 0.5 && G.topUnder(climber.x, climber.y, climber.r * 0.5) === G.WALL_H) {
+    gotOnTop = true;
+  }
+}
+ok('pushing into a wall climbs all the way up it', peakZ >= G.WALL_H - 0.5,
+  'reached z=' + peakZ.toFixed(1) + ' of ' + G.WALL_H);
+ok('and you end up standing on top of the wall, not stuck against it', gotOnTop);
+ok('keep going and you walk over it and off the far side',
+  climber.x > startX + G.TILE,
+  'crossed ' + (climber.x - startX).toFixed(0) + 'px, ended at z=' + climber.z.toFixed(0));
+ok('nothing can walk through a wall at ground level', (() => {
+  const cheat = { x: climbSpot.x, y: climbSpot.y, r: 13, z: 0 };
+  // Push forward but never let it climb: it must be stopped by the wall face.
+  for (let i = 0; i < 300; i++) G.moveEntity(cheat, 205 / 60, 0);
+  return G.topUnder(cheat.x, cheat.y, cheat.r * G.BODY) === 0;
 })());
+ok('being freed from a block never looks like a jump', G.UNSTICK_STEP <= 6,
+  'at most ' + G.UNSTICK_STEP + 'px a frame');
+ok('a body wedged in a block gets walked back out', (() => {
+  // Drop one right inside a wall and see if it works its way free.
+  const buried = { x: G.TILE * 0.5, y: G.TILE * 1.5, r: 13, z: 0 };
+  let freed = false;
+  for (let i = 0; i < 200 && !freed; i++) {
+    G.unstick(buried);
+    if (G.topUnder(buried.x, buried.y, buried.r * G.BODY) === 0) freed = true;
+  }
+  return freed;
+})());
+// Now let go over open floor and it should come back down.
+const faller = { x: G.playerStart.x, y: G.playerStart.y, r: 13, z: G.WALL_H };
+for (let i = 0; i < 240; i++) G.updateHeight(faller, 0, 0, 1 / 60);
+ok('walking off an edge drops you back down', faller.z === 0,
+  'ended at z=' + faller.z.toFixed(1));
+ok('you cannot climb without pushing into something', (() => {
+  const idle = { x: climbSpot.x, y: climbSpot.y, r: 13, z: 0 };
+  for (let i = 0; i < 120; i++) G.updateHeight(idle, 0, 0, 1 / 60);
+  return idle.z === 0;
+})());
+ok('enemies climb with the same rules', /same rules you do/.test(src));
 
-// --- layout -----------------------------------------------------------------
 group('HUD stays inside the safe area');
 G.reset(); G.resize();
 ok('the notch inset is respected', G.PAD.t === 14 + INSET_TOP, 'PAD.t=' + G.PAD.t);
@@ -292,6 +368,145 @@ ok('waves get cleared', r.clears >= 4, r.clears + ' clears, reached wave ' + G.w
 ok('a boss never becomes your ally', !r.bossAllied);
 ok('the screen still draws afterwards',
   (() => { try { G.draw(); return true; } catch (e) { console.log('    ' + e.message); return false; } })());
+
+// --- how clever the enemies are ---------------------------------------------
+group('Enemies are not brainless');
+ok('line of sight is clear across an open tile',
+  G.hasLineOfSight(G.playerStart.x, G.playerStart.y, G.playerStart.x + 20, G.playerStart.y));
+// Find a real wall and check it actually blocks sight through it.
+let blockedPair = null;
+for (let gy = 2; gy < G.GH - 2 && !blockedPair; gy++) {
+  for (let gx = 2; gx < G.GW - 2 && !blockedPair; gx++) {
+    if (G.grid[gy][gx] !== 0) continue;
+    if (G.grid[gy][gx + 1] === 0) continue;
+    if (G.grid[gy][gx + 2] !== 0) continue;
+    blockedPair = [(gx + 0.5) * G.TILE, (gy + 0.5) * G.TILE,
+                   (gx + 2.5) * G.TILE, (gy + 0.5) * G.TILE];
+  }
+}
+ok('a wall blocks line of sight', blockedPair !== null
+  && !G.hasLineOfSight(blockedPair[0], blockedPair[1], blockedPair[2], blockedPair[3]));
+ok('nothing fires without a clear shot', /Never fire into a wall/.test(src));
+ok('enemies shove apart instead of stacking up', typeof G.separate === 'function');
+ok('enemies flank instead of queueing single file', G.TUNE.ENEMY_FLANK > 0);
+ok('spitters keep their distance', G.TUNE.RANGED_NEAR < G.TUNE.RANGED_FAR,
+  G.TUNE.RANGED_NEAR + ' to ' + G.TUNE.RANGED_FAR + 'px');
+ok('a retreating enemy is slower than the player, so it can always be caught',
+  G.TUNE.ENEMY_SPEED < G.TUNE.PLAYER_SPEED,
+  'enemy ' + G.TUNE.ENEMY_SPEED + ' vs player ' + G.TUNE.PLAYER_SPEED);
+ok('brutes charge faster than they walk', G.TUNE.BRUTE_CHARGE_SPEED > 1);
+
+// Enemies must actually get better ranks as the waves go on, or all the new
+// behaviour never runs at all.
+const ranksSeen = new Set();
+for (let w = 1; w <= 14; w++) {
+  G.reset();
+  for (let i = 0; i < 400; i++) {
+    G.enemies.length = 0;
+    // Force the wave number by starting it, then spawn a batch.
+    G.startWave(w);
+    G.spawnEnemy('zombie', false);
+    if (G.enemies[0]) ranksSeen.add(G.enemies[0].rank);
+  }
+}
+ok('enemies appear at more than one rank', ranksSeen.size > 1,
+  'ranks seen: ' + [...ranksSeen].sort().join(', '));
+ok('ranged enemies do occur, so the kiting brain runs', ranksSeen.has(2));
+
+// Clumping is the measurable version of "they look dumb". Count how many pairs
+// of enemies are sitting on top of each other after a couple of minutes.
+// Sampled all the way through, not just at the end, and only on frames with
+// enough enemies alive to actually be able to clump.
+G.reset();
+let worstOverlap = 0, samples = 0, mostEnemies = 0;
+for (let i = 0; i < 7200; i++) {
+  G.update(1 / 60);
+  if (G.waveState === 'picking') G.choose(G.cards[0]);
+  if (i % 30 === 0 && G.enemies.length >= 4) {
+    let stacked = 0, pairs = 0;
+    for (let a = 0; a < G.enemies.length; a++) {
+      for (let b = a + 1; b < G.enemies.length; b++) {
+        pairs++;
+        const p = G.enemies[a], q = G.enemies[b];
+        if (Math.hypot(p.x - q.x, p.y - q.y) < (p.r + q.r) * 0.8) stacked++;
+      }
+    }
+    if (pairs) {
+      worstOverlap = Math.max(worstOverlap, stacked / pairs);
+      samples++;
+      mostEnemies = Math.max(mostEnemies, G.enemies.length);
+    }
+  }
+}
+ok('the clumping test actually had crowds to measure', samples > 20 && mostEnemies >= 6,
+  samples + ' samples, up to ' + mostEnemies + ' enemies at once');
+ok('enemies never pile up on each other', worstOverlap < 0.15,
+  'worst was ' + (worstOverlap * 100).toFixed(1) + '% of pairs overlapping');
+
+group('Nothing teleports');
+// Josh spotted enemies jumping across the map. That was a safety net that picked
+// up any stuck enemy and dropped it at a spawn point. This watches every enemy
+// every frame and fails if anything moves further in one frame than it could
+// possibly have walked, so that behaviour cannot come back unnoticed.
+G.reset();
+const maxStep = (G.TUNE.ENEMY_SPEED * 1.75 * G.TUNE.BRUTE_CHARGE_SPEED
+                 + G.TUNE.ENEMY_SEPARATION) / 60;
+const allowed = maxStep * 2.5;
+let biggestJump = 0, jumps = 0, watched = 0;
+let prev = new Map();
+for (let i = 0; i < 9000; i++) {
+  G.update(1 / 60);
+  if (G.waveState === 'picking') G.choose(G.cards[0]);
+  const now = new Map();
+  for (const e of G.enemies) {
+    now.set(e, { x: e.x, y: e.y });
+    const was = prev.get(e);
+    if (was) {
+      const moved = Math.hypot(e.x - was.x, e.y - was.y);
+      watched++;
+      if (moved > biggestJump) biggestJump = moved;
+      if (moved > allowed) jumps++;
+    }
+  }
+  prev = now;
+}
+ok('the teleport safety net is gone from the code',
+  !/e\.x = sp2\.x/.test(src) && /which just looked like/.test(src));
+ok('enough enemy movement was watched', watched > 20000, watched + ' frame-to-frame checks');
+ok('no enemy ever jumps further than it could walk', jumps === 0,
+  jumps + ' jumps; biggest single step ' + biggestJump.toFixed(1)
+  + 'px, allowed ' + allowed.toFixed(1) + 'px');
+ok('a wave cannot be held open by something unreachable',
+  typeof G.blockingHostiles === 'function');
+
+group('Kiting enemies cannot soft-lock a wave');
+// A spitter that runs away forever would make a wave impossible to finish, so
+// this plays several minutes and checks waves keep completing well past the
+// wave where ranged enemies start appearing.
+G.reset();
+let lateClears = 0, lateErr = null;
+try {
+  for (let i = 0; i < 36000; i++) {
+    let target = null, best = Infinity;
+    for (const e of G.enemies) {
+      if (e.side === G.player.side || e.hp <= 0) continue;
+      const d = Math.hypot(e.x - G.player.x, e.y - G.player.y);
+      if (d < best) { best = d; target = e; }
+    }
+    if (target && G.waveState === 'fighting') {
+      const a = Math.atan2(target.y - G.player.y, target.x - G.player.x);
+      G.stick.active = true;
+      G.stick.dx = Math.cos(a) * 62;
+      G.stick.dy = Math.sin(a) * 62;
+    } else { G.stick.active = false; G.stick.dx = 0; G.stick.dy = 0; }
+    G.update(1 / 60);
+    if (G.waveState === 'picking') { lateClears++; G.choose(G.cards[0]); }
+  }
+} catch (e) { lateErr = e.message; }
+ok('ten minutes of play without crashing', lateErr === null, lateErr || '');
+ok('got well past the wave where spitters appear',
+  G.wave > G.TUNE.RANK2_FROM_WAVE + 1,
+  'reached wave ' + G.wave + ' with ' + lateClears + ' clears');
 
 // --- boss balance -----------------------------------------------------------
 // Measured directly rather than hoping the simulation wanders into one. The

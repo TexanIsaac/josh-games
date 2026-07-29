@@ -310,6 +310,22 @@ const TUNE = {
   STREAK_WINDOW: 2.6,         // seconds before a streak resets
   STREAK_BONUS: 0.035,        // extra damage per streak step
 
+  // Enemies come better armed as the waves go on, the same way you do. Before
+  // this they were stuck on their weakest rank forever, which is a big part of
+  // why they felt harmless.
+  RANK1_FROM_WAVE: 3,         // some get the better melee from this wave on
+  RANK2_FROM_WAVE: 6,         // some start spitting from here
+  RANK3_FROM_WAVE: 9,         // and some turn up armoured
+  RANK_CHANCE: 0.5,           // how likely an upgrade is once it is unlocked
+
+  // How clever the enemies are.
+  ENEMY_SEPARATION: 95,       // how hard they shove apart so they stop clumping
+  ENEMY_FLANK: 0.85,          // how much they curl sideways to surround you
+  RANGED_NEAR: 155,           // a spitter backs off if you get closer than this
+  RANGED_FAR: 310,            // and closes in if you are further than this
+  BRUTE_CHARGE_SPEED: 2.7,    // how fast a brute lunges
+  BRUTE_CHARGE_TIME: 0.55,    // and for how long
+
   // Feel. Turn these up for more chaos.
   SCREEN_SHAKE: 1.0,
   BLOOD: 1.0,
@@ -506,98 +522,91 @@ function shade(hex, amt) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
-// Four studs on a tile, two by two, each a disc with a bright top and a shaded
-// underside so it looks like a cylinder standing up.
-function paintStuds(g, base) {
-  const spots = [[10, 10], [30, 10], [10, 30], [30, 30]];
-  for (const s of spots) {
-    g.fillStyle = shade(base, -26);
-    g.beginPath(); g.arc(s[0], s[1] + 1.2, 7, 0, 6.283); g.fill();
-    g.fillStyle = shade(base, 16);
-    g.beginPath(); g.arc(s[0], s[1], 7, 0, 6.283); g.fill();
-    g.fillStyle = shade(base, 34);
-    g.beginPath(); g.arc(s[0] - 1, s[1] - 1.4, 4.6, 0, 6.283); g.fill();
-  }
-}
-
-let tileFloorA = null, tileFloorB = null, tileWall = null, tileCrate = null;
-let tilesDpr = 0;
-
-function makeTile(dpr, paint) {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.ceil(TILE * dpr));
-  c.height = Math.max(1, Math.ceil(TILE * dpr));
-  const g = c.getContext('2d');
-  if (!g) return null;
-  g.scale(dpr, dpr);
-  paint(g);
-  return c;
-}
-
-// How tall the blocks stand. This is what turns a flat top-down view into
-// something that looks like it is made of bricks with real height.
-const WALL_H = 26, CRATE_H = 15;
+// ---------------------------------------------------------------------------
+//  Actually 3D
+//
+//  The world is still a flat grid underneath, which is what keeps the movement
+//  and the collision simple. What changed is how it gets drawn: every wall, crate
+//  and body part is a real box, seen at an angle, with a top and two sides
+//  visible at once. That is what makes it look three dimensional rather than
+//  looking straight down on it.
+//
+//  A point in the world has three numbers: x and y across the ground, and z for
+//  how high up it is. These squash those down onto the screen.
+//
+//  Studs live on the baseplate and nowhere else. Studs on every brick is what
+//  made an earlier version look like Lego instead of Roblox.
+// ---------------------------------------------------------------------------
+const WALL_H = 34, CRATE_H = 20;
 const WALL_COLOR = '#9aa3ae', CRATE_COLOR = '#b07a3c';
 
-function buildTiles(dpr) {
-  // The baseplate. Two shades checkered so the floor has some texture.
-  const floorA = '#4c5a4a', floorB = '#47543f';
-  tileFloorA = makeTile(dpr, g => {
-    g.fillStyle = floorA; g.fillRect(0, 0, TILE, TILE);
-    paintStuds(g, floorA);
-  });
-  tileFloorB = makeTile(dpr, g => {
-    g.fillStyle = floorB; g.fillRect(0, 0, TILE, TILE);
-    paintStuds(g, floorB);
-  });
+const ISO_X = 0.66, ISO_Y = 0.35;
 
-  // These two are only the TOP faces of a block. The sides get drawn separately
-  // at the right height, which is what gives the world its depth.
-  tileWall = makeTile(dpr, g => {
-    g.fillStyle = WALL_COLOR; g.fillRect(0, 0, TILE, TILE);
-    g.fillStyle = shade(WALL_COLOR, 16); g.fillRect(0, 0, TILE, 2.5);
-    paintStuds(g, WALL_COLOR);
-  });
-  tileCrate = makeTile(dpr, g => {
-    g.fillStyle = CRATE_COLOR; g.fillRect(0, 0, TILE, TILE);
-    g.fillStyle = shade(CRATE_COLOR, 18); g.fillRect(0, 0, TILE, 2.5);
-    paintStuds(g, CRATE_COLOR);
-  });
+// How far in the camera sits. Zoomed all the way out the whole map fitted on an
+// iPad at once and everyone was the size of a grain of rice, which is why none of
+// the detail was landing. Close in, the blocks and the characters are big enough
+// to actually look like something.
+const ZOOM = 2.35;
 
-  tilesDpr = dpr;
+function isoX(wx, wy) { return (wx - wy) * ISO_X; }
+function isoY(wx, wy, wz) { return (wx + wy) * ISO_Y - (wz || 0); }
+
+// Turning the joystick into world movement. Because the world is tilted, pushing
+// up has to send you away from the camera rather than along a grid line, or the
+// controls feel wrong.
+function stickToWorld(sdx, sdy) {
+  if (sdx === 0 && sdy === 0) return { dx: 0, dy: 0 };
+  const a = sdx / ISO_X, b = sdy / ISO_Y;
+  let dx = (a + b) / 2, dy = (b - a) / 2;
+  const len = Math.hypot(dx, dy) || 1;
+  return { dx: dx / len, dy: dy / len };
 }
 
-// One block, standing up off the floor. The top face is lifted by its height and
-// the front face fills the gap underneath, so you are looking slightly down at a
-// solid brick instead of at a flat square.
-function drawBlock(px, py, h, topImg, baseColor) {
-  // Front face, in shadow.
-  ctx.fillStyle = shade(baseColor, -54);
-  ctx.fillRect(px, py + TILE - h, TILE, h);
-  // A brighter lip right under the top face, the way light catches an edge.
-  ctx.fillStyle = shade(baseColor, -30);
-  ctx.fillRect(px, py + TILE - h, TILE, 3);
-  // Top face with the studs on it.
-  if (topImg) ctx.drawImage(topImg, px, py - h, TILE, TILE);
-  else { ctx.fillStyle = baseColor; ctx.fillRect(px, py - h, TILE, TILE); }
-}
+// One box, drawn as three faces: the two sides facing the camera, then the top.
+// Sides first and top last means the box always looks solid.
+function drawBox(wx, wy, wz, w, d, h, color) {
+  const x0 = wx, y0 = wy, x1 = wx + w, y1 = wy + d;
+  const zt = wz + h, zb = wz;
 
-// A blocky part with a lit top face and a shaded right side. Every bit of every
-// character is built out of these, which is what makes them look moulded.
-function part(x, y, w, h, color) {
-  ctx.fillStyle = shade(color, -34);
-  ctx.fillRect(x + w - 2, y, 2, h);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w - 2, h);
-  ctx.fillStyle = shade(color, 26);
-  ctx.fillRect(x, y, w - 2, 2.4);
+  const axT = isoX(x0, y0), ayT = isoY(x0, y0, zt);
+  const bxT = isoX(x1, y0), byT = isoY(x1, y0, zt);
+  const cxT = isoX(x1, y1), cyT = isoY(x1, y1, zt);
+  const dxT = isoX(x0, y1), dyT = isoY(x0, y1, zt);
+  const bxB = bxT, byB = isoY(x1, y0, zb);
+  const cxB = cxT, cyB = isoY(x1, y1, zb);
+  const dxB = dxT, dyB = isoY(x0, y1, zb);
+
+  // Left side, the one in most shadow.
+  ctx.fillStyle = shade(color, -52);
+  ctx.beginPath();
+  ctx.moveTo(dxT, dyT); ctx.lineTo(cxT, cyT);
+  ctx.lineTo(cxB, cyB); ctx.lineTo(dxB, dyB);
+  ctx.closePath(); ctx.fill();
+
+  // Right side, catching a little more light.
+  ctx.fillStyle = shade(color, -28);
+  ctx.beginPath();
+  ctx.moveTo(bxT, byT); ctx.lineTo(cxT, cyT);
+  ctx.lineTo(cxB, cyB); ctx.lineTo(bxB, byB);
+  ctx.closePath(); ctx.fill();
+
+  // Top face, fully lit.
+  ctx.fillStyle = shade(color, 14);
+  ctx.beginPath();
+  ctx.moveTo(axT, ayT); ctx.lineTo(bxT, byT);
+  ctx.lineTo(cxT, cyT); ctx.lineTo(dxT, dyT);
+  ctx.closePath(); ctx.fill();
+
+  // A thin outline so each piece reads as its own separate block.
+  ctx.strokeStyle = shade(color, -64);
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   VW = window.innerWidth;
   VH = window.innerHeight;
-  if (dpr !== tilesDpr) buildTiles(dpr);
   canvas.width = Math.floor(VW * dpr);
   canvas.height = Math.floor(VH * dpr);
   canvas.style.width = VW + 'px';
@@ -694,15 +703,111 @@ function solidAt(px, py) {
   return grid[gy][gx] !== 0;
 }
 
-function blocked(x, y, r) {
-  return solidAt(x - r, y - r) || solidAt(x + r, y - r)
-      || solidAt(x - r, y + r) || solidAt(x + r, y + r);
+// ---------------------------------------------------------------------------
+//  Climbing
+//
+//  Now that blocks have real height, nothing is a dead end: hold towards a wall
+//  and you haul yourself up it, then you can walk along the top and drop off the
+//  far side. The enemies use exactly the same rules, so they will follow you up
+//  there. Everything that stands has a z, which is how high its feet are.
+// ---------------------------------------------------------------------------
+const CLIMB_SPEED = 62;     // how fast you haul yourself up
+const FALL_SPEED = 260;     // and how fast you come down
+const STEP_UP = 2;          // height difference small enough to just walk over
+
+// How high the solid stuff is at a point. Off the edge of the map counts as an
+// unclimbably tall wall so nothing can get out.
+function tileTopAt(px, py) {
+  const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
+  if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return WALL_H * 4;
+  const t = grid[gy][gx];
+  return t === WALL ? WALL_H : t === CRATE ? CRATE_H : 0;
+}
+
+// The tallest thing under a body, checking its four corners.
+function topUnder(x, y, r) {
+  return Math.max(
+    tileTopAt(x - r, y - r), tileTopAt(x + r, y - r),
+    tileTopAt(x - r, y + r), tileTopAt(x + r, y + r));
+}
+
+// The body is a bit narrower than the drawn character. With a full-width box,
+// standing next to a crate counted as overlapping the crate diagonally behind
+// you, and then every direction was blocked at once.
+const BODY = 0.62;
+
+// Blocked only by things taller than your feet. Stand on top of a wall and you
+// can walk straight over it.
+function blockedAt(x, y, r, z) {
+  return topUnder(x, y, r * BODY) > (z || 0) + STEP_UP;
 }
 
 // One axis at a time, so you slide along a wall instead of sticking to it.
 function moveEntity(e, dx, dy) {
-  if (dx !== 0 && !blocked(e.x + dx, e.y, e.r)) e.x += dx;
-  if (dy !== 0 && !blocked(e.x, e.y + dy, e.r)) e.y += dy;
+  const z = e.z || 0;
+  if (dx !== 0 && !blockedAt(e.x + dx, e.y, e.r, z)) e.x += dx;
+  if (dy !== 0 && !blockedAt(e.x, e.y + dy, e.r, z)) e.y += dy;
+}
+
+// Easing anything that has ended up overlapping a block back out into the open.
+//
+// This is the real reason enemies used to wedge and stop dead. Once a body was
+// overlapping a solid tile, every direction tested as blocked, including the way
+// out, so it could never free itself and just stood there for the rest of the
+// game. The old fix was to pick it up and drop it at a spawn point, which is what
+// looked like teleporting. Instead this looks for the nearest open ground and
+// walks it that way a few pixels at a time, so it frees itself without ever
+// jumping and without being able to slip through a wall.
+const UNSTICK_STEP = 4;
+function unstick(e) {
+  const z = e.z || 0, r = e.r * BODY;
+  if (topUnder(e.x, e.y, r) <= z + STEP_UP) return false;
+  for (let ring = 1; ring <= 4; ring++) {
+    const d = ring * TILE * 0.5;
+    for (let a = 0; a < 8; a++) {
+      const ang = a * Math.PI / 4;
+      const tx = e.x + Math.cos(ang) * d, ty = e.y + Math.sin(ang) * d;
+      if (topUnder(tx, ty, r) <= z + STEP_UP) {
+        const len = Math.hypot(tx - e.x, ty - e.y) || 1;
+        const step = Math.min(UNSTICK_STEP, len);
+        e.x += (tx - e.x) / len * step;
+        e.y += (ty - e.y) / len * step;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Climbing and falling. Push towards something taller than you and you start
+// going up it. Walk off an edge and you drop.
+function updateHeight(e, pushX, pushY, dt) {
+  if (e.z === undefined) e.z = 0;
+  // What is directly beneath, using a narrow footprint so standing beside a wall
+  // does not count as standing on it.
+  const floorZ = topUnder(e.x, e.y, e.r * 0.5);
+
+  if (e.z < floorZ) {
+    // Inside something: rise until you are on top of it.
+    e.z = Math.min(floorZ, e.z + CLIMB_SPEED * dt);
+    return;
+  }
+
+  const pushing = (pushX !== 0 || pushY !== 0);
+  if (pushing) {
+    const len = Math.hypot(pushX, pushY) || 1;
+    const ax = e.x + (pushX / len) * (e.r + 4);
+    const ay = e.y + (pushY / len) * (e.r + 4);
+    const ahead = topUnder(ax, ay, e.r * 0.5);
+    if (ahead > e.z + STEP_UP) {
+      // Hauling yourself up the face of it.
+      e.z = Math.min(ahead, e.z + CLIMB_SPEED * dt);
+      e.climbing = true;
+      return;
+    }
+  }
+  e.climbing = false;
+  if (e.z > floorZ) e.z = Math.max(floorZ, e.z - FALL_SPEED * dt);
 }
 
 
@@ -803,7 +908,7 @@ function newPlayer() {
     x: playerStart.x, y: playerStart.y, r: 13,
     side: NOOB, kills: { noob: 0, zombie: 0 },
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
-    face: 1, aimx: 1, aimy: 0, wob: 0,
+    face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: freshUpgrades(),
   };
@@ -830,6 +935,23 @@ function enemySide() { return player.side === NOOB ? ZOMB : NOOB; }
 function hostileCount() {
   let n = 0;
   for (const e of enemies) { if (e.hp > 0 && e.side !== player.side) n++; }
+  return n;
+}
+
+// Hostiles that can actually be fought. If something somehow ends up where there
+// is no path to you at all, then it cannot reach you and you cannot reach it, so
+// it must not be allowed to hold a wave open forever. This replaces the old trick
+// of teleporting stuck enemies back to a spawn point.
+function blockingHostiles() {
+  let n = 0;
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.side === player.side) continue;
+    if (flow) {
+      const gx = Math.floor(e.x / TILE), gy = Math.floor(e.y / TILE);
+      if (gx >= 0 && gy >= 0 && gx < GW && gy < GH && flow[gy * GW + gx] < 0) continue;
+    }
+    n++;
+  }
   return n;
 }
 
@@ -898,13 +1020,62 @@ function spawnEnemy(side, boss) {
   if (boss) { hp *= TUNE.BOSS_HEALTH; size = TUNE.BOSS_SIZE; speed = TUNE.BOSS_SPEED; }
   hp = Math.round(hp);
 
+  // Pick how well armed this one is. The boss stays on rank 0 so its fight stays
+  // predictable, since its health and armour already make it a handful.
+  let rank = 0;
+  if (!boss) {
+    const roll = Math.random();
+    if (wave >= TUNE.RANK3_FROM_WAVE && roll < TUNE.RANK_CHANCE * .36) rank = 3;
+    else if (wave >= TUNE.RANK2_FROM_WAVE && roll < TUNE.RANK_CHANCE * .68) rank = 2;
+    else if (wave >= TUNE.RANK1_FROM_WAVE && roll < TUNE.RANK_CHANCE) rank = 1;
+  }
+
   enemies.push({
     x: p.x, y: p.y, r: Math.round(13 * size), side: side,
     hp: hp, maxhp: hp, type: type.key, size: size, spd: speed, boss: !!boss,
-    rank: 0, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
-    squash: 0, wob: Math.random() * 6.28,
+    rank: rank, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
+    squash: 0, wob: Math.random() * 6.28, z: 0, climbing: false,
     lastX: p.x, lastY: p.y, stuckT: 0,
+    // Which way this one prefers to circle, and how long it has been charging.
+    turn: Math.random() < .5 ? -1 : 1, chargeT: 0, chargeCool: 1 + Math.random() * 2,
   });
+}
+
+// Can this thing actually see that thing, or is there a wall in the way? Walks
+// along the line in small steps and gives up at the first solid tile. Used to
+// stop anything firing into a wall, which is one of the things that made the
+// enemies look stupid.
+function hasLineOfSight(x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return true;
+  const steps = Math.ceil(dist / (TILE * 0.4));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (solidAt(x0 + dx * t, y0 + dy * t)) return false;
+  }
+  return true;
+}
+
+// Shove overlapping enemies apart. Without this they all walk the same line to
+// the player and pile into a single blob, which is the main reason they looked
+// brainless. Spread out, they read as a group closing in on you.
+function separate(e, dt) {
+  let sx = 0, sy = 0, n = 0;
+  for (const o of enemies) {
+    if (o === e || o.hp <= 0) continue;
+    const dx = e.x - o.x, dy = e.y - o.y;
+    const d2 = dx * dx + dy * dy;
+    const want = (e.r + o.r) * 1.2;
+    if (d2 > 0.01 && d2 < want * want) {
+      const d = Math.sqrt(d2);
+      sx += dx / d; sy += dy / d; n++;
+    }
+  }
+  if (n === 0) return;
+  const len = Math.hypot(sx, sy) || 1;
+  moveEntity(e, (sx / len) * TUNE.ENEMY_SEPARATION * dt,
+                (sy / len) * TUNE.ENEMY_SEPARATION * dt);
 }
 
 function nearestTarget(from, wantSide) {
@@ -1060,7 +1231,8 @@ function firing() { return fire.active || keys[' '] || keys['j']; }
 // ---------------------------------------------------------------------------
 //  Effects
 // ---------------------------------------------------------------------------
-function spray(x, y, color, count, dirAngle) {
+function spray(x, y, color, count, dirAngle, z0) {
+  z0 = z0 || 0;
   const n = Math.round(count * TUNE.BLOOD);
   for (let i = 0; i < n; i++) {
     // Debris thrown along the line of the blow. An even puff in all directions
@@ -1069,7 +1241,7 @@ function spray(x, y, color, count, dirAngle) {
       ? Math.random() * 6.283
       : dirAngle + (Math.random() - 0.5) * 1.6;
     const sp = 40 + Math.random() * 170;
-    bits.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+    bits.push({ x: x, y: y, z: z0, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
                 life: .35 + Math.random() * .45, max: .8, c: color,
                 s: 2 + Math.random() * 3 });
   }
@@ -1253,6 +1425,8 @@ function tryAttack(who, isPlayer) {
 
   if (rk.ranged) {
     if (dist > reach) return;
+    // Never fire into a wall. Wait for a clear shot instead.
+    if (!hasLineOfSight(who.x, who.y, found.target.x, found.target.y)) return;
     who.cool = rate;
     who.swing = .12;
     const isAcid = rk.weapon === 'acid';
@@ -1319,9 +1493,15 @@ function update(dt) {
   // text keep moving so the screen does not look locked up.
   if (waveState === 'picking') { driftEffects(dt); return; }
 
-  const mv = inputVector();
+  // The stick points where you want to go on screen; this turns that into a
+  // direction across the tilted world.
+  const raw = inputVector();
+  const mv = stickToWorld(raw.dx, raw.dy);
   const sp = TUNE.PLAYER_SPEED * player.up.speed * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
+  // Climb whatever you are pushing against, or fall if you walked off an edge.
+  updateHeight(player, mv.dx, mv.dy, dt);
+  unstick(player);
   if (mv.dx !== 0) player.face = mv.dx > 0 ? 1 : -1;
 
   // Aim at whoever is closest, because twin-stick aiming on a touchscreen is no
@@ -1405,43 +1585,117 @@ function update(dt) {
     if (found.target) {
       const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
       const rk = table[e.rank];
-      const stopAt = rk.ranged ? 240 : rk.reach - 8;
+      const tgt = found.target;
+      const canSee = hasLineOfSight(e.x, e.y, tgt.x, tgt.y);
 
-      if (found.dist > stopAt) {
-        let sx, sy;
-        // Use the step map when chasing the player, since that is the one that
-        // has to work. Chasing anyone else falls back to heading straight over.
-        const dir = (found.target === player) ? flowDir(e.x, e.y) : null;
-        if (dir) { sx = dir.x; sy = dir.y; }
-        else {
-          const a = Math.atan2(found.target.y - e.y, found.target.x - e.x);
-          const wob = Math.sin(e.wob) * .32;
-          sx = Math.cos(a + wob); sy = Math.sin(a + wob);
+      // Which way is the target, going around walls if it is the player.
+      let sx = 0, sy = 0, moving = false;
+      const flowD = (tgt === player) ? flowDir(e.x, e.y) : null;
+      const straight = Math.atan2(tgt.y - e.y, tgt.x - e.x);
+      let toward;
+      if (flowD && !canSee) {
+        // Out of sight, so trust the step map to route around the walls.
+        toward = { x: flowD.x, y: flowD.y };
+      } else if (flowD) {
+        // In sight, so head over directly but let the step map nudge it so it
+        // does not scrape along a corner.
+        toward = { x: (Math.cos(straight) * 2 + flowD.x) / 3,
+                   y: (Math.sin(straight) * 2 + flowD.y) / 3 };
+      } else {
+        toward = { x: Math.cos(straight), y: Math.sin(straight) };
+      }
+      const tl = Math.hypot(toward.x, toward.y) || 1;
+      toward.x /= tl; toward.y /= tl;
+      // Sideways, for circling and flanking.
+      const sideX = -toward.y * e.turn, sideY = toward.x * e.turn;
+
+      let spd = TUNE.ENEMY_SPEED * e.spd;
+
+      if (rk.ranged) {
+        // A spitter keeps its distance: backs off if crowded, closes if too far,
+        // and sidesteps while it waits for a clear shot.
+        if (found.dist < TUNE.RANGED_NEAR) {
+          sx = -toward.x; sy = -toward.y; moving = true;
+        } else if (found.dist > TUNE.RANGED_FAR || !canSee) {
+          sx = toward.x; sy = toward.y; moving = true;
+        } else {
+          sx = sideX; sy = sideY; moving = true;
+          spd *= .55;
         }
-        const spd = TUNE.ENEMY_SPEED * e.spd;
-        moveEntity(e, sx * spd * dt, sy * spd * dt);
-        e.face = sx > 0 ? 1 : -1;
+      } else {
+        const stopAt = rk.reach - 8;
 
-        // Belt and braces. If something is genuinely wedged, put it back at a
-        // spawn point rather than leave a wave unfinishable.
+        // A brute winds up and lunges instead of plodding the whole way over.
+        if (e.type === 'brute' || e.boss) {
+          e.chargeCool -= dt;
+          if (e.chargeT > 0) {
+            e.chargeT -= dt;
+            spd *= TUNE.BRUTE_CHARGE_SPEED;
+          } else if (e.chargeCool <= 0 && canSee
+                     && found.dist > stopAt + 40 && found.dist < 320) {
+            e.chargeT = TUNE.BRUTE_CHARGE_TIME;
+            e.chargeCool = 2.4 + Math.random() * 1.6;
+            e.squash = .2;
+          }
+        }
+
+        if (found.dist > stopAt) {
+          // Curl in sideways as you get close so the group fans out around the
+          // target instead of queueing up single file behind one another.
+          const closeness = Math.max(0, Math.min(1, 1 - (found.dist - stopAt) / 240));
+          const flank = (e.chargeT > 0) ? 0 : TUNE.ENEMY_FLANK * closeness;
+          sx = toward.x + sideX * flank;
+          sy = toward.y + sideY * flank;
+          const l = Math.hypot(sx, sy) || 1;
+          sx /= l; sy /= l;
+          moving = true;
+        } else if (e.type === 'runner') {
+          // A runner uses its speed: it circles instead of standing there.
+          sx = sideX; sy = sideY; moving = true;
+          spd *= .8;
+        }
+      }
+
+      if (moving) {
+        moveEntity(e, sx * spd * dt, sy * spd * dt);
+        // They climb with exactly the same rules you do, so they will follow you
+        // up onto a wall rather than milling about at the bottom of it.
+        updateHeight(e, sx, sy, dt);
+        if (Math.abs(sx) > .1) e.face = sx > 0 ? 1 : -1;
+        // Face the target while circling, rather than facing the way you walk.
+        if (rk.ranged || e.type === 'runner') e.face = (tgt.x > e.x) ? 1 : -1;
+
+        // If one gets itself wedged on a corner, it turns the other way and has
+        // another go. Nothing ever gets moved: an earlier version picked stuck
+        // enemies up and dropped them at a spawn point, which just looked like
+        // they were teleporting around the map for no reason.
         e.stuckT += dt;
-        if (e.stuckT > 2.5) {
-          if (Math.hypot(e.x - e.lastX, e.y - e.lastY) < 14) {
-            const sp2 = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-            e.x = sp2.x; e.y = sp2.y;
-            spray(e.x, e.y, '#5b6474', 6);
+        if (e.stuckT > 1.1) {
+          if (Math.hypot(e.x - e.lastX, e.y - e.lastY) < 10) {
+            e.turn = -e.turn;
+            flowTimer = 0;   // rebuild the step map and pick a fresh route
           }
           e.lastX = e.x; e.lastY = e.y; e.stuckT = 0;
         }
-      } else { e.stuckT = 0; e.lastX = e.x; e.lastY = e.y; }
+      } else {
+        e.stuckT = 0; e.lastX = e.x; e.lastY = e.y;
+        updateHeight(e, 0, 0, dt);
+      }
+
+      // Keep out of each other's way, and never stay wedged in a block.
+      separate(e, dt);
+      unstick(e);
       tryAttack(e, false);
+    } else {
+      separate(e, dt);
+      unstick(e);
     }
   }
   enemies = enemies.filter(e => e.hp > 0);
 
   // The wave ends once everything has been sent in and nothing hostile is left
   // standing. Allies you infected do not count against you.
-  if (waveToSpawn === 0 && hostileCount() === 0) { finishWave(); return; }
+  if (waveToSpawn === 0 && blockingHostiles() === 0) { finishWave(); return; }
 
   for (const s of shots) {
     s.x += s.vx * dt; s.y += s.vy * dt;
@@ -1470,21 +1724,27 @@ function update(dt) {
 // ---------------------------------------------------------------------------
 //  Drawing
 // ---------------------------------------------------------------------------
-const cam = { x: 0, y: 0 };
+// The camera just keeps you in the middle. Because the world is drawn tilted,
+// this is an offset applied once to the whole scene rather than subtracted from
+// every single point.
+const camOff = { x: 0, y: 0 };
 
 function updateCamera() {
-  cam.x = player.x - VW / 2;
-  cam.y = player.y - VH / 2;
-  cam.x = Math.max(0, Math.min(WORLD_W - VW, cam.x));
-  cam.y = Math.max(0, Math.min(WORLD_H - VH, cam.y));
-  if (WORLD_W < VW) cam.x = (WORLD_W - VW) / 2;
-  if (WORLD_H < VH) cam.y = (WORLD_H - VH) / 2;
+  camOff.x = isoX(player.x, player.y);
+  camOff.y = isoY(player.x, player.y, 0);
 }
 
-// A blocky character in the classic noob colours, drawn upright and flipped
-// left or right, which reads clearly from above without needing real 3D.
+// Rough check so offscreen blocks are skipped instead of drawn for nothing.
+function onScreen(wx, wy) {
+  const sx = (isoX(wx, wy) - camOff.x) * ZOOM + VW / 2;
+  const sy = (isoY(wx, wy, 0) - camOff.y) * ZOOM + VH / 2;
+  const m = 90 * ZOOM;
+  return sx > -m && sx < VW + m && sy > -m && sy < VH + m * 1.6;
+}
+
+// A character, built out of real boxes stacked on top of each other: two legs, a
+// torso, two arms and a head. Same shapes a Roblox character is made of.
 function drawGuy(g, side, rankIdx, isPlayer) {
-  const x = Math.round(g.x - cam.x), y = Math.round(g.y - cam.y);
   const isNoob = side === NOOB;
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
@@ -1497,169 +1757,195 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#6b4a8f'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
 
-  const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.3;
+  const s = g.size || 1;
+  const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
+  const z = (g.z || 0) + bob;
 
-  ctx.save();
-  ctx.translate(x, y + bob);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  // Shadow on whatever surface is underneath, so you can tell how high up
+  // something is when it is standing on a wall.
+  const shx = isoX(g.x, g.y);
+  const shy = isoY(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.beginPath();
-  ctx.ellipse(0, 15 * (g.size || 1), 14 * (g.size || 1), 5.5, 0, 0, 6.283);
+  ctx.ellipse(shx, shy, 12 * s, 6 * s, 0, 0, 6.283);
   ctx.fill();
 
   const flash = (g.hurtFlash > 0)
     || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
-  if (flash) ctx.globalAlpha = .72;
+  if (flash) ctx.globalAlpha = .68;
 
-  const f = (g.face || 1);
-  const big = (g.size || 1) * (rk.weapon === 'smash' ? 1.12 : 1);
-  // Squash and stretch: widen and flatten for a moment on impact.
+  // Squash and stretch on impact: the whole stack goes briefly shorter and wider.
   const sq = g.squash || 0;
-  ctx.scale(f * big * (1 + sq * 1.3), big * (1 - sq * .9));
+  const hs = 1 - sq * .35;
+  const ws = 1 + sq * .25;
 
-  // Built the way a Roblox character is: separate blocky parts with real gaps
-  // between them, each with a lit top face and a shaded side.
-  // Two legs, with a gap.
-  part(-8.5, 2, 7, 14, legs);
-  part(1.5, 2, 7, 14, legs);
-  // Two arms, held out from the body.
-  part(-13.5, -8, 4.5, 11, skin);
-  part(9, -8, 4.5, 11, skin);
+  const legH = 15 * s * hs, torsoH = 14 * s * hs, headH = 15 * s * hs;
+  const hw = 9 * s * ws;              // half the width of the torso
+  const dep = 9 * s;                  // how deep the body is
+  const y0 = g.y - dep / 2;
+
+  // Legs, two boxes with a gap between them.
+  drawBox(g.x - hw, y0, z, 7.5 * s * ws, dep, legH, legs);
+  drawBox(g.x + hw - 7.5 * s * ws, y0, z, 7.5 * s * ws, dep, legH, legs);
+  // Arms, hanging off either side.
+  drawBox(g.x - hw - 4.8 * s, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
+  drawBox(g.x + hw, y0 + 1, z + legH * .35, 4.8 * s, dep - 2, torsoH, skin);
   // Torso.
-  part(-9, -8.5, 18, 11.5, torso);
-  // Head, sitting slightly wider than the neck like the real thing.
-  part(-8, -23, 16, 14.5, skin);
+  drawBox(g.x - hw, y0, z + legH, hw * 2, dep, torsoH, torso);
+  // Head, a cube sitting on the shoulders.
+  const headW = 15 * s * ws;
+  drawBox(g.x - headW / 2, y0, z + legH + torsoH, headW, dep, headH, skin);
 
-  // The classic noob face: two eyes and a big happy grin. Zombies get the same
-  // blocky face but with a jagged mouth instead.
+  // The classic noob face, painted on the front of the head cube.
+  const fx = isoX(g.x, y0 + dep);
+  const fy = isoY(g.x, y0 + dep, z + legH + torsoH + headH * .55);
+  const e = 2.1 * s;
   ctx.fillStyle = '#241c14';
-  ctx.fillRect(-4.6, -19, 2.8, 4);
-  ctx.fillRect(1.8, -19, 2.8, 4);
+  ctx.fillRect(fx - 4.4 * s, fy - e, e * 1.3, e * 1.9);
+  ctx.fillRect(fx + 1.6 * s, fy - e, e * 1.3, e * 1.9);
   if (isNoob) {
-    // A wide smile, drawn as a shallow curve so it reads at this size.
     ctx.strokeStyle = '#241c14';
-    ctx.lineWidth = 1.7;
+    ctx.lineWidth = 1.6 * s;
     ctx.beginPath();
-    ctx.arc(0, -14.6, 3.6, 0.15, Math.PI - 0.15);
+    ctx.arc(fx, fy + 2.4 * s, 3.4 * s, .18, Math.PI - .18);
     ctx.stroke();
   } else {
-    ctx.fillRect(-5, -14.4, 10, 3.2);
-    ctx.fillStyle = shade(skin, 10);
-    ctx.fillRect(-3.2, -14.4, 1.7, 3.2);
-    ctx.fillRect(1.5, -14.4, 1.7, 3.2);
+    ctx.fillRect(fx - 4.6 * s, fy + 2.2 * s, 9.2 * s, 2.6 * s);
+    ctx.fillStyle = shade(skin, 12);
+    ctx.fillRect(fx - 2.6 * s, fy + 2.2 * s, 1.5 * s, 2.6 * s);
+    ctx.fillRect(fx + 1.2 * s, fy + 2.2 * s, 1.5 * s, 2.6 * s);
   }
 
+  // Whatever it is holding, as another box out to the side it is facing.
   const swinging = g.swing > 0;
-  const push = swinging ? 6 : 0;
+  const f = g.face || 1;
+  const wx = f > 0 ? g.x + hw + 2 : g.x - hw - 7 * s;
+  const wz = z + legH + torsoH * .45;
+  const lunge = swinging ? 5 : 0;
   if (rk.weapon === 'knife') {
-    ctx.fillStyle = '#2b2f38'; ctx.fillRect(12 + push, -6, 4, 3);
-    ctx.fillStyle = '#dfe6f0'; ctx.fillRect(16 + push, -6.5, 11, 3.2);
+    drawBox(wx + f * lunge, y0 + 2, wz, 11 * s, 2.6 * s, 2.6 * s, '#dfe6f0');
   } else if (rk.weapon === 'pistol') {
-    ctx.fillStyle = '#22262e'; ctx.fillRect(12, -6, 12, 4); ctx.fillRect(13, -3, 4, 5);
-    if (swinging) { ctx.fillStyle = '#ffd84d'; ctx.fillRect(24, -6, 7, 4); }
+    drawBox(wx, y0 + 2, wz, 10 * s, 3 * s, 3.4 * s, '#2b3038');
+    if (swinging) drawBox(wx + 10 * s, y0 + 2.5, wz, 5 * s, 2 * s, 2 * s, '#ffd84d');
   } else if (rk.weapon === 'riot shield') {
-    ctx.fillStyle = 'rgba(190,205,225,0.5)'; ctx.fillRect(11, -20, 7, 30);
-    ctx.fillStyle = '#8c99ab'; ctx.fillRect(11, -20, 7, 2.5); ctx.fillRect(11, 7.5, 7, 2.5);
+    ctx.globalAlpha *= .72;
+    drawBox(wx, y0 - 3, z + 2, 3.4 * s, dep + 6, legH + torsoH + 6, '#b9c6da');
+    ctx.globalAlpha = flash ? .68 : 1;
   } else if (rk.weapon === 'claws') {
-    ctx.fillStyle = '#d8dee8';
-    for (let i = 0; i < 3; i++) ctx.fillRect(13 + push, -8 + i * 4, 8, 1.8);
+    for (let i = 0; i < 3; i++) {
+      drawBox(wx + f * lunge, y0 + 1 + i * 3 * s, wz, 7 * s, 1.6 * s, 1.6 * s, '#d8dee8');
+    }
   } else if (rk.weapon === 'acid') {
+    const ax2 = isoX(wx, g.y), ay2 = isoY(wx, g.y, wz);
     ctx.fillStyle = '#8ecf4a';
-    ctx.beginPath(); ctx.arc(15, -3, 4.5, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.arc(ax2, ay2, 4.6 * s, 0, 6.283); ctx.fill();
   } else if (rk.weapon === 'smash') {
-    ctx.fillStyle = '#5b6b45'; ctx.fillRect(11 + push, -9, 9, 9);
+    drawBox(wx + f * lunge, y0, wz - 2, 9 * s, 9 * s, 9 * s, '#5b6b45');
   } else if (swinging) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(10, -3, 13, -.9, .9); ctx.stroke();
+    const px2 = isoX(g.x + f * (hw + 6), g.y), py2 = isoY(g.x + f * (hw + 6), g.y, wz);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.arc(px2, py2, 8 * s, -.9, .9); ctx.stroke();
   }
 
-  ctx.restore();
+  ctx.globalAlpha = 1;
 
   if (!isPlayer && g.hp < g.maxhp) {
-    const w = g.boss ? 52 : 26, h = g.boss ? 5 : 3.5;
+    const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
+    const bx = isoX(g.x, g.y) - bw2 / 2;
+    const by = isoY(g.x, g.y, z + legH + torsoH + headH) - 7;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - w / 2, y - 32 * (g.size || 1), w, h);
+    ctx.fillRect(bx, by, bw2, bh);
     ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');
-    ctx.fillRect(x - w / 2, y - 32 * (g.size || 1), w * Math.max(0, g.hp / g.maxhp), h);
+    ctx.fillRect(bx, by, bw2 * Math.max(0, g.hp / g.maxhp), bh);
   }
 }
 
-// Which tiles are on screen. Padded a row either side because a tall block
-// sticks up out of its own tile and a low one pokes down.
-function visibleTiles() {
-  return {
-    x0: Math.max(0, Math.floor(cam.x / TILE) - 1),
-    y0: Math.max(0, Math.floor(cam.y / TILE) - 1),
-    x1: Math.min(GW - 1, Math.ceil((cam.x + VW) / TILE) + 1),
-    y1: Math.min(GH - 1, Math.ceil((cam.y + VH) / TILE) + 2),
-  };
-}
-
-// The baseplate goes down flat, first, under everything.
+// The baseplate. Each square of ground is a tilted diamond with one stud on it,
+// which is what a Roblox baseplate looks like. The studs live here and nowhere
+// else: putting them on the walls as well is what made it look like Lego.
 function drawFloor() {
-  const v = visibleTiles();
-  for (let gy = v.y0; gy <= v.y1; gy++) {
-    for (let gx = v.x0; gx <= v.x1; gx++) {
+  const w = TILE * ISO_X, h = TILE * ISO_Y;
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
       if (grid[gy][gx] !== 0) continue;
-      const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
-      const img = ((gx + gy) % 2 === 0) ? tileFloorA : tileFloorB;
-      if (img) ctx.drawImage(img, px, py, TILE, TILE);
-      else { ctx.fillStyle = '#4c5a4a'; ctx.fillRect(px, py, TILE, TILE); }
+      const wx = gx * TILE, wy = gy * TILE;
+      if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
+      const cx = isoX(wx + TILE / 2, wy + TILE / 2);
+      const cy = isoY(wx + TILE / 2, wy + TILE / 2, 0);
+      ctx.fillStyle = ((gx + gy) % 2 === 0) ? '#4c5a4a' : '#475440';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - h);
+      ctx.lineTo(cx + w, cy);
+      ctx.lineTo(cx, cy + h);
+      ctx.lineTo(cx - w, cy);
+      ctx.closePath();
+      ctx.fill();
+      // One soft stud per square.
+      ctx.fillStyle = 'rgba(255,255,255,0.055)';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - 1.5, w * .34, h * .34, 0, 0, 6.283);
+      ctx.fill();
     }
   }
 }
 
 function drawHeartAt(h) {
   if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) return;
-  const hx = Math.round(h.x - cam.x);
-  const hy = Math.round(h.y - cam.y + Math.sin(h.bob) * 3) - 8;
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath(); ctx.ellipse(hx, hy + 12, 7, 3, 0, 0, 6.283); ctx.fill();
+  const lift = 7 + Math.sin(h.bob) * 2.5;
+  const hx = isoX(h.x, h.y);
+  const hy = isoY(h.x, h.y, (h.z || 0) + lift);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(isoX(h.x, h.y), isoY(h.x, h.y, h.z || 0), 6, 3, 0, 0, 6.283);
+  ctx.fill();
   ctx.fillStyle = '#e8544f';
   ctx.beginPath();
-  ctx.arc(hx - 4, hy - 3, 4.6, 0, 6.283);
-  ctx.arc(hx + 4, hy - 3, 4.6, 0, 6.283);
-  ctx.moveTo(hx - 8.4, hy - 1.4); ctx.lineTo(hx, hy + 8); ctx.lineTo(hx + 8.4, hy - 1.4);
+  ctx.arc(hx - 3.4, hy - 2.6, 4, 0, 6.283);
+  ctx.arc(hx + 3.4, hy - 2.6, 4, 0, 6.283);
+  ctx.moveTo(hx - 7.2, hy - 1.2); ctx.lineTo(hx, hy + 6.6); ctx.lineTo(hx + 7.2, hy - 1.2);
   ctx.closePath(); ctx.fill();
 }
 
-// Everything that stands up off the floor, drawn back to front so a block or a
-// character nearer the bottom of the screen covers whatever is behind it. That
-// overlap is what makes the world read as solid rather than painted on.
+function drawOne(o) {
+  if (o.__heart) drawHeartAt(o);
+  else if (o === player) drawGuy(player, player.side, player.rank, true);
+  else drawGuy(o, o.side, o.rank, false);
+}
+
+// Everything that stands up, drawn back to front. In a tilted view the things
+// further away are the ones with a smaller x plus y, so the world gets walked
+// one diagonal at a time and anything standing on an earlier diagonal is drawn
+// before the blocks in front of it. That ordering is what makes the boxes look
+// solid instead of transparent.
 const _standing = [];
 function drawStanding() {
   _standing.length = 0;
   for (const e of enemies) _standing.push(e);
   for (const h of hearts) _standing.push(h);
   _standing.push(player);
-  _standing.sort((a, b) => a.y - b.y);
+  _standing.sort((a, b) => (a.x + a.y) - (b.x + b.y));
 
-  const v = visibleTiles();
   let si = 0;
-  for (let gy = v.y0; gy <= v.y1; gy++) {
-    // Anything standing behind this row of blocks goes down first.
-    const rowTop = gy * TILE;
-    while (si < _standing.length && _standing[si].y <= rowTop) {
-      const o = _standing[si++];
-      if (o.__heart) drawHeartAt(o);
-      else if (o === player) drawGuy(player, player.side, player.rank, true);
-      else drawGuy(o, o.side, o.rank, false);
+  const lastDiag = GW + GH - 2;
+  for (let d = 0; d <= lastDiag; d++) {
+    const bound = d * TILE;
+    while (si < _standing.length && (_standing[si].x + _standing[si].y) <= bound) {
+      drawOne(_standing[si++]);
     }
-    for (let gx = v.x0; gx <= v.x1; gx++) {
+    const gxStart = Math.max(0, d - (GH - 1));
+    const gxEnd = Math.min(GW - 1, d);
+    for (let gx = gxStart; gx <= gxEnd; gx++) {
+      const gy = d - gx;
       const t = grid[gy][gx];
       if (t === 0) continue;
-      const px = Math.round(gx * TILE - cam.x), py = Math.round(gy * TILE - cam.y);
-      if (t === WALL) drawBlock(px, py, WALL_H, tileWall, WALL_COLOR);
-      else drawBlock(px, py, CRATE_H, tileCrate, CRATE_COLOR);
+      const wx = gx * TILE, wy = gy * TILE;
+      if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
+      if (t === WALL) drawBox(wx, wy, 0, TILE, TILE, WALL_H, WALL_COLOR);
+      else drawBox(wx, wy, 0, TILE, TILE, CRATE_H, CRATE_COLOR);
     }
   }
-  // Whatever is in front of every block on screen.
-  while (si < _standing.length) {
-    const o = _standing[si++];
-    if (o.__heart) drawHeartAt(o);
-    else if (o === player) drawGuy(player, player.side, player.rank, true);
-    else drawGuy(o, o.side, o.rank, false);
-  }
+  while (si < _standing.length) drawOne(_standing[si++]);
 }
 
 // A little map in the corner, because the level is bigger than the screen and
@@ -1955,15 +2241,22 @@ function draw() {
   }
 
   ctx.fillStyle = '#0d0f14';
-  ctx.fillRect(-40, -40, VW + 80, VH + 80);
+  ctx.fillRect(-60, -60, VW + 120, VH + 120);
+
+  // Everything from here on is drawn in world coordinates. This one transform
+  // tilts the whole scene, zooms it in and centres it on the player.
+  ctx.save();
+  ctx.translate(VW / 2, VH / 2);
+  ctx.scale(ZOOM, ZOOM);
+  ctx.translate(-camOff.x, -camOff.y);
 
   drawFloor();
 
-  // Blood and debris lie flat on the plate, underneath anything standing on it.
+  // Blood and debris lie flat on whatever surface they landed on.
   for (const b of bits) {
     ctx.globalAlpha = Math.max(0, b.life / b.max);
     ctx.fillStyle = b.c;
-    ctx.fillRect(Math.round(b.x - cam.x), Math.round(b.y - cam.y), b.s, b.s);
+    ctx.fillRect(isoX(b.x, b.y), isoY(b.x, b.y, b.z || 0), b.s, b.s);
   }
   ctx.globalAlpha = 1;
 
@@ -1971,21 +2264,22 @@ function draw() {
 
   for (const s of shots) {
     ctx.fillStyle = s.acid ? '#8ecf4a' : '#ffe08a';
-    const px = Math.round(s.x - cam.x), py = Math.round(s.y - cam.y);
-    if (s.acid) { ctx.beginPath(); ctx.arc(px, py, 4.5, 0, 6.283); ctx.fill(); }
-    else ctx.fillRect(px - 3, py - 1.5, 7, 3);
+    const px = isoX(s.x, s.y), py = isoY(s.x, s.y, (s.z || 0) + 16);
+    if (s.acid) { ctx.beginPath(); ctx.arc(px, py, 4, 0, 6.283); ctx.fill(); }
+    else ctx.fillRect(px - 2.5, py - 1.2, 6, 2.4);
   }
 
   ctx.textAlign = 'center';
   for (const p of popups) {
     ctx.globalAlpha = Math.min(1, p.life / .5);
     ctx.fillStyle = p.color;
-    ctx.font = '800 15px -apple-system, system-ui, sans-serif';
-    ctx.fillText(p.text, Math.round(p.x - cam.x), Math.round(p.y - cam.y));
+    ctx.font = '800 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText(p.text, isoX(p.x, p.y), isoY(p.x, p.y, (p.z || 0) + 34));
   }
   ctx.globalAlpha = 1;
 
-  ctx.restore();
+  ctx.restore();   // out of world space
+  ctx.restore();   // out of the shake
   drawHUD();
 }
 
