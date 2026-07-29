@@ -60,6 +60,11 @@
     margin-top: 1.5rem; font-size: 0.8rem; letter-spacing: 0.18em;
     text-transform: uppercase; color: rgba(238,242,248,0.45); font-weight: 700;
   }
+  #ver {
+    position: fixed; left: 0; right: 0; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    text-align: center; font: 700 11px ui-monospace, monospace;
+    color: rgba(238,242,248,0.3); letter-spacing: 0.1em;
+  }
   #credit span {
     display: block; margin-top: 0.35rem; font-size: 1.45rem;
     letter-spacing: -0.01em; text-transform: none; color: #f5cd30; font-weight: 800;
@@ -87,6 +92,7 @@
      whenever something gets close.</p>
   <div id="tapline">Tap to play</div>
   <div id="credit">A game by<span>Josh Alexander</span></div>
+  <div id="ver"></div>
 </div>
 
 <canvas id="game"></canvas>
@@ -127,6 +133,10 @@
 //  first tap instead of when the page loads, because iPads refuse to make any
 //  noise until you touch the screen, and it checks the mute button.
 // ---------------------------------------------------------------------------
+// Bumped whenever the game changes, and shown on the title screen so a photo of
+// the screen says which build it is. Saves guessing whether a reload happened.
+const VERSION = 'v6';
+
 const zzfxV = .28;
 let zzfxX = null;
 let muted = false;
@@ -293,6 +303,19 @@ const TUNE = {
   HEART_CHANCE: 0.16,
   HEART_HEAL: 28,
 
+  // Every so often a kill drops something good. Walk over it and it goes off
+  // straight away, so there is nothing to carry around or remember to press.
+  POWERUP_CHANCE: 0.085,      // about 1 in 12 kills
+  BAG_SLOTS: 6,               // how many kinds you can carry at once
+  GRENADE_DMG: 130, GRENADE_RADIUS: 115,
+  BOMB_DMG: 210,    BOMB_RADIUS: 180,
+  NUKE_DMG: 2200,   NUKE_RADIUS: 3000,
+  LIGHTNING_DMG: 190, LIGHTNING_JUMPS: 6,
+  FREEZE_TIME: 4.5,
+  RAGE_TIME: 9, RAGE_MULT: 3,
+  SHIELD_TIME: 7,
+  SPEED_TIME: 9, SPEED_MULT: 1.6,
+
   // Kills close together build a streak, and a streak hits harder.
   STREAK_WINDOW: 2.6,         // seconds before a streak resets
   STREAK_BONUS: 0.035,        // extra damage per streak step
@@ -415,6 +438,29 @@ const UPGRADES = [
   { name: 'Vampire',        blurb: 'heal 4 on every kill',  apply: u => u.lifesteal += 4 },
 ];
 
+// ---------------------------------------------------------------------------
+//  PICKUPS  --  the good stuff that drops off a kill now and then.
+//  "weight" is how often it turns up, so a grenade is common and a nuke is rare.
+//  Add your own by copying a line.
+// ---------------------------------------------------------------------------
+const POWERUPS = [
+  { kind: 'grenade',   name: 'GRENADE',   color: '#6b8f3a', weight: 30 },
+  { kind: 'bomb',      name: 'BOMB',      color: '#3a3f4a', weight: 22 },
+  { kind: 'lightning', name: 'LIGHTNING', color: '#7ad7ff', weight: 16 },
+  { kind: 'freeze',    name: 'FREEZE',    color: '#9fe8ff', weight: 14 },
+  { kind: 'rage',      name: 'RAGE',      color: '#ff6b4a', weight: 13 },
+  { kind: 'shield',    name: 'SHIELD',    color: '#c9d6e8', weight: 12 },
+  { kind: 'speed',     name: 'FAST FEET', color: '#ffd84d', weight: 12 },
+  { kind: 'nuke',      name: 'NUKE',      color: '#ff9f43', weight: 5  },
+];
+const POWERUP_WEIGHT = POWERUPS.reduce((s, p) => s + p.weight, 0);
+
+function rollPowerup() {
+  let r = Math.random() * POWERUP_WEIGHT;
+  for (const p of POWERUPS) { r -= p.weight; if (r <= 0) return p; }
+  return POWERUPS[0];
+}
+
 function freshUpgrades() {
   return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0,
            biteRes: 1, heal: 1, luck: 1, lifesteal: 0 };
@@ -449,6 +495,7 @@ let VW = 0, VH = 0;
 const PAD = { l: 14, t: 14, r: 14, b: 14 };
 const btn = {};
 let miniRect = { x: 0, y: 0, w: 0, h: 0 };
+let bagRects = [];
 
 function readInsets() {
   if (!probe) return { t: 0, r: 0, b: 0, l: 0 };
@@ -484,6 +531,19 @@ function layout() {
   const hr = 52;
   btn.hit = { x: VW - PAD.r - hr * 2, y: VH - PAD.b - hr * 2, w: hr * 2, h: hr * 2,
               cx: VW - PAD.r - hr, cy: VH - PAD.b - hr, r: hr };
+
+  // The item row, along the bottom middle between the health bar and the hit
+  // button. Slots shrink on a narrow screen rather than running into either.
+  const gap = 8;
+  const room = VW - (PAD.l + 190) - (PAD.r + hr * 2 + 16);
+  const sz = Math.max(38, Math.min(56, room / TUNE.BAG_SLOTS - gap));
+  const total = TUNE.BAG_SLOTS * sz + (TUNE.BAG_SLOTS - 1) * gap;
+  const bx = PAD.l + 190 + Math.max(0, (room - total) / 2);
+  const by = VH - PAD.b - sz;
+  bagRects = [];
+  for (let i = 0; i < TUNE.BAG_SLOTS; i++) {
+    bagRects.push({ x: bx + i * (sz + gap), y: by, w: sz, h: sz });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,7 +928,10 @@ function flowDir(x, y) {
 //  Game state
 // ---------------------------------------------------------------------------
 const NOOB = 'noob', ZOMB = 'zombie';
-let player, enemies, shots, bits, popups, hearts;
+let player, enemies, shots, bits, popups, hearts, powerups, blasts, zaps;
+let freezeT = 0, nukeFlash = 0;
+// What you are carrying. One slot per kind, and duplicates stack up in it.
+let bag = [];
 let spawnTimer, spawnGap, running, paused, best;
 let wave, waveState, waveToSpawn, bossPending, cards, cardRects;
 let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
@@ -897,13 +960,15 @@ function newPlayer() {
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
-    up: freshUpgrades(),
+    up: freshUpgrades(), rageT: 0, speedT: 0,
   };
 }
 
 function reset() {
   player = newPlayer();
   enemies = []; shots = []; bits = []; popups = []; hearts = [];
+  powerups = []; blasts = []; zaps = [];
+  freezeT = 0; nukeFlash = 0; bag = [];
   wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
   cards = []; cardRects = [];
   streak = 0; streakTimer = 0;
@@ -980,6 +1045,112 @@ function choose(card) {
   SFX.pick();
   cards = []; cardRects = [];
   startWave(wave + 1);
+}
+
+// ---------------------------------------------------------------------------
+//  What the pickups do
+// ---------------------------------------------------------------------------
+
+// A blast that hurts everything on the other side within reach of it. Damage
+// falls off towards the edge so standing at the middle of a bomb is worse.
+function explode(x, y, radius, damage, color) {
+  blasts.push({ x: x, y: y, r: 6, max: radius, life: .45, maxLife: .45, c: color });
+  spray(x, y, color, 26);
+  addShake(radius > 400 ? 16 : radius > 150 ? 9 : 6);
+  addHitstop(radius > 400 ? .16 : .07);
+  for (const e of enemies.slice()) {
+    if (e.hp <= 0 || e.side === player.side) continue;
+    const d = Math.hypot(e.x - x, e.y - y);
+    if (d > radius) continue;
+    const falloff = 1 - (d / radius) * .55;
+    hurtEnemy(e, damage * falloff, x, y);
+  }
+}
+
+// Jumps from one enemy to the next, hitting several in a chain.
+function chainLightning(fromX, fromY) {
+  let cx = fromX, cy = fromY;
+  const hit = [];
+  for (let j = 0; j < TUNE.LIGHTNING_JUMPS; j++) {
+    let best = null, bestD = Infinity;
+    for (const e of enemies) {
+      if (e.hp <= 0 || e.side === player.side || hit.indexOf(e) !== -1) continue;
+      const d = Math.hypot(e.x - cx, e.y - cy);
+      if (d < bestD && d < 420) { bestD = d; best = e; }
+    }
+    if (!best) break;
+    zaps.push({ x1: cx, y1: cy, x2: best.x, y2: best.y, life: .22 });
+    hit.push(best);
+    cx = best.x; cy = best.y;
+  }
+  // Damage after picking the chain, since a hit can remove one from the list.
+  for (const e of hit) hurtEnemy(e, TUNE.LIGHTNING_DMG, player.x, player.y);
+  addShake(5);
+  addHitstop(.05);
+}
+
+function usePowerup(kind) {
+  if (kind === 'grenade') {
+    // Lobbed at whoever is nearest, so it always hits something.
+    const near = nearestTarget(player, enemySide());
+    const tx = near.target ? near.target.x : player.x + player.aimx * 90;
+    const ty = near.target ? near.target.y : player.y + player.aimy * 90;
+    explode(tx, ty, TUNE.GRENADE_RADIUS, TUNE.GRENADE_DMG, '#c9e86a');
+    SFX.smash();
+  } else if (kind === 'bomb') {
+    explode(player.x, player.y, TUNE.BOMB_RADIUS, TUNE.BOMB_DMG, '#ffb44a');
+    SFX.smash();
+  } else if (kind === 'nuke') {
+    explode(player.x, player.y, TUNE.NUKE_RADIUS, TUNE.NUKE_DMG, '#ffd84d');
+    nukeFlash = 1;
+    announce('NUKE');
+    SFX.boss();
+  } else if (kind === 'lightning') {
+    chainLightning(player.x, player.y);
+    SFX.gun();
+  } else if (kind === 'freeze') {
+    freezeT = TUNE.FREEZE_TIME;
+    announce('FROZEN');
+    SFX.heart();
+  } else if (kind === 'rage') {
+    player.rageT = TUNE.RAGE_TIME;
+    announce('RAGE');
+    SFX.rankup();
+  } else if (kind === 'shield') {
+    player.invuln = Math.max(player.invuln, TUNE.SHIELD_TIME);
+    announce('SHIELD');
+    SFX.rankup();
+  } else if (kind === 'speed') {
+    player.speedT = TUNE.SPEED_TIME;
+    announce('FAST FEET');
+    SFX.pick();
+  }
+}
+
+// Picking one up. Matching kinds stack, otherwise it takes a free slot. Returns
+// false when the bag is full, and then the pickup is left lying there.
+function addToBag(p) {
+  for (const slot of bag) {
+    if (slot.kind === p.kind) { slot.count++; return true; }
+  }
+  if (bag.length >= TUNE.BAG_SLOTS) return false;
+  bag.push({ kind: p.kind, name: p.name, color: p.color, count: 1 });
+  return true;
+}
+
+// Tapping a slot spends one of whatever is in it.
+function useSlot(i) {
+  const slot = bag[i];
+  if (!slot) return;
+  usePowerup(slot.kind);
+  slot.count--;
+  if (slot.count <= 0) bag.splice(i, 1);
+}
+
+function dropPowerup(x, y) {
+  const p = rollPowerup();
+  powerups.push({ x: x, y: y, z: 0, kind: p.kind, name: p.name, color: p.color,
+                  life: 18, bob: Math.random() * 6.28, __pow: true });
 }
 
 function dropHeart(x, y) {
@@ -1147,6 +1318,15 @@ function onDown(e) {
 
   if (paused) { togglePause(); return; }
 
+  // An item slot. Checked before anything else so a tap on the row never gets
+  // taken for steering or swinging.
+  for (let i = 0; i < bagRects.length; i++) {
+    if (hit(bagRects[i], e.clientX, e.clientY)) {
+      if (bag[i]) useSlot(i);
+      return;
+    }
+  }
+
   // Cards are up: the only thing a tap can do is pick one.
   if (waveState === 'picking') {
     for (let i = 0; i < cardRects.length; i++) {
@@ -1195,6 +1375,8 @@ addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (e.key.toLowerCase() === 'p') togglePause();
   if (e.key.toLowerCase() === 'm') toggleMute();
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= TUNE.BAG_SLOTS) useSlot(n - 1);
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
@@ -1301,6 +1483,7 @@ function killEnemy(e, dirAngle) {
       player.hp = Math.min(player.maxhp, player.hp + player.up.lifesteal);
     }
     if (Math.random() < TUNE.HEART_CHANCE * player.up.luck) dropHeart(e.x, e.y);
+    if (Math.random() < TUNE.POWERUP_CHANCE * player.up.luck) dropPowerup(e.x, e.y);
 
     const k = myKills();
     popup(e.x, e.y - 22, e.boss ? 'BOSS DOWN' : '+1', e.boss ? '#ff9f43' : '#ffd84d');
@@ -1399,7 +1582,8 @@ function tryAttack(who, isPlayer) {
   // Upgrades and streaks are yours alone. Enemies fight at base stats.
   const up = isPlayer ? player.up : NO_UP;
   const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
-  const dmg = rk.dmg * up.dmg * streakMul;
+  const rageMul = (isPlayer && player.rageT > 0) ? TUNE.RAGE_MULT : 1;
+  const dmg = rk.dmg * up.dmg * streakMul * rageMul;
   const reach = rk.reach * up.reach;
   const rate = rk.rate * up.rate;
 
@@ -1484,7 +1668,8 @@ function update(dt) {
   // direction across the tilted world.
   const raw = inputVector();
   const mv = stickToWorld(raw.dx, raw.dy);
-  const sp = TUNE.PLAYER_SPEED * player.up.speed * dt;
+  const speedMul = player.speedT > 0 ? TUNE.SPEED_MULT : 1;
+  const sp = TUNE.PLAYER_SPEED * player.up.speed * speedMul * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
   // Climb whatever you are pushing against, or fall if you walked off an edge.
   updateHeight(player, mv.dx, mv.dy, dt);
@@ -1519,6 +1704,31 @@ function update(dt) {
     streakTimer -= dt;
     if (streakTimer <= 0) streak = 0;
   }
+
+  player.rageT = Math.max(0, player.rageT - dt);
+  player.speedT = Math.max(0, player.speedT - dt);
+  freezeT = Math.max(0, freezeT - dt);
+  nukeFlash = Math.max(0, nukeFlash - dt * 1.6);
+
+  // Walk over a pickup and it goes off there and then.
+  for (const p of powerups) {
+    p.life -= dt;
+    p.bob += dt * 3.4;
+    if (Math.hypot(player.x - p.x, player.y - p.y) < 30) {
+      // Into the bag. If there is no room it stays on the ground and waits.
+      if (addToBag(p)) {
+        p.life = 0;
+        popup(player.x, player.y - 34, p.name, p.color);
+        SFX.pick();
+      }
+    }
+  }
+  powerups = powerups.filter(p => p.life > 0);
+
+  for (const b of blasts) { b.life -= dt; b.r = b.max * (1 - b.life / b.maxLife); }
+  blasts = blasts.filter(b => b.life > 0);
+  for (const zp of zaps) zp.life -= dt;
+  zaps = zaps.filter(zp => zp.life > 0);
 
   // You swing on your own when something is in range.
   if (TUNE.AUTO_ATTACK || firing()) tryAttack(player, true);
@@ -1561,6 +1771,8 @@ function update(dt) {
 
   for (const e of enemies) {
     if (e.hp <= 0) continue;
+    // A freeze pickup stops everything on the other side in its tracks.
+    if (freezeT > 0 && e.side !== player.side) { e.squash = Math.max(e.squash, 0); continue; }
     e.cool = Math.max(0, e.cool - dt);
     e.swing = Math.max(0, e.swing - dt);
     e.hurtFlash = Math.max(0, e.hurtFlash - dt);
@@ -1894,8 +2106,27 @@ function drawHeartAt(h) {
   ctx.closePath(); ctx.fill();
 }
 
+// A pickup, hovering and turning just above the ground so it catches the eye.
+function drawPowerupAt(p) {
+  if (p.life < 3 && Math.floor(p.life * 8) % 2 === 0) return;
+  const lift = 9 + Math.sin(p.bob) * 3;
+  const sz = 13;
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(isoX(p.x, p.y), isoY(p.x, p.y, 0), 8, 4, 0, 0, 6.283);
+  ctx.fill();
+  drawBox(p.x - sz / 2, p.y - sz / 2, lift, sz, sz, sz, p.color);
+  // First letter on the lid so you can tell them apart at a glance.
+  const tx = isoX(p.x, p.y), ty = isoY(p.x, p.y, lift + sz) + 4;
+  ctx.fillStyle = 'rgba(20,24,30,0.85)';
+  ctx.font = '800 10px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name.charAt(0), tx, ty);
+}
+
 function drawOne(o) {
-  if (o.__heart) drawHeartAt(o);
+  if (o.__pow) drawPowerupAt(o);
+  else if (o.__heart) drawHeartAt(o);
   else if (o === player) drawGuy(player, player.side, player.rank, true);
   else drawGuy(o, o.side, o.rank, false);
 }
@@ -1910,6 +2141,7 @@ function drawStanding() {
   _standing.length = 0;
   for (const e of enemies) _standing.push(e);
   for (const h of hearts) _standing.push(h);
+  for (const p of powerups) _standing.push(p);
   _standing.push(player);
   _standing.sort((a, b) => (a.x + a.y) - (b.x + b.y));
 
@@ -1933,6 +2165,50 @@ function drawStanding() {
     }
   }
   while (si < _standing.length) drawOne(_standing[si++]);
+}
+
+// The item row. Empty slots stay visible so it is obvious there is somewhere for
+// things to go, and a full slot shows its colour, its initial and how many you
+// have. Tap one to use it.
+function drawHotbar() {
+  for (let i = 0; i < bagRects.length; i++) {
+    const r = bagRects[i];
+    const item = bag[i];
+
+    ctx.fillStyle = item ? 'rgba(24,30,42,0.82)' : 'rgba(16,20,28,0.42)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = item ? item.color : 'rgba(255,255,255,0.13)';
+    ctx.lineWidth = item ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+    // Slot number, small, in the corner.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(238,242,248,0.28)';
+    ctx.font = '700 9px -apple-system, system-ui, sans-serif';
+    ctx.fillText(String(i + 1), r.x + 4, r.y + 11);
+
+    if (!item) continue;
+
+    // A little coloured block so it matches what you picked up off the floor.
+    const pad = r.w * .26;
+    ctx.fillStyle = item.color;
+    ctx.fillRect(r.x + pad, r.y + pad * .9, r.w - pad * 2, r.h - pad * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillRect(r.x + pad, r.y + pad * .9, r.w - pad * 2, 3);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(18,22,28,0.9)';
+    ctx.font = '800 ' + Math.round(r.w * .34) + 'px -apple-system, system-ui, sans-serif';
+    ctx.fillText(item.name.charAt(0), r.x + r.w / 2, r.y + r.h / 2 + r.w * .12);
+
+    if (item.count > 1) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#ffd84d';
+      ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+      ctx.fillText('x' + item.count, r.x + r.w - 4, r.y + r.h - 4);
+    }
+  }
+  ctx.textAlign = 'left';
 }
 
 // A little map in the corner, because the level is bigger than the screen and
@@ -2078,12 +2354,27 @@ function drawHUD() {
   ctx.font = '600 11px -apple-system, system-ui, sans-serif';
   ctx.fillText((hostileCount() + waveToSpawn) + ' left', VW / 2, PAD.t + 29);
 
+  // Whatever powerup is running right now, and how long is left on it.
+  const running2 = [];
+  if (player.rageT > 0) running2.push(['RAGE', '#ff6b4a', player.rageT]);
+  if (player.speedT > 0) running2.push(['FAST FEET', '#ffd84d', player.speedT]);
+  if (freezeT > 0) running2.push(['FROZEN', '#9fe8ff', freezeT]);
+  if (player.invuln > 1) running2.push(['SHIELD', '#c9d6e8', player.invuln]);
+  running2.forEach((r, i) => {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = r[1];
+    ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+    ctx.fillText(r[0] + '  ' + r[2].toFixed(1) + 's', VW - PAD.r, miniRect.y + miniRect.h + 22 + i * 18);
+  });
+  ctx.textAlign = 'center';
+
   if (streak >= 3) {
     ctx.fillStyle = '#ff9f43';
     ctx.font = '800 16px -apple-system, system-ui, sans-serif';
     ctx.fillText(streak + ' STREAK', VW / 2, PAD.t + 51);
   }
 
+  drawHotbar();
   drawMinimap();
 
   drawIconButton(btn.full,  'full',  false);
@@ -2212,7 +2503,7 @@ function drawPause() {
 
   ctx.fillStyle = 'rgba(238,242,248,0.3)';
   ctx.font = '700 11px -apple-system, system-ui, sans-serif';
-  ctx.fillText('ZOMBIE NOOBS  by Josh Alexander', VW / 2, VH - PAD.b - 6);
+  ctx.fillText('ZOMBIE NOOBS  ' + VERSION + '   by Josh Alexander', VW / 2, VH - PAD.b - 6);
 }
 
 function draw() {
@@ -2256,6 +2547,34 @@ function draw() {
     else ctx.fillRect(px - 2.5, py - 1.2, 6, 2.4);
   }
 
+  // Blast rings.
+  for (const b of blasts) {
+    const a = Math.max(0, b.life / b.maxLife);
+    ctx.globalAlpha = a * .85;
+    ctx.strokeStyle = b.c;
+    ctx.lineWidth = 3 + a * 5;
+    ctx.beginPath();
+    ctx.ellipse(isoX(b.x, b.y), isoY(b.x, b.y, 8),
+                b.r * ISO_X * 2, b.r * ISO_Y * 2, 0, 0, 6.283);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Lightning arcs.
+  for (const zp of zaps) {
+    ctx.globalAlpha = Math.min(1, zp.life / .12);
+    ctx.strokeStyle = '#bdeaff';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(isoX(zp.x1, zp.y1), isoY(zp.x1, zp.y1, 20));
+    // A kink in the middle so it looks like a bolt, not a ruler.
+    const mx = (zp.x1 + zp.x2) / 2, my = (zp.y1 + zp.y2) / 2;
+    ctx.lineTo(isoX(mx, my) + (zp.life * 60 % 13) - 6, isoY(mx, my, 26));
+    ctx.lineTo(isoX(zp.x2, zp.y2), isoY(zp.x2, zp.y2, 20));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
   ctx.textAlign = 'center';
   for (const p of popups) {
     ctx.globalAlpha = Math.min(1, p.life / .5);
@@ -2267,6 +2586,15 @@ function draw() {
 
   ctx.restore();   // out of world space
   ctx.restore();   // out of the shake
+
+  // A nuke whites the screen out for a moment.
+  if (nukeFlash > 0) {
+    ctx.globalAlpha = Math.min(.85, nukeFlash);
+    ctx.fillStyle = '#fff6d8';
+    ctx.fillRect(0, 0, VW, VH);
+    ctx.globalAlpha = 1;
+  }
+
   drawHUD();
 }
 
@@ -2303,6 +2631,8 @@ function loop(now) {
 //  Start
 // ---------------------------------------------------------------------------
 const titleEl = document.getElementById('title');
+const verEl = document.getElementById('ver');
+if (verEl) verEl.textContent = 'ZOMBIE NOOBS  ' + VERSION;
 function startGame() {
   audioStart();
   requestWake();

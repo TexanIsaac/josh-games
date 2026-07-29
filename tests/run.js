@@ -87,7 +87,11 @@ eval(code + `
    hasLineOfSight, separate, startWave, blockingHostiles,
    isoX, isoY, stickToWorld, tileTopAt, topUnder, blockedAt, updateHeight,
    CLIMB_SPEED, FALL_SPEED, STEP_UP, onScreen, updateCamera, moveEntity,
-   unstick, BODY, UNSTICK_STEP,
+   unstick, BODY, UNSTICK_STEP, POWERUPS, rollPowerup, addToBag, useSlot,
+   usePowerup, explode, chainLightning, drawHotbar, VERSION,
+   get bag(){return bag}, get powerups(){return powerups},
+   get blasts(){return blasts}, get zaps(){return zaps},
+   get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
    get btn(){return btn}, get miniRect(){return miniRect}, get PAD(){return PAD},
    get flow(){return flow}, get player(){return player}, get enemies(){return enemies},
@@ -566,6 +570,103 @@ for (const w of [1, 5, 10, 15, 20]) {
 }
 
 // --- credit -----------------------------------------------------------------
+group('Pickups and the item row');
+ok('there is a version marker on screen', typeof G.VERSION === 'string' && G.VERSION.length > 0,
+  G.VERSION);
+ok('there are several kinds of pickup', G.POWERUPS.length >= 6,
+  G.POWERUPS.map(p => p.name).join(', '));
+ok('grenades, bombs and nukes are all in there',
+  ['grenade','bomb','nuke'].every(k => G.POWERUPS.some(p => p.kind === k)));
+ok('a nuke is rarer than a grenade',
+  G.POWERUPS.find(p => p.kind === 'nuke').weight <
+  G.POWERUPS.find(p => p.kind === 'grenade').weight);
+const rolls = {};
+for (let i = 0; i < 6000; i++) { const k = G.rollPowerup().kind; rolls[k] = (rolls[k] || 0) + 1; }
+ok('every kind actually drops', Object.keys(rolls).length === G.POWERUPS.length,
+  JSON.stringify(rolls));
+
+G.reset();
+ok('the bag starts empty', G.bag.length === 0);
+ok('there is a slot for every place in the bag', G.bagRects.length === G.TUNE.BAG_SLOTS,
+  G.bagRects.length + ' slots');
+ok('picking one up puts it in the bag',
+  G.addToBag({ kind: 'nuke', name: 'NUKE', color: '#fff' }) && G.bag.length === 1);
+ok('a second of the same kind stacks instead of taking another slot',
+  G.addToBag({ kind: 'nuke', name: 'NUKE', color: '#fff' })
+  && G.bag.length === 1 && G.bag[0].count === 2, 'x' + G.bag[0].count);
+ok('a different kind takes its own slot',
+  G.addToBag({ kind: 'bomb', name: 'BOMB', color: '#fff' }) && G.bag.length === 2);
+// Fill it right up and check nothing spills over.
+for (const p of G.POWERUPS) G.addToBag({ kind: p.kind, name: p.name, color: p.color });
+ok('the bag never holds more than its slots', G.bag.length <= G.TUNE.BAG_SLOTS,
+  G.bag.length + ' of ' + G.TUNE.BAG_SLOTS);
+ok('a full bag refuses a new kind, so the pickup is left on the floor',
+  G.bag.length === G.TUNE.BAG_SLOTS
+  && G.addToBag({ kind: 'notathing', name: 'X', color: '#fff' }) === false);
+
+G.reset();
+G.addToBag({ kind: 'nuke', name: 'NUKE', color: '#fff' });
+G.addToBag({ kind: 'nuke', name: 'NUKE', color: '#fff' });
+G.useSlot(0);
+ok('using one spends a single item from the stack',
+  G.bag.length === 1 && G.bag[0].count === 1, 'x' + G.bag[0].count);
+G.useSlot(0);
+ok('using the last one empties the slot', G.bag.length === 0);
+ok('tapping an empty slot does nothing bad',
+  (() => { try { G.useSlot(0); G.useSlot(5); return true; } catch (e) { return false; } })());
+
+group('The pickups actually do something');
+G.reset();
+// Put a crowd right next to the player and set a bomb off.
+for (let i = 0; i < 8; i++) {
+  G.spawnEnemy('zombie', false);
+  const e = G.enemies[G.enemies.length - 1];
+  e.x = G.player.x + 20 + i * 6;
+  e.y = G.player.y;
+  e.hp = 40; e.maxhp = 40;
+}
+const before = G.enemies.length;
+G.explode(G.player.x, G.player.y, G.TUNE.BOMB_RADIUS, G.TUNE.BOMB_DMG, '#fff');
+ok('a bomb clears out a crowd', G.enemies.filter(e => e.hp > 0).length < before,
+  before + ' enemies down to ' + G.enemies.filter(e => e.hp > 0).length);
+ok('a blast leaves a visible ring', G.blasts.length > 0);
+
+G.reset();
+for (let i = 0; i < 5; i++) {
+  G.spawnEnemy('zombie', false);
+  const e = G.enemies[G.enemies.length - 1];
+  e.x = G.player.x + 40 + i * 30; e.y = G.player.y;
+}
+G.chainLightning(G.player.x, G.player.y);
+ok('lightning jumps between several enemies', G.zaps.length >= 2,
+  G.zaps.length + ' arcs');
+
+G.reset();
+G.usePowerup('freeze');
+ok('freeze puts a timer on the enemies', G.freezeT > 0, G.freezeT.toFixed(1) + 's');
+G.usePowerup('rage');
+ok('rage puts a timer on you', G.player.rageT > 0, G.player.rageT.toFixed(1) + 's');
+G.usePowerup('shield');
+ok('shield makes you briefly untouchable', G.player.invuln > 1);
+G.usePowerup('speed');
+ok('fast feet speeds you up', G.player.speedT > 0);
+ok('every kind can be used without throwing', (() => {
+  for (const p of G.POWERUPS) {
+    try { G.usePowerup(p.kind); } catch (e) { console.log('    ' + p.kind + ': ' + e.message); return false; }
+  }
+  return true;
+})());
+ok('the item row draws without throwing',
+  (() => { try { G.drawHotbar(); return true; } catch (e) { console.log('    ' + e.message); return false; } })());
+
+// The row must not sit under the other controls.
+G.resize();
+const anyOverlap = G.bagRects.some(r => overlaps(r, G.btn.hit))
+  || G.bagRects.some(r => overlaps(r, G.miniRect));
+ok('the item row does not sit under the hit button or the minimap', !anyOverlap);
+ok('slots are big enough to tap', G.bagRects.every(r => r.w >= 38 && r.h >= 38),
+  G.bagRects[0].w.toFixed(0) + 'px');
+
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
 ok('on the pause screen', /by Josh Alexander/.test(src));
