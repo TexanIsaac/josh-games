@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v50';
+const VERSION = 'v51';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -2091,7 +2091,10 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   for (const side of sides) {
     const q = side.p;
     // Square on to the light is brightest, facing away is darkest.
-    const tone = -24 + 18 * Math.cos((side.a || 0) - LIGHT_ANGLE);
+    // How much one face differs from the next. Turned up, because a block only reads
+    // as a block when each of its faces is plainly a different flat shade: that step
+    // from one face to the next round a corner is the whole look.
+    const tone = -27 + 27 * Math.cos((side.a || 0) - LIGHT_ANGLE);
     ctx.fillStyle = shade(color, tone);
     ctx.beginPath();
     ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]);
@@ -2142,7 +2145,8 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   if (decal && sides.length) decal(sides[sides.length - 1].p, color);
 
   // Top face last, so it always sits on top of the sides.
-  ctx.fillStyle = shade(color, 16);
+  // The top catches the most light of all, which sets it apart from every side.
+  ctx.fillStyle = shade(color, 30);
   ctx.beginPath();
   ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
   ctx.lineTo(cx, cy); ctx.lineTo(dx, dy);
@@ -3418,13 +3422,49 @@ function dropHeart(x, y) {
 //  Enemies. An "enemy" is anyone on the opposite side from you, and allies you
 //  infected live in the same list.
 // ---------------------------------------------------------------------------
+// Where the next one comes from.
+//
+// They used to come from a handful of fixed points at the edges of the map. On a small
+// map that was fine. On one three times the size it means the far corner is a very long
+// walk, and the fight thins out into wandering about looking for someone.
+//
+// So they arrive on a ring around wherever you are, close enough to reach you but far
+// enough out that they are not visible appearing. The fixed points are still there as a
+// fallback for when the ring cannot be placed, which is mostly when you are backed into
+// a corner with rock behind you.
+function ringSpawn() {
+  const MIN = 460, MAX = 780;
+  const pgx = Math.floor(player.x / TILE), pgy = Math.floor(player.y / TILE);
+  buildFlow(pgx, pgy);
+
+  for (let i = 0; i < 30; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = MIN + Math.random() * (MAX - MIN);
+    const x = player.x + Math.cos(a) * r;
+    const y = player.y + Math.sin(a) * r;
+    const gx = Math.floor(x / TILE), gy = Math.floor(y / TILE);
+    if (gx < 1 || gy < 1 || gx >= GW - 1 || gy >= GH - 1) continue;
+    if (!passableTile(grid[gy][gx])) continue;
+    // It has to be able to walk to you, or it stands about behind a wall and the wave
+    // can never finish. The flow field was just built towards the player, so this is
+    // the same answer the pathfinder will give.
+    if (flow[gy * GW + gx] < 0) continue;
+    // And it must not appear in plain sight.
+    if (boxOnScreen(gx * TILE, gy * TILE, 40)) continue;
+    return { x: gx * TILE + TILE / 2, y: gy * TILE + TILE / 2 };
+  }
+  return null;
+}
+
 function spawnEnemy(side, boss) {
-  let p;
-  let tries = 0;
-  do {
-    p = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-    tries++;
-  } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
+  let p = ringSpawn();
+  if (!p) {
+    let tries = 0;
+    do {
+      p = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+      tries++;
+    } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
+  }
 
   const type = boss ? ENEMY_TYPES[0] : rollEnemyType();
   // How much tougher they get each wave, scaled by the difficulty so that on easy the
@@ -4754,6 +4794,12 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const B = (lx, ly, lz, w, d, h, col) =>
     drawBoxRot(LX(lx, ly), LY(lx, ly), lz, w, d, h, col, rot);
 
+  // How big this one is on screen. Anything far enough away that a foot would be two
+  // pixels does not get feet, hands or a face drawn: it is a lot of work for something
+  // nobody can see, and on a map this size most of the field is at that distance.
+  const screenH = Math.abs(isoY(g.x, g.y, z0) - isoY(g.x, g.y, z0 + 46 * u));
+  const detail = screenH > 46;
+
   // Roblox proportions, in world units: legs to 17, torso to 33, head to 46.
   const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = 46 * u;
   const legH = LEG_TOP, torsoH = TORSO_TOP - LEG_TOP, headH = HEAD_TOP - TORSO_TOP;
@@ -4768,26 +4814,35 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const act = Math.max(0, Math.min(1, (g.swing || 0) / 0.16));
 
   // ---- legs ----
-  const legW = 5.2 * u, legD = 5.6 * u;
-  B(-3 * u, stride, z0, legW, legD, legH, legCol);
-  B(3 * u, stride2, z0, legW, legD, legH, shade(legCol, -12));
+  // Square in section and chunky, which is what makes a leg read as a brick rather
+  // than as a stick. Feet are their own block, so a leg has a joint in it.
+  const legW = 6.4 * u, legD = 6.4 * u;
+  B(-3.4 * u, stride, z0 + 3.2 * u, legW, legD, legH - 3.2 * u, legCol);
+  B(3.4 * u, stride2, z0 + 3.2 * u, legW, legD, legH - 3.2 * u, shade(legCol, -12));
+  if (detail) {
+    B(-3.4 * u, stride + .6 * u, z0, legW + .6 * u, legD + 1.4 * u, 3.2 * u, '#3f444c');
+    B(3.4 * u, stride2 + .6 * u, z0, legW + .6 * u, legD + 1.4 * u, 3.2 * u, '#3f444c');
+  }
 
   // ---- torso ----
-  B(0, 0, z0 + LEG_TOP, 13 * u, 6.4 * u, torsoH, torsoCol);
+  B(0, 0, z0 + LEG_TOP, 14.4 * u, 8 * u, torsoH, torsoCol);
   // A belt, because one flat slab of shirt from waist to neck reads as a slab.
-  B(0, 0, z0 + LEG_TOP, 13.4 * u, 6.8 * u, 2 * u, '#3f444c');
+  B(0, 0, z0 + LEG_TOP, 14.8 * u, 8.4 * u, 2.2 * u, '#3f444c');
 
   // ---- arms ----
-  const armW = 3.8 * u, armD = 4.2 * u, armH = torsoH * 0.94;
+  const armW = 5 * u, armD = 5 * u, armH = torsoH * 0.94;
   const armZ = z0 + LEG_TOP + torsoH - armH;
-  B(-8.4 * u, stride2 + act * 5 * u, armZ, armW, armD, armH, shade(torsoCol, 8));
-  B(8.4 * u, stride + act * 6 * u, armZ, armW, armD, armH, torsoCol);
+  B(-9.6 * u, stride2 + act * 5 * u, armZ, armW, armD, armH, shade(torsoCol, 8));
+  B(9.6 * u, stride + act * 6 * u, armZ, armW, armD, armH, torsoCol);
   // Hands on the ends of the arms, so an arm is not one unbroken stick.
-  B(-8.4 * u, stride2 + act * 5 * u, armZ, armW + .4 * u, armD + .4 * u, 4 * u, skin);
-  B(8.4 * u, stride + act * 6 * u, armZ, armW + .4 * u, armD + .4 * u, 4 * u, skin);
+  if (detail) {
+    B(-9.6 * u, stride2 + act * 5 * u, armZ, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
+    B(9.6 * u, stride + act * 6 * u, armZ, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
+  }
 
   // ---- head ----
-  const headW = 8.6 * u, headD = 7.2 * u;
+  // A big square head. Roblox heads are close to a cube and it is most of the look.
+  const headW = 10.4 * u, headD = 9.2 * u;
   B(0, 0, z0 + TORSO_TOP, headW, headD, headH, skin);
 
   // The face goes on the front of the head. The front is a flat plane in the world, so
@@ -4808,7 +4863,7 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   // Only worth drawing when the front of the head is actually towards us.
   const facingUs = (isoY(LX(0, 8 * u), LY(0, 8 * u), z0)
                     - isoY(g.x, g.y, z0)) > 0;
-  if (facingUs) {
+  if (facingUs && detail) {
     drawBlockFace(g, LX, LY, rot, headD / 2 + .4 * u, z0 + TORSO_TOP + headH * .58,
                   u, faceKind, skin);
   }
@@ -6146,12 +6201,20 @@ function drawMinimap() {
   ctx.fillStyle = 'rgba(8,10,14,0.62)';
   ctx.fillRect(m.x, m.y, m.w, m.h);
 
-  ctx.fillStyle = 'rgba(120,133,155,0.75)';
+  // With a map this size the minimap is how you know where anything is, so it shows
+  // what each thing actually is rather than only marking the walls.
+  const MINI_COL = {};
+  MINI_COL[WALL] = 'rgba(120,133,155,0.75)';
+  MINI_COL[HIGH] = 'rgba(150,163,185,0.85)';
+  MINI_COL[MOUNTAIN] = 'rgba(96,99,106,0.95)';
+  MINI_COL[TRENCH] = 'rgba(70,60,44,0.85)';
+  MINI_COL[DOOR] = 'rgba(190,140,70,0.9)';
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
-      if (grid[gy][gx] === WALL) {
-        ctx.fillRect(m.x + gx * sx, m.y + gy * sy, Math.ceil(sx), Math.ceil(sy));
-      }
+      const col = MINI_COL[grid[gy][gx]];
+      if (!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect(m.x + gx * sx, m.y + gy * sy, Math.ceil(sx), Math.ceil(sy));
     }
   }
 
