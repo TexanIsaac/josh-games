@@ -121,7 +121,9 @@ eval(code + `
    SKINS, SHIRTS, PANTS, HATS, FACES, PERKS, perkCost, perkLevel, applyPerks,
    loadSave, writeSave, addCoins, drawShop, get save(){return save},
    bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid,
-   turnToward, drawBoxRot, LIGHT_ANGLE, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   turnToward, drawBoxRot, LIGHT_ANGLE,
+   TRACKS, noteHz, cycleMusic, updateMusic, musicName,
+   get musicTrack(){return musicTrack}, set musicTrack(v){musicTrack=v}, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -198,10 +200,30 @@ ok('every spawn point can walk to the player',
 
 // --- the look ---------------------------------------------------------------
 group('The Roblox look');
-ok('shade lightens', G.shade('#808080', 20) === 'rgb(148,148,148)', G.shade('#808080', 20));
-ok('shade darkens', G.shade('#808080', -20) === 'rgb(108,108,108)', G.shade('#808080', -20));
-ok('shade clamps at white', G.shade('#ffffff', 80) === 'rgb(255,255,255)');
-ok('shade clamps at black', G.shade('#000000', -80) === 'rgb(0,0,0)');
+// Behaviour rather than exact numbers, because the exact numbers changed when
+// shading became proportional.
+const chan = str => str.match(/\d+/g).map(Number);
+ok('shade lightens', chan(G.shade('#808080', 20))[0] > 128, G.shade('#808080', 20));
+ok('shade darkens', chan(G.shade('#808080', -20))[0] < 128, G.shade('#808080', -20));
+ok('shade leaves white alone at the top', chan(G.shade('#ffffff', 80))[0] === 255);
+// The regression that mattered: characters were coming out covered in solid black
+// because shading subtracted a flat amount and clamped at zero, so anything already
+// dark bottomed out. Dark colours must survive heavy shading.
+ok('a dark colour never gets crushed to black', (() => {
+  for (const c of ['#2f3340', '#3c4046', '#22252f', '#5a2b4a']) {
+    for (const amt of [-30, -40, -60, -80]) {
+      const v = chan(G.shade(c, amt));
+      if (v[0] + v[1] + v[2] < 24) return false;
+    }
+  }
+  return true;
+})(), 'dark trousers and boots keep their colour');
+ok('the reason is written down', src.indexOf('covered in solid black patches') !== -1);
+ok('darkening still actually darkens dark colours', (() => {
+  const a = chan(G.shade('#2f3340', 0))[0];
+  const b = chan(G.shade('#2f3340', -60))[0];
+  return b < a;
+})());
 // Lego has studs on every brick. Roblox has a studded baseplate and smooth
 // parts standing on it. Josh said the studded version looked like Lego.
 ok('the baseplate has studs', /rgba\(255,255,255,0\.055\)/.test(src));
@@ -1856,6 +1878,84 @@ ok('both themes draw a whole frame without throwing', (() => {
   G.applyTheme('noobs');
   return true;
 })());
+
+group('Music');
+ok('there are six things to cycle through', G.TRACKS.length === 6,
+  G.TRACKS.map(t => t.name).join(', '));
+ok('the first one is off', G.TRACKS[0].name === 'Off' && G.TRACKS[0].notes === null);
+ok('the Soviet anthem is one of them',
+  G.TRACKS.some(t => t.name === 'Soviet Anthem'));
+ok('every playable track has notes and a tempo',
+  G.TRACKS.slice(1).every(t => Array.isArray(t.notes) && t.notes.length > 4 && t.tempo > 0));
+ok('note names turn into sensible pitches', (() => {
+  const a4 = G.noteHz('A4');
+  return Math.abs(a4 - 440) < 0.01;
+})(), 'A4 is 440');
+ok('an octave up doubles the pitch',
+  Math.abs(G.noteHz('C5') - G.noteHz('C4') * 2) < 0.01);
+ok('a rest is silent', G.noteHz('-') === 0 && G.noteHz('') === 0);
+ok('every note in every track is a real note', (() => {
+  for (const t of G.TRACKS) {
+    if (!t.notes) continue;
+    for (const n of t.notes) {
+      if (n[0] === '-') continue;
+      if (!(G.noteHz(n[0]) > 20)) { console.log('    bad note: ' + n[0]); return false; }
+      if (!(n[1] > 0)) { console.log('    bad length on ' + n[0]); return false; }
+    }
+  }
+  return true;
+})());
+ok('nothing is written outside a sane range for a tune', (() => {
+  for (const t of G.TRACKS) {
+    if (!t.notes) continue;
+    for (const n of t.notes) {
+      if (n[0] === '-') continue;
+      const hz = G.noteHz(n[0]);
+      if (hz < 90 || hz > 1400) { console.log('    out of range: ' + n[0] + ' at ' + hz.toFixed(0)); return false; }
+    }
+  }
+  return true;
+})());
+ok('cycling walks through them all and comes back to off', (() => {
+  const start = G.musicTrack;
+  const seen = new Set();
+  for (let i = 0; i < G.TRACKS.length; i++) { seen.add(G.musicTrack); G.cycleMusic(); }
+  return seen.size === G.TRACKS.length && G.musicTrack === start;
+})());
+ok('the chosen track is remembered',
+  global.localStorage.getItem('zn_music') !== null);
+ok('music is generated, not a downloaded recording',
+  src.indexOf('Played rather than replayed') !== -1
+  && src.indexOf('no') !== -1);
+ok('the rights position is written down',
+  src.indexOf('public') !== -1 && src.indexOf('Alexandrov') !== -1);
+ok('the anthem notes are flagged as approximate, since they came from a tab',
+  src.indexOf('It is the opening phrase and it is') !== -1);
+ok('music stays quiet enough to sit behind the game',
+  src.indexOf('well under the sound') !== -1);
+ok('muting silences the music too', (() => {
+  // With mute on, stepping the music must not try to make a sound.
+  const wasMuted = G.muted;
+  if (!wasMuted) G.toggleMute();
+  let threw = null;
+  try { for (let i = 0; i < 200; i++) G.updateMusic(1 / 60); } catch (e) { threw = e.message; }
+  if (!wasMuted) G.toggleMute();
+  return threw === null;
+})());
+ok('stepping the music never throws, on any track', (() => {
+  for (let t = 0; t < G.TRACKS.length; t++) {
+    G.musicTrack = t;
+    try { for (let i = 0; i < 400; i++) G.updateMusic(1 / 60); }
+    catch (e) { console.log('    ' + G.TRACKS[t].name + ': ' + e.message); return false; }
+  }
+  G.musicTrack = 0;
+  return true;
+})());
+ok('there is a button for it', !!G.btn.music && G.btn.music.w >= 44);
+ok('the music button does not sit on the others',
+  !overlaps(G.btn.music, G.btn.view) && !overlaps(G.btn.music, G.btn.full)
+  && !overlaps(G.btn.music, G.btn.mute) && !overlaps(G.btn.music, G.btn.pause));
+ok('and it is on screen', G.btn.music.x >= 0 && G.btn.music.x + G.btn.music.w <= G.VW);
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
