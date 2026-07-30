@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v52';
+const VERSION = 'v53';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1711,7 +1711,16 @@ function shadeRaw(hex, amt) {
 const BORDER_H = 58;
 // How many rows of plain ground to draw beyond the map, so the world does not
 // visibly stop at the wall.
-const SKIRT = 9;
+// How many rows of ground are drawn beyond the edge of the map, so looking over the
+// boundary shows more ground rather than open sky.
+//
+// This was nine, tuned by eye long before the camera could be pinched out. Measured at
+// full zoom standing in a corner, the ground is visible to exactly nine rows: it was
+// right, with nothing to spare, and nobody had written down that it depended on how far
+// the camera can pull back. Zooming out any further, or a wider screen, would have shown
+// the void at the edges. It is worked out from the zoom now, with a few rows in hand.
+// Off-screen rows are culled before they are drawn, so a generous number costs nothing.
+const SKIRT = Math.ceil(9 * TUNE.ZOOM_MAX) + 3;
 function isBorder(gx, gy) {
   return gx === 0 || gy === 0 || gx === GW - 1 || gy === GH - 1;
 }
@@ -1789,7 +1798,17 @@ let PITCH_MIN = 0.22, PITCH_MAX = 1.15;
 // First person. The camera drops to about head height, sits almost on top of the
 // player and looks nearly level, and the player's own body is not drawn because
 // you would be looking at the inside of your own head.
-const FP_EYE = 36, FP_DIST = 26;
+// How tall a character is, in world units. The rig is built to this and the first
+// person camera sits just under the top of it, so the two cannot drift apart. Declared
+// here rather than with the scenery heights because the camera below reads it, and a
+// const cannot be read from above the line that declares it.
+const BODY_TOP = 46;
+
+// Just below the top of the head, worked out from the rig rather than guessed at.
+// It was a flat 36 against a head top of 46, so the view sat around chin height and
+// nothing tied it to the character at all: changing the rig would have left the
+// camera behind.
+const FP_EYE = BODY_TOP * 0.88, FP_DIST = 26;
 const FP_PITCH_MIN = -0.45, FP_PITCH_MAX = 0.55;
 const TP_PITCH_MIN = 0.22, TP_PITCH_MAX = 1.15;
 
@@ -4815,11 +4834,11 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   // How big this one is on screen. Anything far enough away that a foot would be two
   // pixels does not get feet, hands or a face drawn: it is a lot of work for something
   // nobody can see, and on a map this size most of the field is at that distance.
-  const screenH = Math.abs(isoY(g.x, g.y, z0) - isoY(g.x, g.y, z0 + 46 * u));
+  const screenH = Math.abs(isoY(g.x, g.y, z0) - isoY(g.x, g.y, z0 + BODY_TOP * u));
   const detail = screenH > 46;
 
   // Roblox proportions, in world units: legs to 17, torso to 33, head to 46.
-  const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = 46 * u;
+  const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = BODY_TOP * u;
   const legH = LEG_TOP, torsoH = TORSO_TOP - LEG_TOP, headH = HEAD_TOP - TORSO_TOP;
 
   // Is this a gun? A gun is held out in front and pointed, rather than swung.

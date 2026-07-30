@@ -143,7 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
-   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, SKIRT, boxOnScreen, updateCamera, FP_EYE, BODY_TOP, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
    shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
@@ -1062,6 +1062,45 @@ ok('and everything held down is let go, since no pointerup arrives', (() => {
     && blk.indexOf('stick.active = false') !== -1
     && blk.indexOf('paused = true') !== -1;
 })());
+
+group('Numbers that depend on other numbers');
+ok('the ground reaches further than you can ever see, even zoomed right out', (() => {
+  // Measured rather than asserted. Stand in a corner, pull the camera all the way out
+  // and count how many rows beyond the map are actually on screen.
+  //
+  // This was nine rows, tuned by eye before the camera could be pinched out at all, and
+  // it measured as visible to exactly nine: right, with nothing whatsoever to spare.
+  // A slightly wider screen or a touch more zoom would have shown the void at the edges.
+  G.loadMap(); G.reset(); G.setFirstPerson(false);
+  G.player.x = 2 * G.TILE; G.player.y = 2 * G.TILE;
+  G.setZoom(G.TUNE.ZOOM_MAX);
+  G.updateCamera();
+  let visible = 0;
+  for (let k = 1; k <= 40; k++) {
+    let any = false;
+    for (let i = -k; i <= k; i++) {
+      if (G.boxOnScreen(-k * G.TILE, i * G.TILE, 0)) any = true;
+      if (G.boxOnScreen(i * G.TILE, -k * G.TILE, 0)) any = true;
+    }
+    if (any) visible = k;
+  }
+  G.setZoom(1); G.updateCamera(); G.reset();
+  console.log('    skirt ' + G.SKIRT + ' rows, visible ' + visible + ', margin '
+    + (G.SKIRT - visible));
+  return G.SKIRT > visible + 2;
+})(), 'with room to spare, not by luck');
+ok('and the skirt is worked out from the zoom rather than typed in',
+  src.indexOf('const SKIRT = Math.ceil(9 * TUNE.ZOOM_MAX)') !== -1);
+
+ok('the first person view sits at head height, not chin height', (() => {
+  // It was a flat 36 against a head top of 46, with nothing tying the two together, so
+  // changing the rig would have left the camera behind.
+  return G.FP_EYE > G.BODY_TOP * 0.8 && G.FP_EYE < G.BODY_TOP;
+})(), 'eye at ' + Math.round(G.FP_EYE) + ', head top at ' + G.BODY_TOP);
+ok('one number says how tall a character is, and everything reads it',
+  src.indexOf('const BODY_TOP = 46;') !== -1
+  && src.indexOf('HEAD_TOP = BODY_TOP * u') !== -1
+  && src.indexOf('FP_EYE = BODY_TOP') !== -1);
 
 group('Guns you can see working');
 G.reset();
