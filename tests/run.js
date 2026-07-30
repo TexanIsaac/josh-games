@@ -1922,10 +1922,27 @@ ok('and it still has notes to fall back on if the file is missing', (() => {
   const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
   return !!(a.notes && a.notes.length > 8);
 })(), 'the music never just stops');
-ok('the recording is credited and its licence basis recorded',
-  src.indexOf('article 1259') !== -1 && src.indexOf('CREDITS.md') !== -1);
-ok('it is used whole rather than clipped, which is the condition on it',
-  src.indexOf('used whole') !== -1);
+ok('every recording is credited in one place',
+  src.indexOf('credited in CREDITS.md') !== -1);
+ok('all six anthems are real recordings, not synthesised', (() => {
+  const withFile = G.TRACKS.filter(x => x.file);
+  return withFile.length === 6;
+})(), G.TRACKS.filter(x => x.file).map(x => x.name).join(', '));
+ok('each one points at its own file', (() => {
+  const files = G.TRACKS.filter(x => x.file).map(x => x.file);
+  return new Set(files).size === files.length && files.every(f => f.indexOf('assets/') === 0);
+})());
+ok('every one still has notes to fall back on', (() => {
+  return G.TRACKS.filter(x => x.file).every(x => x.notes && x.notes.length > 6);
+})(), 'a missing file means synthesised, never silence');
+ok('two anthems can never play over each other', (() => {
+  // Switching tracks silences every recording rather than only the current one.
+  const i = src.indexOf('function stopRecording');
+  const body = src.slice(i, i + 300);
+  return body.indexOf('for (const f in trackAudio)') !== -1;
+})());
+ok('a broken file is remembered so it is not retried every frame',
+  src.indexOf('audioBroken[file] = true') !== -1);
 ok('the Soviet anthem is one of them',
   G.TRACKS.some(t => t.name === 'Soviet Anthem'));
 ok('every playable track has notes and a tempo',
@@ -2098,8 +2115,14 @@ ok('a silent bus makes no sound at all rather than a quiet one',
   src.indexOf('if (volume <= 0) return;') !== -1);
 ok('the anthem recording follows the music volume',
   src.indexOf('.55 * musicVol') !== -1);
-ok('the anthem plays a little quicker than the record, as asked',
-  /playbackRate = 1\.1/.test(src));
+ok('the Soviet anthem plays a little quicker than the record, as asked', (() => {
+  const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
+  return a.rate > 1;
+})(), 'rate ' + (G.TRACKS.find(x => x.name === 'Soviet Anthem').rate));
+ok('the others play at their proper speed', (() => {
+  return G.TRACKS.filter(x => x.file && x.name !== 'Soviet Anthem')
+    .every(x => !x.rate || x.rate === 1);
+})());
 ok('the settings are remembered between games',
   src.indexOf('zn_musicvol') !== -1 && src.indexOf('zn_sfxvol') !== -1);
 ok('there are buttons for it on the pause screen', (() => {

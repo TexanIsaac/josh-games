@@ -6,13 +6,20 @@
 //
 // Bump CACHE when the game changes. The old cache is thrown away on activate, so a
 // new version never gets served stale files from an old one.
-const CACHE = 'zombie-noobs-v30';
+const CACHE = 'zombie-noobs-v32';
 
 const FILES = [
   './',
   './index.html',
   './manifest.webmanifest',
   './assets/anthem-1977.mp3',
+  './assets/anthem-usa.mp3',
+  './assets/anthem-france.mp3',
+  './assets/anthem-germany.mp3',
+  './assets/anthem-japan.mp3',
+  './assets/anthem-italy.mp3',
+  './assets/icon-192.png',
+  './assets/icon-512.png',
 ];
 
 self.addEventListener('install', event => {

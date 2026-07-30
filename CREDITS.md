@@ -12,37 +12,41 @@ https://github.com/KilledByAPixel/ZzFX
 
 ## Music
 
-Five of the six tracks are generated from note names by the same tone maker as the
-sound effects. Nothing is downloaded for those, and the tunes themselves are long
-out of copyright as compositions:
+All six tracks are real recordings, three Allied and three Axis. Every one of them
+was taken from Wikimedia Commons and every one is in the public domain there. The
+licence shown on each file page was checked before it was downloaded, and the
+download script refuses to save anything not marked public domain.
 
-- **Ode to Joy** — Beethoven, 1824
-- **In the Hall of the Mountain King** — Grieg, 1875
-- **Toreador Song** — Bizet, 1875
-- **Zombie March** — written for this game
+Each was converted to mono MP3 at 72 to 80 kbps, purely so that Safari on an iPad
+will play it: Safari does not decode Ogg Vorbis, which is the format most of these
+are stored in. Nothing was edited, cut or remixed.
 
-### Soviet Anthem — the actual recording
+| Track | File | Recording | Why it is free |
+|---|---|---|---|
+| Soviet Anthem | `anthem-1977.mp3` | Red Army Choir, 7 October 1977 | Not an object of copyright under article 1259 of Book IV of the Civil Code of the Russian Federation, which excludes USSR state symbols |
+| Star-Spangled Banner | `anthem-usa.mp3` | United States Navy Band | Public domain: a work of the US federal government |
+| La Marseillaise | `anthem-france.mp3` | 1907 recording | Public domain by age |
+| Deutschlandlied | `anthem-germany.mp3` | USAREUR Band | Public domain: a work of the US federal government |
+| Kimigayo | `anthem-japan.mp3` | Toyama Army School Military Band, 1930 | Public domain by age |
+| Marcia Reale | `anthem-italy.mp3` | Composed by Giuseppe Gabetti, 1796 to 1862 | Public domain by age |
 
-`assets/anthem-1977.mp3`
+Composers, for the record: Alexandrov (Soviet), John Stafford Smith (the
+Star-Spangled Banner tune), Rouget de Lisle (Marseillaise), Haydn (the
+Deutschlandlied tune), Hayashi Hiromori (Kimigayo), Gabetti (Marcia Reale). All six
+compositions are long out of copyright independently of the recordings.
 
-- **Recording:** the Red Army Choir, 7 October 1977
-- **Music:** Alexander Alexandrov
-- **Lyrics:** Sergey Mikhalkov
-- **Retrieved from:** Wikimedia Commons, file
-  `Gimn Sovetskogo Soyuza (1977 Short Vocal).oga`, sourced there from the Russian
-  Anthems museum hosted by Vadim Makarov
-- **Why it can be used:** the Commons file page records that the work is not an
-  object of copyright under article 1259 of Book IV of the Civil Code of the
-  Russian Federation, which excludes USSR state symbols from copyright.
-- **Condition observed:** that page notes the work may be reused in its entirety,
-  and warns that taking a portion of it may not be covered. So the game plays the
-  whole recording on a loop and never a clipped excerpt.
-
-Converted from Ogg Vorbis to MP3 only so that Safari on an iPad can play it. Mono
-at 80 kbps, because it is background music on a tablet speaker.
-
-Source page:
+**One condition worth writing down.** The Commons page for the Soviet recording
+notes that it may be reused in its entirety and warns that taking only a portion of
+it may not be covered. So the game loops the whole recording and never a clipped
+excerpt. Source page:
 https://commons.wikimedia.org/wiki/File:Gimn_Sovetskogo_Soyuza_(1977_Short_Vocal).oga
 
-If the file is ever missing, the game falls back to a synthesised arrangement of the
-same melody on its own, so the music never simply stops.
+**Deliberately not included:** the Nazi party song. It is propaganda rather than a
+state anthem, it is banned in Germany, and it has no place in a child's game. The
+German track is Haydn's melody as played by a US Army band, which is the national
+anthem and nothing else. One Commons file pairs the anthem with the party song; that
+file was avoided for exactly this reason.
+
+If any of these files is missing, that track falls back to a synthesised arrangement
+of the same melody, so the music never simply stops. That is also what happens if the
+game is opened straight off the disk without the `assets` folder beside it.

@@ -214,7 +214,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v31';
+const VERSION = 'v32';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -247,7 +247,7 @@ function nudgeVolume(which, dir) {
   if (which === 'music') musicVol = Math.max(0, Math.min(1, Math.round((musicVol + dir * step) * 100) / 100));
   else sfxVol = Math.max(0, Math.min(1, Math.round((sfxVol + dir * step) * 100) / 100));
   saveVolumes();
-  if (anthemEl) anthemEl.volume = .55 * musicVol;
+  applyMusicVolume();
   if (which === 'sfx') SFX.ui();
 }
 loadVolumes();
@@ -405,6 +405,7 @@ const TRACKS = [
     side: 'ALLIED',
     // The real recording. Everything below it is the fallback if the file is missing.
     file: 'assets/anthem-1977.mp3',
+    rate: 1.1,
     tempo: 1.9,
     notes: [
       ['G3', 1], ['C4', 2], ['C5', 1], ['G4', 1], ['A4', 1], ['B4', 2],
@@ -430,6 +431,7 @@ const TRACKS = [
 
   {
     name: 'Star-Spangled Banner',
+    file: 'assets/anthem-usa.mp3',
     side: 'ALLIED',
     tempo: 2.0,
     notes: [
@@ -449,6 +451,7 @@ const TRACKS = [
 
   {
     name: 'La Marseillaise',
+    file: 'assets/anthem-france.mp3',
     side: 'ALLIED',
     tempo: 2.5,
     notes: [
@@ -476,6 +479,7 @@ const TRACKS = [
   //  and it has no place in a game.
   {
     name: 'Deutschlandlied',
+    file: 'assets/anthem-germany.mp3',
     side: 'AXIS',
     tempo: 2.1,
     notes: [
@@ -495,6 +499,7 @@ const TRACKS = [
 
   {
     name: 'Kimigayo',
+    file: 'assets/anthem-japan.mp3',
     side: 'AXIS',
     // Slow and stately, which is how it is actually played. Nothing else in the game
     // is anywhere near this tempo.
@@ -513,6 +518,7 @@ const TRACKS = [
 
   {
     name: 'Marcia Reale',
+    file: 'assets/anthem-italy.mp3',
     side: 'AXIS',
     tempo: 2.8,
     notes: [
@@ -531,34 +537,58 @@ const TRACKS = [
   },
 ];
 
-// The anthem is the actual 1977 Red Army Choir recording, singing and all, rather
-// than notes played by the tone maker. It sits in assets/ and is credited in
-// CREDITS.md: it is free to use because a Soviet state symbol is not an object of
-// copyright under article 1259 of the Russian Civil Code. It is used whole, which
-// is the condition the source puts on it.
+// All six anthems are real recordings rather than notes played by the tone maker.
+// Every one of them is in the public domain, and every one is credited in CREDITS.md
+// with the reason it is free to use. They live in assets/.
 //
-// If the file cannot be loaded for any reason, and that includes opening this page
-// straight off the disk without the assets folder next to it, the synthesised
-// arrangement further down takes over on its own. The music never just stops.
-let anthemEl = null, anthemBroken = false;
-function anthemAudio() {
-  if (anthemEl || anthemBroken) return anthemEl;
+// If a file cannot be loaded, and that includes opening this page straight off the
+// disk without the assets folder beside it, that track falls back to the synthesised
+// arrangement further down on its own. The music never simply stops.
+//
+// One element per track, made the first time it is needed rather than all at once, so
+// opening the game does not pull five files it may never play.
+const trackAudio = {};
+const audioBroken = {};
+
+function trackEl(file, rate) {
+  if (audioBroken[file]) return null;
+  if (trackAudio[file]) return trackAudio[file];
   try {
-    const a = new Audio('assets/anthem-1977.mp3');
+    const a = new Audio(file);
     a.loop = true;
     a.preload = 'auto';
     a.volume = .55 * musicVol;
-    // Josh asked for it a little quicker than the record. Just enough to feel like
-    // it is marching rather than dragging.
-    a.playbackRate = 1.1;
+    // Some of these are marches and some are slow; a per-track rate lets each one be
+    // set to taste. The Soviet anthem runs a little quicker, which is what Josh asked
+    // for. preservesPitch off means it changes pitch with speed, like a record would.
+    a.playbackRate = rate || 1;
     a.preservesPitch = false;
-    a.addEventListener('error', () => { anthemBroken = true; anthemEl = null; });
-    anthemEl = a;
-  } catch (err) { anthemBroken = true; }
-  return anthemEl;
+    a.addEventListener('error', () => { audioBroken[file] = true; delete trackAudio[file]; });
+    trackAudio[file] = a;
+  } catch (err) {
+    audioBroken[file] = true;
+    return null;
+  }
+  return trackAudio[file];
 }
+
+// Silence everything. Called when switching tracks, so two anthems can never end up
+// playing over each other.
 function stopRecording() {
-  if (anthemEl && !anthemEl.paused) anthemEl.pause();
+  for (const f in trackAudio) {
+    const a = trackAudio[f];
+    if (a && !a.paused) a.pause();
+  }
+}
+
+function rewindRecordings() {
+  for (const f in trackAudio) {
+    try { trackAudio[f].currentTime = 0; } catch (err) { /* fine */ }
+  }
+}
+
+function applyMusicVolume() {
+  for (const f in trackAudio) trackAudio[f].volume = .55 * musicVol;
 }
 
 let musicTrack = 0, musicStep = 0, musicWait = 0;
@@ -579,7 +609,7 @@ function cycleMusic() {
   // Switching away silences the recording, and coming back to it starts it again
   // from the beginning rather than halfway through a verse.
   stopRecording();
-  if (anthemEl) { try { anthemEl.currentTime = 0; } catch (err) { /* fine */ } }
+  rewindRecordings();
   try { localStorage.setItem('zn_music', String(musicTrack)); } catch (err) { /* fine */ }
   if (!muted) { audioStart(); SFX.ui(); }
 }
@@ -590,8 +620,8 @@ function updateMusic(dt) {
   const t = TRACKS[musicTrack];
 
   // A track with a recording just plays it. Nothing to step.
-  if (t && t.file && !anthemBroken) {
-    const rec = anthemAudio();
+  if (t && t.file) {
+    const rec = trackEl(t.file, t.rate);
     if (rec) {
       if (muted) { if (!rec.paused) rec.pause(); }
       else if (rec.paused) {
