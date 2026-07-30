@@ -143,7 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
-   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, SKIRT, boxOnScreen, updateCamera, FP_EYE, BODY_TOP, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, SKIRT, boxOnScreen, updateCamera, FP_EYE, BODY_TOP, neutralBlast, ENEMY_TYPES, rollEnemyType, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
    shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
@@ -472,11 +472,22 @@ G.toggleMute();
 
 // --- enemies and upgrades ---------------------------------------------------
 group('Enemy variety, bosses and upgrades');
-ok('there are three kinds of enemy', G.ENEMY_TYPES.length === 3,
+ok('there is a decent spread of enemy kinds', G.ENEMY_TYPES.length >= 5,
   G.ENEMY_TYPES.map(t => t.label).join(' / '));
 const seen = {};
 for (let i = 0; i < 3000; i++) { const k = G.rollEnemyType().key; seen[k] = (seen[k] || 0) + 1; }
-ok('all three actually turn up', Object.keys(seen).length === 3, JSON.stringify(seen));
+// Counted rather than hardcoded, so adding a kind does not break this the way adding
+// the popper and the leaper broke the old version of it.
+ok('every kind declared actually turns up',
+  Object.keys(seen).length === G.ENEMY_TYPES.length, JSON.stringify(seen));
+ok('none of them is so rare it is never seen', (() => {
+  const rarest = Math.min.apply(null, G.ENEMY_TYPES.map(ty => seen[ty.key] || 0));
+  return rarest > 3000 * 0.01;
+})(), 'rarest appeared ' + Math.min.apply(null, G.ENEMY_TYPES.map(ty => seen[ty.key] || 0))
+  + ' times in 3000');
+ok('the ordinary walker is still the common one', (() => {
+  return seen.walker > 3000 * 0.4;
+})(), 'so a wave is not all special cases');
 // The brute is the big one, and a bigger body is exactly what could start
 // wedging in corridors again, so its width gets checked against a one-tile gap.
 const brute = G.ENEMY_TYPES.find(t2 => t2.key === 'brute');
@@ -1101,6 +1112,67 @@ ok('one number says how tall a character is, and everything reads it',
   src.indexOf('const BODY_TOP = 46;') !== -1
   && src.indexOf('HEAD_TOP = BODY_TOP * u') !== -1
   && src.indexOf('FP_EYE = BODY_TOP') !== -1);
+
+group('Poppers and leapers');
+ok('a popper is weak on its own', (() => {
+  const pop = G.ENEMY_TYPES.find(x => x.key === 'popper');
+  return pop.hp < 1;
+})(), 'the danger is where it is standing, not the thing itself');
+ok('killing one catches whatever is near it, including its own side', (() => {
+  G.loadMap(); G.reset();
+  G.enemies.length = 0;
+  const side = G.player.side === 0 ? 1 : 0;
+  const mk = (x, y, type) => ({
+    x: x, y: y, z: 0, r: 12, hp: 30, maxhp: 30, side: side, rank: 0, size: 1,
+    walk: 0, faceAng: 0, type: type, pops: type === 'popper', kills: 0,
+  });
+  const pop = mk(600, 600, 'popper');
+  const neighbour = mk(640, 600, 'walker');
+  const faraway = mk(600 + 900, 600, 'walker');
+  G.enemies.push(pop, neighbour, faraway);
+  const nearBefore = neighbour.hp, farBefore = faraway.hp;
+  G.hurtEnemy(pop, 999, 500, 600);
+  const nearHurt = neighbour.hp < nearBefore;
+  const farUntouched = faraway.hp === farBefore;
+  console.log('    neighbour ' + nearBefore + ' -> ' + Math.round(neighbour.hp)
+    + ', one far off untouched: ' + farUntouched);
+  G.enemies.length = 0;
+  return nearHurt && farUntouched;
+})());
+ok('the blast does not care whose side anyone is on',
+  src.indexOf('A blast that does not care whose side anyone is on') !== -1,
+  'standing in a crowd when one dies is a bad place to be');
+ok('the kill is credited before the blast starts hurting things',
+  src.indexOf('so the kill is credited before the blast starts') !== -1,
+  'otherwise a popper could steal its own kill');
+
+ok('a leaper rushes the last stretch rather than walking it', (() => {
+  const l = G.ENEMY_TYPES.find(x => x.key === 'leaper');
+  return l.leaps === true && G.TUNE.LEAP_SPEED > 2;
+})(), G.TUNE.LEAP_SPEED + ' times its walking speed');
+ok('but only in bursts, so there is a moment to react',
+  G.TUNE.LEAP_TIME < 1 && G.TUNE.LEAP_EVERY > G.TUNE.LEAP_TIME * 2,
+  G.TUNE.LEAP_TIME + 's rush, one every ' + G.TUNE.LEAP_EVERY + 's');
+ok('and it only starts the run when it is already close',
+  G.TUNE.LEAP_FROM < 400, 'from ' + G.TUNE.LEAP_FROM + ' away');
+ok('both new kinds are coloured so you can tell what is coming', (() => {
+  const pop = G.ENEMY_TYPES.find(x => x.key === 'popper');
+  const lea = G.ENEMY_TYPES.find(x => x.key === 'leaper');
+  return pop.color && lea.color && pop.color !== lea.color;
+})());
+ok('and that colour reaches the character on screen',
+  src.indexOf('if (!isPlayer && g.tint) torsoCol = g.tint;') !== -1);
+ok('a wave with the new kinds in it runs without throwing', (() => {
+  G.loadMap(); G.reset();
+  try {
+    for (let i = 0; i < 1200; i++) {
+      G.update(1 / 60);
+      if (G.waveState === 'picking') G.choose(G.cards[0]);
+    }
+  } catch (err) { console.log('    ' + err.message); return false; }
+  return true;
+})());
+G.loadMap(); G.reset();
 
 group('Guns you can see working');
 G.reset();

@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v53';
+const VERSION = 'v54';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -966,6 +966,12 @@ const TUNE = {
   GRENADE_DMG: 130, GRENADE_RADIUS: 115,
   RPG_DMG: 260, RPG_RADIUS: 150, RPG_SPEED: 330,
 
+  // The popper. Smaller than a grenade, but it does not care who it catches.
+  POPPER_RADIUS: 118, POPPER_DMG: 46,
+  // The leaper. How far off it starts its run, how long the rush lasts and how much
+  // faster it goes while it is running.
+  LEAP_FROM: 260, LEAP_TIME: .42, LEAP_SPEED: 3.1, LEAP_EVERY: 2.2,
+
   // How often a shot comes out as a flower or a rainbow instead of a bullet. Just
   // often enough to be a surprise, not often enough to stop being one.
   SILLY_SHOT: 0.04,
@@ -1428,9 +1434,17 @@ const ZOMBIE_RANKS = [
 //  "weight" is how often it shows up. Bigger number, more common.
 // ---------------------------------------------------------------------------
 const ENEMY_TYPES = [
-  { key: 'walker', label: 'Walker', hp: 1,   speed: 1,    size: 1,    weight: 68 },
-  { key: 'runner', label: 'Runner', hp: .55, speed: 1.75, size: .84,  weight: 24 },
-  { key: 'brute',  label: 'Brute',  hp: 3.4, speed: .64,  size: 1.78, weight: 8  },
+  { key: 'walker', label: 'Walker', hp: 1,   speed: 1,    size: 1,    weight: 58 },
+  { key: 'runner', label: 'Runner', hp: .55, speed: 1.75, size: .84,  weight: 20 },
+  { key: 'brute',  label: 'Brute',  hp: 3.4, speed: .64,  size: 1.78, weight: 7  },
+  // Goes off when it dies, and the blast catches whatever happens to be standing near
+  // it, its own side included. Weak on its own; the danger is where it is standing.
+  { key: 'popper', label: 'Popper', hp: .5,  speed: 1.12, size: .95,  weight: 9,
+    color: '#ff8a3c', pops: true },
+  // Closes the last stretch in a rush rather than walking it, so backing away stops
+  // being a complete answer to everything.
+  { key: 'leaper', label: 'Leaper', hp: .7,  speed: 1.05, size: .9,   weight: 6,
+    color: '#b0e04a', leaps: true },
 ];
 const TYPE_WEIGHT_TOTAL = ENEMY_TYPES.reduce((s, t) => s + t.weight, 0);
 
@@ -3517,6 +3531,9 @@ function spawnEnemy(side, boss) {
   enemies.push({
     x: p.x, y: p.y, r: Math.round(13 * size), side: side,
     hp: hp, maxhp: hp, type: type.key, size: size, spd: speed, boss: !!boss,
+    // Carried onto the enemy itself so the movement and death code can ask it
+    // directly, rather than looking the type back up every frame.
+    leaps: !!type.leaps, pops: !!type.pops, tint: type.color || null,
     rank: rank, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
     squash: 0, wob: Math.random() * 6.28, z: 0, climbing: false,
     walk: Math.random() * 6.28, moving: false, mvx: 0, mvy: 1,
@@ -3955,6 +3972,23 @@ function announce(text) { flashText = text; flashTime = 1.5; slowmo = .55; }
 // ---------------------------------------------------------------------------
 //  Damage
 // ---------------------------------------------------------------------------
+// A blast that does not care whose side anyone is on. Used by the popper, and it is
+// the whole point of it: standing in a crowd when one dies is a bad place to be, and
+// that is true for its own side as well as for you.
+function neutralBlast(x, y, radius, dmg, color) {
+  blasts.push({ x: x, y: y, r: 6, max: radius, life: .4, maxLife: .4, c: color });
+  spray(x, y, color, 20);
+  addShake(7);
+  for (const other of enemies.slice()) {
+    if (other.hp <= 0) continue;
+    const d = Math.hypot(other.x - x, other.y - y);
+    if (d > radius) continue;
+    hurtEnemy(other, dmg * (1 - (d / radius) * .6), x, y);
+  }
+  const dp = Math.hypot(player.x - x, player.y - y);
+  if (dp <= radius) hurtPlayer(dmg * (1 - (dp / radius) * .6) * .7, 0);
+}
+
 function hurtEnemy(e, dmg, fromX, fromY, shoveMul) {
   const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
   const armor = Math.min(.85, table[e.rank].armor + (e.boss ? TUNE.BOSS_ARMOR : 0));
@@ -3969,7 +4003,15 @@ function hurtEnemy(e, dmg, fromX, fromY, shoveMul) {
   moveEntity(e, Math.cos(a) * shove, Math.sin(a) * shove);
   addHitstop(.045);
   if (e.hp > 0) popup(e.x, e.y - 18, String(Math.round(dealt)), 'rgba(255,255,255,0.75)');
-  if (e.hp <= 0) killEnemy(e, a);
+  if (e.hp <= 0) {
+    const popper = e.type === 'popper';
+    killEnemy(e, a);
+    // After killEnemy, so the kill is credited before the blast starts hurting things.
+    if (popper) {
+      neutralBlast(e.x, e.y, TUNE.POPPER_RADIUS, TUNE.POPPER_DMG, '#ff9f43');
+      SFX.smash();
+    }
+  }
 }
 
 function killEnemy(e, dirAngle) {
@@ -4478,7 +4520,20 @@ function update(dt) {
       // Sideways, for circling and flanking.
       const sideX = -toward.y * e.turn, sideY = toward.x * e.turn;
 
-      let spd = TUNE.ENEMY_SPEED * e.spd;
+      // A leaper walks like anything else until it is close, then rushes. The timer
+      // keeps it from being a permanent sprint, so there is a moment to react in.
+      if (e.leaps) {
+        e.leapCool = (e.leapCool || 0) - dt;
+        e.leapT = (e.leapT || 0) - dt;
+        const gap = Math.hypot(player.x - e.x, player.y - e.y);
+        if (e.leapT <= 0 && e.leapCool <= 0 && gap < TUNE.LEAP_FROM && gap > 40) {
+          e.leapT = TUNE.LEAP_TIME;
+          e.leapCool = TUNE.LEAP_EVERY;
+          puffDust(e.x, e.y, 0, 4, .9);
+        }
+      }
+      let spd = TUNE.ENEMY_SPEED * e.spd
+        * ((e.leaps && e.leapT > 0) ? TUNE.LEAP_SPEED : 1);
 
       if (rk.ranged) {
         // A spitter keeps its distance: backs off if crowded, closes if too far,
@@ -4796,6 +4851,9 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   }
   if (!isPlayer && g.type === 'runner') torsoCol = isNoob ? '#7ad7ff' : '#f0a63c';
   if (!isPlayer && g.type === 'brute') torsoCol = '#c98af5';
+  // A popper or a leaper is coloured so you can tell what it is before it reaches you,
+  // which is the only fair way to have either of them in the game.
+  if (!isPlayer && g.tint) torsoCol = g.tint;
   if (g.boss) { skin = '#ff9f43'; torsoCol = '#8c2f2f'; legCol = '#5c2020'; }
   if (isPlayer && player.form !== 'normal') {
     const f2 = formByKey(player.form);
