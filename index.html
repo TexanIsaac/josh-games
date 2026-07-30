@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0d0f14">
 <title>Zombie Noobs</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Zombie Noobs">
 <style>
   html, body {
     margin: 0; padding: 0; height: 100%; overflow: hidden;
@@ -212,7 +214,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v29';
+const VERSION = 'v30';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1088,13 +1090,39 @@ const NO_UP = freshUpgrades();
 //  Crash catcher. A blank white screen is the worst thing that can happen
 //  mid-build, so anything that goes wrong gets explained in plain words.
 // ---------------------------------------------------------------------------
-window.onerror = function (msg, src, line, col) {
+// Safari often hands window.onerror nothing more useful than "Script error." with
+// no line number, which is worse than useless when the game is on an iPad in
+// another country. Listening for the error event instead gives the real Error
+// object, and with it a stack. Anything still going wrong gets shown in full.
+let crashShown = false;
+function showCrash(what, where, stack) {
   const el = document.getElementById('oops');
-  if (el) {
+  if (!el) return;
+  const msgEl = document.getElementById('oopsmsg');
+  if (!crashShown) {
     el.style.display = 'block';
-    document.getElementById('oopsmsg').textContent =
-      msg + '  (line ' + line + ', column ' + col + ')';
+    if (msgEl) {
+      msgEl.textContent = String(what) + (where ? '\n\nat ' + where : '')
+        + (stack ? '\n\n' + String(stack).split('\n').slice(0, 6).join('\n') : '');
+    }
+    crashShown = true;
   }
+}
+
+window.addEventListener('error', function (e) {
+  const err = e && e.error;
+  showCrash(
+    (err && err.message) || (e && e.message) || 'unknown error',
+    (e && e.filename ? e.filename + ':' + e.lineno + ':' + e.colno : ''),
+    err && err.stack);
+});
+window.addEventListener('unhandledrejection', function (e) {
+  const r = e && e.reason;
+  showCrash('promise: ' + ((r && r.message) || r), '', r && r.stack);
+});
+// Kept as a fallback for anything the listener above does not see.
+window.onerror = function (msg, src, line, col, err) {
+  showCrash(msg, src ? src + ':' + line + ':' + col : '', err && err.stack);
   return true;
 };
 
@@ -3081,11 +3109,17 @@ function driftEffects(dt) {
 function update(dt) {
   // While the cards are up the fight holds still, but particles and floating
   // text keep moving so the screen does not look locked up.
-  if (waveState === 'picking') { driftEffects(dt); updateMusic(dt); return; }
+  if (waveState === 'picking') {
+    driftEffects(dt);
+    try { updateMusic(dt); } catch (err) { musicTrack = 0; }
+    return;
+  }
 
   cameraKeys(dt);
   moveCamera(dt);
-  updateMusic(dt);
+  // Audio behaves differently on every device, so a fault in it must never stop
+  // the fight. Worst case the game is silent and still perfectly playable.
+  try { updateMusic(dt); } catch (err) { musicTrack = 0; }
 
   // The stick points where you want to go on screen; this turns that into a
   // direction across the world, whichever way the camera is facing.
@@ -5007,24 +5041,34 @@ function draw() {
 //  Main loop
 // ---------------------------------------------------------------------------
 let last = 0;
+let frameFaults = 0;
 function loop(now) {
   if (!last) last = now;
   const raw = Math.min(.05, (now - last) / 1000);
   last = now;
 
+  // A thrown error used to stop the loop dead and leave a blank screen. Now it is
+  // reported once and the loop carries on, so a fault in one part of the game does
+  // not take the whole thing down with it. Far better on a plane with no way to fix
+  // anything than a game that simply stops.
   if (running) {
-    if (paused) {
-      draw();
-    } else if (hitstop > 0) {
-      // Everything holds still for a few dozen milliseconds. Keep drawing so it
-      // reads as a freeze frame on the impact, not as a dropped frame.
-      hitstop -= raw;
-      draw();
-    } else {
-      let dt = raw;
-      if (slowmo > 0) dt *= .45;
-      update(dt);
-      draw();
+    try {
+      if (paused) {
+        draw();
+      } else if (hitstop > 0) {
+        // Everything holds still for a few dozen milliseconds. Keep drawing so it
+        // reads as a freeze frame on the impact, not as a dropped frame.
+        hitstop -= raw;
+        draw();
+      } else {
+        let dt = raw;
+        if (slowmo > 0) dt *= .45;
+        update(dt);
+        draw();
+      }
+    } catch (err) {
+      frameFaults++;
+      if (frameFaults === 1) showCrash(err && err.message, 'while playing', err && err.stack);
     }
   }
   requestAnimationFrame(loop);
@@ -5219,8 +5263,23 @@ function drawShop() {
   }
 })();
 
-loadSave();
-drawShop();
+try { loadSave(); } catch (err) { showCrash('loading your save: ' + err.message, '', err.stack); }
+try { drawShop(); } catch (err) { showCrash('drawing the shop: ' + err.message, '', err.stack); }
+
+// ---------------------------------------------------------------------------
+//  Offline
+//
+//  Registered so the game keeps working with no signal at all, which is the whole
+//  point of putting it on an iPad. Open it once with a connection, add it to the
+//  home screen, and after that it loads from the device.
+// ---------------------------------------------------------------------------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {
+      // No offline copy then. The game still runs normally online.
+    });
+  });
+}
 
 const titleEl = document.getElementById('title');
 const verEl = document.getElementById('ver');
