@@ -148,7 +148,7 @@ eval(code + `
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
    THEMES, get theme(){return theme}, EDGE_WATCH, hurtEnemy, flipSide, draw, writeSave, bricks,
-   onDown, onMove, onUp, get stick(){return stick},
+   onDown, onMove, onUp, get stick(){return stick}, setCtx, spawnEnemy,
    get touches(){return touches}, get VW(){return VW}, get VH(){return VH},
    wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint, WALL_H, TILE,
    setFirstPerson, get camWant(){return camWant}, get cam(){return cam},
@@ -992,6 +992,59 @@ ok('the theme handler no longer grabs the difficulty buttons',
   src.indexOf("querySelectorAll('.tbtn[data-theme]')") !== -1);
 ok('and the reason it looked like they did nothing is written down',
   src.indexOf('so it looked like the buttons did nothing') !== -1);
+
+group('It has to stay fast with a full wave on screen');
+ok('a whole frame with a big wave stays inside a sane budget', (() => {
+  // Counting the real canvas work rather than guessing. A blocky character is more
+  // geometry than a flat one, so this is worth watching: the band was being drawn on
+  // every side of every limb where it is far too small to see, and each box was being
+  // outlined with four separate stroke calls.
+  let fills = 0, strokes = 0;
+  const counting = new Proxy({}, {
+    get: (o, k) => k === 'measureText' ? (() => ({ width: 8 }))
+      : k === 'canvas' ? { width: 1200, height: 800 }
+      : (k === 'createLinearGradient' || k === 'createRadialGradient')
+        ? (() => ({ addColorStop: () => {} }))
+      : k === 'fill' ? (() => { fills++; })
+      : k === 'stroke' ? (() => { strokes++; })
+      : (() => {}),
+    set: () => true,
+  });
+  G.reset();
+  for (let i = 0; i < 34; i++) G.spawnEnemy(G.player.side === 0 ? 1 : 0, false);
+  G.setCtx(counting);
+  G.draw();
+  G.setCtx(null);
+  const total = fills + strokes;
+  console.log('    ' + G.enemies.length + ' enemies: ' + fills + ' fills, '
+    + strokes + ' strokes, ' + total + ' total');
+  G.reset();
+  return total < 7000;
+})(), 'measured, not assumed');
+ok('the shading band is skipped on parts too small to show it',
+  src.indexOf('none of it visible on a limb twelve pixels tall') !== -1);
+ok('a box is outlined with one stroke, not four',
+  src.indexOf('one stroke call per box') !== -1
+  || src.indexOf('meant four stroke calls per box') !== -1);
+ok('a side turned away from the viewer is not drawn at all',
+  src.indexOf('is always covered') !== -1);
+ok('but something is always drawn, however the numbers fall',
+  src.indexOf('if (!sides.length) sides.push(cand[0]);') !== -1,
+  'so a box can never vanish');
+
+group('Putting the game down');
+ok('leaving the page pauses instead of letting him be eaten',
+  src.indexOf("document.addEventListener('visibilitychange'") !== -1);
+ok('and everything held down is let go, since no pointerup arrives', (() => {
+  // Nothing sends an up event once the page is hidden, so the flags have to be cleared
+  // by hand or the stick stays held and he walks into a wall in the dark. There is an
+  // older visibility listener further up the file, so this looks for the pausing one.
+  const k = src.indexOf('if (!document.hidden) return;');
+  const blk = src.slice(k, k + 420);
+  return k !== -1 && blk.indexOf('touches.clear()') !== -1
+    && blk.indexOf('stick.active = false') !== -1
+    && blk.indexOf('paused = true') !== -1;
+})());
 
 group('Medals');
 G.reset();

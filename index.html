@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v48';
+const VERSION = 'v49';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1537,7 +1537,11 @@ window.onerror = function (msg, src, line, col, err) {
 //  Canvas, safe area, and where the buttons sit
 // ---------------------------------------------------------------------------
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+// Not a const, so the tests can hand in a counting stand-in and measure how much
+// drawing a frame actually costs. Nothing in the game ever reassigns it.
+const realCtx = canvas.getContext('2d');
+let ctx = realCtx;
+function setCtx(c) { ctx = c || realCtx; }
 const probe = document.getElementById('safeprobe');
 let VW = 0, VH = 0;
 
@@ -2032,7 +2036,8 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   // `open` is still used, but only for deciding which edges get an outline, which is
   // the thing that actually made a run of wall read as a row of separate cubes.
   const op = (open === undefined) ? OPEN_ALL : open;
-  const sides = [
+  const sides = [];
+  const cand = [
     { a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
       p: [ax, ay, bx, by, bxB, byB, axB, ayB] },
     { a: rot, d: viewDepth(mBC[0], mBC[1], zb),
@@ -2042,6 +2047,20 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
     { a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
       p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] },
   ];
+  // A side of a box whose outer surface points away from the viewer is always covered
+  // by the two that face towards them, so drawing it is pure waste. With a full wave on
+  // screen there are hundreds of boxes and this is thousands of fills a frame.
+  //
+  // The test is deliberately generous. It uses the direction the camera looks rather
+  // than exactly where the eye is, which is very slightly wrong for a big box seen up
+  // close, so a face is only dropped when it is clearly turned away. Half the saving,
+  // none of the risk of opening a hole in a wall.
+  for (const sd of cand) {
+    if (Math.cos(sd.a) * _sy + Math.sin(sd.a) * _cy > 0.28) continue;
+    sides.push(sd);
+  }
+  // Something must always be drawn, however the numbers fall.
+  if (!sides.length) sides.push(cand[0]);
   sides.sort((p1, p2) => p2.d - p1.d);
 
   const mix = (ta, tb, k) => ta + (tb - ta) * k;
@@ -2059,34 +2078,42 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
     ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
     ctx.closePath(); ctx.fill();
 
-    // Darker towards the ground, so a face reads as light falling across it rather
-    // than a flat panel of colour.
+    // Darker towards the ground, so a big face reads as light falling across it rather
+    // than as a flat panel of colour.
     //
-    // Both coordinates have to be interpolated down the edge, not just the height.
-    // Taking the x from the top corner and only sliding the y down was fine looking
-    // straight on, where a vertical edge is vertical on screen. Under perspective it
-    // is not, so the band came out skewed and every wall looked as though it slanted
-    // outwards halfway down, and the skew left slivers of nothing behind it.
-    ctx.fillStyle = shade(color, tone - 12);
-    ctx.beginPath();
-    ctx.moveTo(mix(q[0], q[6], band), mix(q[1], q[7], band));
-    ctx.lineTo(mix(q[2], q[4], band), mix(q[3], q[5], band));
-    ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
-    ctx.closePath(); ctx.fill();
+    // Only on things big enough to show it. A character is about ten boxes and this is
+    // a second fill on every side of every one of them, which is thousands of fills a
+    // frame with a full wave on screen, none of it visible on a limb twelve pixels tall.
+    // A flat face per side is also closer to how Roblox actually looks.
+    //
+    // Both coordinates are interpolated down the edge, not just the height. Taking the
+    // across position from the top corner was fine looking straight on, where a vertical
+    // edge is vertical on screen, but under perspective it is not: the band came out
+    // skewed, every wall looked as though it slanted outwards halfway down, and the skew
+    // left slivers of nothing behind it.
+    if (h >= 24) {
+      ctx.fillStyle = shade(color, tone - 12);
+      ctx.beginPath();
+      ctx.moveTo(mix(q[0], q[6], band), mix(q[1], q[7], band));
+      ctx.lineTo(mix(q[2], q[4], band), mix(q[3], q[5], band));
+      ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
+      ctx.closePath(); ctx.fill();
+    }
 
     // Seams, so a tall wall reads as separate parts stacked up rather than one
     // slab. Roblox walls are built of stacked bricks and the joins are part of
     // what you recognise.
+    // Brick courses, all of them in one path for the same reason as the edges above.
     if (tall) {
       ctx.lineWidth = 1;
+      ctx.strokeStyle = shade(color, tone - 26);
+      ctx.beginPath();
       for (const f of seams) {
-        ctx.strokeStyle = shade(color, tone - 26);
-        ctx.beginPath();
-        // Same correction as the band above: slide along both edges, not just down.
+        // Same correction as the band: slide along both edges, not just down.
         ctx.moveTo(mix(q[0], q[6], f), mix(q[1], q[7], f));
         ctx.lineTo(mix(q[2], q[4], f), mix(q[3], q[5], f));
-        ctx.stroke();
       }
+      ctx.stroke();
     }
   }
 
@@ -2116,15 +2143,17 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
 
   // An outline, but only along edges that are actually the outside of something.
   // Outlining every tile is what made a run of wall look like a row of cubes.
+  // All the edges of one box go into a single path and are stroked once. Doing them one
+  // at a time meant four stroke calls per box, and with a full wave on screen there are
+  // hundreds of boxes a frame.
   ctx.strokeStyle = shade(color, -44);
   ctx.lineWidth = 1;
-  const edge = (u, v, uu, vv) => {
-    ctx.beginPath(); ctx.moveTo(u, v); ctx.lineTo(uu, vv); ctx.stroke();
-  };
-  if (op & 1) edge(ax, ay, bx, by);
-  if (op & 2) edge(bx, by, cx, cy);
-  if (op & 4) edge(cx, cy, dx, dy);
-  if (op & 8) edge(dx, dy, ax, ay);
+  ctx.beginPath();
+  if (op & 1) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+  if (op & 2) { ctx.moveTo(bx, by); ctx.lineTo(cx, cy); }
+  if (op & 4) { ctx.moveTo(cx, cy); ctx.lineTo(dx, dy); }
+  if (op & 8) { ctx.moveTo(dx, dy); ctx.lineTo(ax, ay); }
+  ctx.stroke();
 
   if (alpha !== undefined) ctx.globalAlpha = 1;
 }
@@ -3676,6 +3705,20 @@ function onUp(e) {
   if (look.active && e.pointerId === look.id) { look.active = false; look.id = null; }
 }
 
+// Going away from the game pauses it. Switching apps, locking the iPad or answering a
+// message should not mean coming back to a dead character, and it stops the thing
+// burning battery in the background. Everything held down is released too, since no
+// pointerup arrives once the page is hidden.
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) return;
+  touches.clear();
+  stick.active = false; stick.dx = 0; stick.dy = 0; stick.id = null;
+  look.active = false; look.id = null;
+  fire.active = false; fire.id = null;
+  pinchFrom = 0;
+  if (running && !paused) paused = true;
+});
+
 canvas.addEventListener('pointerdown', onDown);
 canvas.addEventListener('pointermove', onMove);
 canvas.addEventListener('pointerup', onUp);
@@ -4579,13 +4622,13 @@ function boxOnScreen(wx, wy, h) {
 // A character, built out of real boxes stacked on top of each other: two legs, a
 // torso, two arms and a head. Same shapes a Roblox character is made of.
 function drawGuy(g, side, rankIdx, isPlayer) {
-  // Everything from here to the end of this function is a small part.
-  partMode = true;
-  try {
-    drawGuyInner(g, side, rankIdx, isPlayer);
-  } finally {
-    partMode = false;
-  }
+  // Characters are drawn as proper boxes, flat shaded per face, the same as the walls.
+  //
+  // This used to switch on the rounded-part painter for the whole character, which was
+  // right when a character was twenty little rounded pieces. With the blocky rig it was
+  // silently turning every block back into a smooth blob, so the blocky look Josh asked
+  // for was never actually reaching the screen. partMode stays off here.
+  drawGuyInner(g, side, rankIdx, isPlayer);
 }
 
 // ---------------------------------------------------------------------------
