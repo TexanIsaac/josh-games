@@ -214,11 +214,43 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v30';
+const VERSION = 'v31';
 
 const zzfxV = .28;
 let zzfxX = null;
 let muted = false;
+
+// Two separate volumes, because an anthem and a shotgun want completely different
+// levels and turning everything down to fix one ruins the other. Both are saved.
+// A "bus" is just which of the two a sound belongs to: the music sets it while it is
+// making its notes, and everything else is a game sound.
+let musicVol = .7, sfxVol = 1;
+let zzfxBus = 'sfx';
+function loadVolumes() {
+  try {
+    const m = parseFloat(localStorage.getItem('zn_musicvol'));
+    const f = parseFloat(localStorage.getItem('zn_sfxvol'));
+    if (m >= 0 && m <= 1) musicVol = m;
+    if (f >= 0 && f <= 1) sfxVol = f;
+  } catch (err) { /* defaults are fine */ }
+}
+function saveVolumes() {
+  try {
+    localStorage.setItem('zn_musicvol', String(musicVol));
+    localStorage.setItem('zn_sfxvol', String(sfxVol));
+  } catch (err) { /* fine */ }
+}
+// Steps of a fifth, so there are five settings plus silence and it is obvious which
+// one you are on.
+function nudgeVolume(which, dir) {
+  const step = .2;
+  if (which === 'music') musicVol = Math.max(0, Math.min(1, Math.round((musicVol + dir * step) * 100) / 100));
+  else sfxVol = Math.max(0, Math.min(1, Math.round((sfxVol + dir * step) * 100) / 100));
+  saveVolumes();
+  if (anthemEl) anthemEl.volume = .55 * musicVol;
+  if (which === 'sfx') SFX.ui();
+}
+loadVolumes();
 
 function audioStart() {
   if (!zzfxX) {
@@ -237,6 +269,9 @@ const zzfx = (
   bitCrush = 0, delay = 0, sustainVolume = 1, decay = 0, tremolo = 0, filter = 0
 ) => {
   if (!zzfxX || muted) return;
+  // Scaled by whichever of the two volumes this sound belongs to.
+  volume *= (zzfxBus === 'music' ? musicVol : sfxVol);
+  if (volume <= 0) return;
   const sampleRate = 44100;
   let PI2 = Math.PI * 2, abs = Math.abs, sign = v => v < 0 ? -1 : 1,
     startSlide = slide *= 500 * PI2 / sampleRate / sampleRate,
@@ -512,7 +547,11 @@ function anthemAudio() {
     const a = new Audio('assets/anthem-1977.mp3');
     a.loop = true;
     a.preload = 'auto';
-    a.volume = .55;
+    a.volume = .55 * musicVol;
+    // Josh asked for it a little quicker than the record. Just enough to feel like
+    // it is marching rather than dragging.
+    a.playbackRate = 1.1;
+    a.preservesPitch = false;
     a.addEventListener('error', () => { anthemBroken = true; anthemEl = null; });
     anthemEl = a;
   } catch (err) { anthemBroken = true; }
@@ -567,6 +606,17 @@ function updateMusic(dt) {
   stopRecording();
 
   if (!t || !t.notes || muted || !zzfxX) return;
+  zzfxBus = 'music';
+  try {
+    stepTune(t, dt);
+  } finally {
+    zzfxBus = 'sfx';
+  }
+}
+
+// The note stepping itself, split out so the volume bus can be set around all of it
+// in one place rather than at every note.
+function stepTune(t, dt) {
   // The melody, with a quiet note an octave up to thicken it.
   musicWait -= dt;
   if (musicWait <= 0) {
@@ -1140,6 +1190,7 @@ const PAD = { l: 14, t: 14, r: 14, b: 14 };
 const btn = {};
 let miniRect = { x: 0, y: 0, w: 0, h: 0 };
 let bagRects = [];
+let volRects = [];
 let formRects = [];
 
 function readInsets() {
@@ -1407,6 +1458,20 @@ const FACE_SHADE = { n: -26, e: -14, s: -54, w: -42 };
 // camera or the thing being drawn turns.
 const LIGHT_ANGLE = -Math.PI * 0.25;
 
+// Small parts are shaded differently from big ones, and this is the thing that had
+// the characters looking black no matter how bright their colours were set.
+//
+// A wall tile is a big box. A dark outline round it and a darker band along the
+// bottom of each face read as edges and shading, because they are thin next to the
+// area they sit in. A forearm is a box about six pixels across. On that, the same
+// one-pixel outline plus the same shaded band cover most of the part, so what you
+// actually see is the outline colour and not the arm colour. Twenty of those stacked
+// into a character and the whole figure goes dark, however bright the palette is.
+//
+// So while a character is being drawn, parts get no outline at all, a much gentler
+// band, and a brighter overall tone. The colours were never really the problem.
+let partMode = false;
+
 // The old axis-aligned entry point. Everything that is not a character still uses
 // this, and it just hands over to the turnable one with no turn applied.
 function drawBox(wx, wy, wz, w, d, h, color, alpha, decal, open) {
@@ -1467,7 +1532,9 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   for (const side of sides) {
     const q = side.p;
     // Square on to the light is brightest, facing away is darkest.
-    const tone = -24 + 18 * Math.cos((side.a || 0) - LIGHT_ANGLE);
+    const tone = partMode
+      ? -6 + 12 * Math.cos((side.a || 0) - LIGHT_ANGLE)
+      : -24 + 18 * Math.cos((side.a || 0) - LIGHT_ANGLE);
     ctx.fillStyle = shade(color, tone);
     ctx.beginPath();
     ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]);
@@ -1475,8 +1542,9 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
     ctx.closePath(); ctx.fill();
 
     // Darker towards the ground, so a face reads as light falling across it
-    // rather than a flat panel of colour.
-    ctx.fillStyle = shade(color, tone - 12);
+    // rather than a flat panel of colour. Barely any of it on a small part, where a
+    // heavy band would swallow the whole thing.
+    ctx.fillStyle = shade(color, tone - (partMode ? 5 : 12));
     ctx.beginPath();
     ctx.moveTo(q[0], mix(q[1], q[7], band)); ctx.lineTo(q[2], mix(q[3], q[5], band));
     ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
@@ -1522,6 +1590,10 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
 
   // An outline, but only along edges that are actually the outside of something.
   // Outlining every tile is what made a run of wall look like a row of cubes.
+  //
+  // Parts get none. On something a few pixels wide the outline is most of the part,
+  // which is what was turning the characters black.
+  if (partMode) { ctx.globalAlpha = 1; return; }
   ctx.strokeStyle = shade(color, -44);
   ctx.lineWidth = 1;
   const edge = (u, v, uu, vv) => {
@@ -2655,7 +2727,14 @@ function onDown(e) {
   if (hit(btn.view,  e.clientX, e.clientY)) { setFirstPerson(!cam.first); return; }
   if (hit(btn.music, e.clientX, e.clientY)) { cycleMusic(); return; }
 
-  if (paused) { togglePause(); return; }
+  if (paused) {
+    // The volume buttons are live while paused, and must not also resume.
+    for (const r of volRects) {
+      if (hit(r, e.clientX, e.clientY)) { nudgeVolume(r.key, r.dir); return; }
+    }
+    togglePause();
+    return;
+  }
 
   // A form in the morph row.
   for (let i = 0; i < formRects.length; i++) {
@@ -3543,6 +3622,16 @@ function boxOnScreen(wx, wy, h) {
 // A character, built out of real boxes stacked on top of each other: two legs, a
 // torso, two arms and a head. Same shapes a Roblox character is made of.
 function drawGuy(g, side, rankIdx, isPlayer) {
+  // Everything from here to the end of this function is a small part.
+  partMode = true;
+  try {
+    drawGuyInner(g, side, rankIdx, isPlayer);
+  } finally {
+    partMode = false;
+  }
+}
+
+function drawGuyInner(g, side, rankIdx, isPlayer) {
   const isNoob = side === NOOB;
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
@@ -4918,9 +5007,61 @@ function drawPause() {
     ctx.fillText(ln, VW / 2, VH * .3 + 44 + i * 25);
   });
 
+  // Volume, one row for the music and one for the fighting. Minus and plus rather
+  // than a slider you have to drag accurately with a thumb.
+  volRects = [];
+  const rowY0 = VH * .3 + 44 + lines.length * 25 + 30;
+  const rows = [
+    { key: 'music', label: 'MUSIC', val: musicVol },
+    { key: 'sfx',   label: 'FIGHT', val: sfxVol },
+  ];
+  const bw = 26, bgap = 8, barW = 122;
+  rows.forEach((row, i) => {
+    const y = rowY0 + i * 38;
+    const totalW = 58 + bw + bgap + barW + bgap + bw;
+    let x = VW / 2 - totalW / 2;
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(238,242,248,0.6)';
+    ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+    ctx.fillText(row.label, x, y + 17);
+    x += 58;
+
+    for (const dir of [-1, 1]) {
+      const rx = dir === -1 ? x : x + bw + bgap + barW + bgap;
+      ctx.fillStyle = 'rgba(30,38,52,0.9)';
+      ctx.fillRect(rx, y, bw, 24);
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rx, y, bw, 24);
+      ctx.fillStyle = '#eef2f8';
+      ctx.font = '800 15px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(dir === -1 ? '\u2212' : '+', rx + bw / 2, y + 17);
+      volRects.push({ x: rx, y: y, w: bw, h: 24, key: row.key, dir: dir });
+    }
+
+    // Five blocks, filled in as far as the setting goes.
+    const bx = x + bw + bgap;
+    for (let b = 0; b < 5; b++) {
+      const on = row.val > b / 5 + 0.001;
+      ctx.fillStyle = on ? (row.key === 'music' ? '#7fc7ff' : '#ffd84d')
+                         : 'rgba(255,255,255,0.12)';
+      ctx.fillRect(bx + b * (barW / 5), y + 6, barW / 5 - 4, 12);
+    }
+    if (row.val <= 0) {
+      ctx.fillStyle = 'rgba(255,107,74,0.8)';
+      ctx.font = '800 10px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('OFF', bx + barW / 2, y + 16);
+    }
+  });
+  ctx.textAlign = 'center';
+
   ctx.fillStyle = 'rgba(238,242,248,0.45)';
   ctx.font = '700 13px -apple-system, system-ui, sans-serif';
-  ctx.fillText('Tap anywhere to keep going', VW / 2, VH * .3 + 44 + lines.length * 25 + 22);
+  ctx.fillText('Tap anywhere else to keep going', VW / 2,
+    rowY0 + rows.length * 38 + 18);
 
   ctx.fillStyle = 'rgba(238,242,248,0.3)';
   ctx.font = '700 11px -apple-system, system-ui, sans-serif';

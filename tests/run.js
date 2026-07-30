@@ -122,7 +122,10 @@ eval(code + `
    loadSave, writeSave, addCoins, drawShop, get save(){return save},
    bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid,
    turnToward, drawBoxRot, LIGHT_ANGLE, OPEN_ALL,
-   easeAngle, enterTank, wreckTank, fireShell, updateTank,
+   easeAngle, enterTank, wreckTank, fireShell, updateTank, shade,
+   get partMode(){return partMode}, set partMode(v){partMode=v},
+   get musicVol(){return musicVol}, get sfxVol(){return sfxVol},
+   nudgeVolume, get volRects(){return volRects}, drawPause, drawGuy,
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
    boomShot, hurtPlayer, get shots(){return shots},
@@ -2039,6 +2042,72 @@ ok('a lone block still draws all four of its sides', (() => {
   // Nothing passed means nothing is hidden, which is what every crate relies on.
   return src.indexOf('(open === undefined) ? OPEN_ALL : open') !== -1;
 })());
+
+group('Why the characters looked black');
+ok('small parts are shaded on their own rules', src.indexOf('let partMode = false') !== -1);
+ok('the reason is written down where the fix is',
+  src.indexOf('The colours were never really the problem') !== -1);
+ok('a part face is measurably brighter than a wall face', (() => {
+  // Same colour, same direction. The only difference is whether it is a small part.
+  const lum = h => {
+    const m = /rgb\((\d+),(\d+),(\d+)\)/.exec(h);
+    if (!m) return -1;
+    return 0.2126 * (+m[1]) + 0.7152 * (+m[2]) + 0.0722 * (+m[3]);
+  };
+  // Darkest case for each: a face pointing straight away from the light.
+  const wall = lum(G.shade('#2f9be8', -24 - 18 - 12));
+  const part = lum(G.shade('#2f9be8', -6 - 12 - 5));
+  console.log('    wall face ' + wall.toFixed(0) + '  part face ' + part.toFixed(0));
+  return part > wall * 1.15;
+})(), 'the same blue, lit the same way');
+ok('a part gets no outline at all', (() => {
+  // The outline was covering most of a limb, being a whole pixel on a six pixel box.
+  const i = src.indexOf('if (partMode) { ctx.globalAlpha = 1; return; }');
+  const j = src.indexOf("ctx.strokeStyle = shade(color, -44)");
+  return i !== -1 && j !== -1 && i < j;
+})(), 'it returns before stroking');
+ok('drawing a character turns part mode on and off again', (() => {
+  const before = G.partMode;
+  G.reset();
+  G.drawGuy(G.player, G.player.side, G.player.rank, true);
+  return before === false && G.partMode === false;
+})(), 'and puts it back even if drawing throws');
+
+group('Music and fight volume are separate');
+ok('there are two volumes', typeof G.musicVol === 'number' && typeof G.sfxVol === 'number');
+ok('turning the music down leaves the fighting alone', (() => {
+  const f = G.sfxVol;
+  for (let i = 0; i < 9; i++) G.nudgeVolume('music', -1);
+  return G.musicVol === 0 && G.sfxVol === f;
+})(), 'music ' + G.musicVol + ' fight ' + G.sfxVol);
+ok('and the other way round', (() => {
+  for (let i = 0; i < 9; i++) G.nudgeVolume('music', 1);
+  const m = G.musicVol;
+  for (let i = 0; i < 9; i++) G.nudgeVolume('sfx', -1);
+  return G.sfxVol === 0 && G.musicVol === m;
+})());
+ok('neither can go outside nothing to full', (() => {
+  for (let i = 0; i < 20; i++) { G.nudgeVolume('music', 1); G.nudgeVolume('sfx', 1); }
+  const hi = G.musicVol === 1 && G.sfxVol === 1;
+  for (let i = 0; i < 20; i++) { G.nudgeVolume('music', -1); G.nudgeVolume('sfx', -1); }
+  const lo = G.musicVol === 0 && G.sfxVol === 0;
+  for (let i = 0; i < 4; i++) { G.nudgeVolume('music', 1); G.nudgeVolume('sfx', 1); }
+  return hi && lo;
+})());
+ok('a silent bus makes no sound at all rather than a quiet one',
+  src.indexOf('if (volume <= 0) return;') !== -1);
+ok('the anthem recording follows the music volume',
+  src.indexOf('.55 * musicVol') !== -1);
+ok('the anthem plays a little quicker than the record, as asked',
+  /playbackRate = 1\.1/.test(src));
+ok('the settings are remembered between games',
+  src.indexOf('zn_musicvol') !== -1 && src.indexOf('zn_sfxvol') !== -1);
+ok('there are buttons for it on the pause screen', (() => {
+  G.reset();
+  G.drawPause();
+  return G.volRects.length === 4;
+})(), 'minus and plus for each of the two');
+ok('a tap on one does not also unpause', src.indexOf('must not also resume') !== -1);
 
 group('Tanks');
 G.reset();
