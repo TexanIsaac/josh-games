@@ -140,6 +140,7 @@ eval(code + `
    get grid(){return grid}, loadMap, explode,
    drawBarrel, drawSandbags, ringAt, ringPath, PERKS, perkCost, drawFloor,
    bagSlots, bossCost, applyPerks, freshUpgrades,
+   puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2525,6 +2526,30 @@ ok('Boss Ready really does make the boss form cheaper', (() => {
   const less = G.bossCost();
   G.save.perks = {}; G.reset();
   return less < base;
+})());
+
+group('Game feel');
+ok('there is dust off the ground', typeof G.puffDust === 'function');
+ok('a footfall throws up dust', (() => {
+  G.reset();
+  // Dust is short lived and driftEffects clears it, so what matters is whether any
+  // ever appeared during the walk, not how much is left at the end of it.
+  let most = 0;
+  for (let i = 0; i < 90; i++) {
+    aimStickAt(1, 0);
+    G.update(1 / 60);
+    if (G.bits.length > most) most = G.bits.length;
+  }
+  return most > 0;
+})(), 'so he is walking on the ground, not sliding over it');
+ok('landing after a drop throws up more than a step does',
+  src.indexOf('Landing after a drop throws up rather more') !== -1);
+ok('the shake settles on a curve rather than sliding back',
+  src.indexOf('Math.exp(-9 * dt)') !== -1);
+ok('and it actually reaches zero instead of creeping towards it', (() => {
+  G.addShake(20);
+  for (let i = 0; i < 400; i++) G.driftEffects(1 / 60);
+  return G.shake.mag === 0;
 })());
 
 group('Tanks');

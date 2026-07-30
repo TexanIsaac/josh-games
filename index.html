@@ -277,7 +277,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v37';
+const VERSION = 'v38';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -3345,6 +3345,23 @@ function turnToward(e, tx, ty, dt, rate) {
   e.faceAng = (e.faceAng || 0) + d * (1 - Math.exp(-(rate || 14) * dt));
 }
 
+// A puff of dust off the ground. Cheap, and it is what stops a character looking
+// like it is sliding over the ground rather than walking on it.
+function puffDust(x, y, z, n, strength) {
+  const count = n || 3;
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = (12 + Math.random() * 26) * (strength || 1);
+    bits.push({
+      x: x + (Math.random() - .5) * 6, y: y + (Math.random() - .5) * 6,
+      z: (z || 0) + Math.random() * 3,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: .34 + Math.random() * .2, max: .55,
+      c: 'rgba(226,220,198,0.55)', s: 2 + Math.random() * 2,
+    });
+  }
+}
+
 function addHitstop(sec) { hitstop = Math.max(hitstop, sec * TUNE.HITSTOP); }
 
 function announce(text) { flashText = text; flashTime = 1.5; slowmo = .55; }
@@ -3637,7 +3654,12 @@ function driftEffects(dt) {
   for (const p of popups) { p.y -= 34 * dt; p.life -= dt; }
   popups = popups.filter(p => p.life > 0);
   if (flashTime > 0) flashTime -= dt;
-  shake.mag = Math.max(0, shake.mag - dt * 40);
+  // Shake comes off on a curve rather than in a straight line. A linear fall makes
+  // the camera drift back at a constant rate, which reads as the screen sliding; an
+  // exponential one snaps most of the way back immediately and then settles, which is
+  // how a real knock behaves. The small subtraction on the end is so it actually
+  // reaches zero instead of creeping towards it forever.
+  shake.mag = Math.max(0, shake.mag * Math.exp(-9 * dt) - dt * 4);
 }
 
 function update(dt) {
@@ -3648,6 +3670,9 @@ function update(dt) {
     try { updateMusic(dt); } catch (err) { musicTrack = 0; }
     return;
   }
+
+  // Landing after a drop throws up rather more than a footstep does.
+  const zWas = player ? (player.z || 0) : 0;
 
   cameraKeys(dt);
   moveCamera(dt);
@@ -3668,8 +3693,15 @@ function update(dt) {
   // never look like they are skating along the ground.
   player.moving = (mv.dx !== 0 || mv.dy !== 0);
   if (player.moving) {
+    const walkWas = player.walk;
     player.walk += dt * 9 * player.up.speed * speedMul;
     player.mvx = mv.dx; player.mvy = mv.dy;
+    // One puff per footfall. The stride runs on player.walk, so a step happens every
+    // time it crosses a multiple of pi, which is once per leg.
+    if (Math.floor(walkWas / Math.PI) !== Math.floor(player.walk / Math.PI)
+        && (player.z || 0) <= 0.5) {
+      puffDust(player.x, player.y, 0, 2, .7);
+    }
   }
   // Face whatever is being aimed at when there is something in range, otherwise
   // face the way you are walking. This is what makes a weapon point at things.
@@ -3959,6 +3991,15 @@ function update(dt) {
     if (s.rocket && s.life <= 0) boomShot(s);
   }
   shots = shots.filter(s => s.life > 0);
+
+  // Hit the ground after a fall: dust, and a small knock on the camera scaled to how
+  // far it was, so dropping off a wall has some weight to it.
+  if (zWas > 6 && (player.z || 0) <= 0.5) {
+    const drop = Math.min(1, zWas / 60);
+    puffDust(player.x, player.y, 0, 5 + Math.round(drop * 5), .8 + drop);
+    addShake(2 + drop * 4);
+    player.squash = Math.max(player.squash || 0, .1 + drop * .1);
+  }
 
   updatePlanes(dt);
   updateBombs(dt);
