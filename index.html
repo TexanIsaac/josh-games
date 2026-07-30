@@ -111,6 +111,11 @@
     border: 2px solid rgba(255,255,255,0.18); cursor: pointer;
   }
   .tbtn[data-on="1"] { border-color: #ffd84d; color: #ffd84d; }
+  .lbtn { padding: .4rem .7rem; font-size: 12.5px; }
+  #lblurb {
+    font-size: 12px; color: rgba(238,242,248,0.5);
+    min-height: 1.2em; text-align: center;
+  }
   #shop {
     position: fixed; inset: 0; z-index: 20; display: none;
     flex-direction: column; background: #131a24;
@@ -201,6 +206,13 @@
     <button class="tbtn" data-theme="noobs">Noobs vs Zombies</button>
     <button class="tbtn" data-theme="ww2">Allied vs Axis</button>
   </div>
+  <div class="trow" id="levelrow">
+    <button class="tbtn lbtn" data-level="0">Easy</button>
+    <button class="tbtn lbtn" data-level="1">Normal</button>
+    <button class="tbtn lbtn" data-level="2">Hard</button>
+    <button class="tbtn lbtn" data-level="3">Insane</button>
+  </div>
+  <div id="lblurb"></div>
   <button id="shopopen" class="tbtn">Shop and Your Guy</button>
   <div id="credit">A game by<span>Josh Alexander</span></div>
   <div id="ver"></div>
@@ -260,7 +272,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v35';
+const VERSION = 'v36';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -836,6 +848,10 @@ const TUNE = {
   TANK_CRUSH: 42,       // damage a second to anything you drive over
   TANK_CRUSH_REACH: 34,
 
+  // How far a blast reaches into the scenery. Deliberately much shorter than a
+  // nuke's reach on people, so one nuke cannot flatten the whole level.
+  TERRAIN_REACH: 250,
+
   // The bombing run. One plane crosses the map and walks a line of bombs along it.
   PLANE_SPEED: 560,
   PLANE_HEIGHT: 300,    // how high it flies, in world units
@@ -1276,6 +1292,7 @@ const btn = {};
 let miniRect = { x: 0, y: 0, w: 0, h: 0 };
 let bagRects = [];
 let volRects = [];
+let pauseRects = [];
 let formRects = [];
 
 function readInsets() {
@@ -1912,7 +1929,8 @@ function loadMap() {
     }
     grid.push(row);
   }
-  // Every obstacle starts whole.
+  // Filled in after sealPockets below, because that can turn floor into wall and
+  // those new walls need health like any other.
   tileHp = [];
   for (let y = 0; y < GH; y++) {
     const hp = [];
@@ -1925,6 +1943,16 @@ function loadMap() {
   if (spawnPoints.length === 0) spawnPoints.push({ x: TILE * 2, y: TILE * 2 });
   if (!playerStart.x) playerStart = { x: GW * TILE / 2, y: GH * TILE / 2 };
   sealPockets();
+  // Now that the map is final, give everything its health.
+  tileHp = [];
+  for (let y = 0; y < GH; y++) {
+    const hp = [];
+    for (let x = 0; x < GW; x++) {
+      const k = tileKind(grid[y][x]);
+      hp.push(k && k.hp !== null ? k.hp : Infinity);
+    }
+    tileHp.push(hp);
+  }
 }
 
 // Any floor tile with no walkable path back to the start is a sealed pocket.
@@ -2318,6 +2346,33 @@ function flowDir(x, y) {
 const NOOB = 'noob', ZOMB = 'zombie';
 let player, enemies, shots, bits, popups, hearts, powerups, blasts, zaps;
 let freezeT = 0, nukeFlash = 0;
+
+// How hard the game is. Everything here multiplies the base numbers rather than
+// replacing them, so tuning TUNE still works and the levels stay in proportion.
+// Easy is meant to be genuinely easy: an eight year old showing a friend should not
+// lose in the first minute.
+const LEVELS = [
+  { key: 'easy',   name: 'EASY',   hp: .7,  spd: .82, count: .7,  gap: 1.35, tough: .6,
+    blurb: 'Fewer of them, and they hit softly.' },
+  { key: 'normal', name: 'NORMAL', hp: 1,   spd: 1,   count: 1,   gap: 1,    tough: 1,
+    blurb: 'The way the game is meant to be played.' },
+  { key: 'hard',   name: 'HARD',   hp: 1.4, spd: 1.12, count: 1.3, gap: .78, tough: 1.4,
+    blurb: 'More of them, faster, and they take some killing.' },
+  { key: 'insane', name: 'INSANE', hp: 2,   spd: 1.28, count: 1.7, gap: .58, tough: 1.9,
+    blurb: 'Good luck.' },
+];
+let levelIdx = 1;
+function LV() { return LEVELS[levelIdx] || LEVELS[1]; }
+function setLevel(i) {
+  if (i < 0 || i >= LEVELS.length) return;
+  levelIdx = i;
+  try { localStorage.setItem('zn_level', String(i)); } catch (err) { /* fine */ }
+  paintLevelButtons();
+}
+try {
+  const li = parseInt(localStorage.getItem('zn_level'), 10);
+  if (li >= 0 && li < LEVELS.length) levelIdx = li;
+} catch (err) { levelIdx = 1; }
 let planes = [], bombs = [];
 // What you are carrying. One slot per kind, and duplicates stack up in it.
 let bag = [];
@@ -2368,6 +2423,7 @@ function reset() {
   player.tank = null;
   freezeT = 0; nukeFlash = 0; bag = [];
   wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
+  confirmRestart = false;
   cards = []; cardRects = [];
   streak = 0; streakTimer = 0;
   coinsThisRun = 0; lastWaveCoins = 0;
@@ -2385,7 +2441,7 @@ function reset() {
   cam.ty = camWant.ty = playerStart.y;
   camRefresh();
   startWave(1);
-  spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
+  spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY * LV().gap;
   running = true;
 }
 
@@ -2420,7 +2476,10 @@ function blockingHostiles() {
 // ---------------------------------------------------------------------------
 //  Waves and upgrades
 // ---------------------------------------------------------------------------
-function waveCount(n) { return TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH; }
+function waveCount(n) {
+  const base = TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH;
+  return Math.max(3, Math.round(base * LV().count));
+}
 function isBossWave(n) { return n % TUNE.BOSS_EVERY === 0; }
 
 function startWave(n) {
@@ -2429,7 +2488,7 @@ function startWave(n) {
   waveToSpawn = waveCount(n);
   bossPending = isBossWave(n);
   spawnTimer = 0.5;
-  spawnGap = TUNE.SPAWN_EVERY;
+  spawnGap = TUNE.SPAWN_EVERY * LV().gap;
   if (bossPending) { announce('WAVE ' + n + ' -- BOSS'); SFX.boss(); }
   else announce('WAVE ' + n);
 }
@@ -2481,17 +2540,24 @@ function explode(x, y, radius, damage, color) {
 
   // And it knocks a hole in whatever was in the way. Only the inner obstacles: the
   // boundary stays put so nothing can wander off the map.
-  const g0x = Math.max(1, Math.floor((x - radius) / TILE));
-  const g1x = Math.min(GW - 2, Math.floor((x + radius) / TILE));
-  const g0y = Math.max(1, Math.floor((y - radius) / TILE));
-  const g1y = Math.min(GH - 2, Math.floor((y + radius) / TILE));
+  //
+  // Terrain has its own, much smaller reach than the blast that hurts people. A nuke
+  // is supposed to clear the field of enemies, but at its full three thousand radius
+  // it reached every tile on the map and flattened the entire level in one go, which
+  // left nothing to fight around. So a blast damages people out to its full radius
+  // and buildings only close in.
+  const trad = Math.min(radius, TUNE.TERRAIN_REACH);
+  const g0x = Math.max(1, Math.floor((x - trad) / TILE));
+  const g1x = Math.min(GW - 2, Math.floor((x + trad) / TILE));
+  const g0y = Math.max(1, Math.floor((y - trad) / TILE));
+  const g1y = Math.min(GH - 2, Math.floor((y + trad) / TILE));
   for (let gy = g0y; gy <= g1y; gy++) {
     for (let gx = g0x; gx <= g1x; gx++) {
       if (grid[gy][gx] === 0) continue;
       const tx = gx * TILE + TILE / 2, ty = gy * TILE + TILE / 2;
       const d2 = Math.hypot(tx - x, ty - y);
-      if (d2 > radius) continue;
-      damageTile(gx, gy, damage * (1 - (d2 / radius) * .5));
+      if (d2 > trad) continue;
+      damageTile(gx, gy, damage * (1 - (d2 / trad) * .5));
     }
   }
 }
@@ -2864,10 +2930,12 @@ function spawnEnemy(side, boss) {
   } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
 
   const type = boss ? ENEMY_TYPES[0] : rollEnemyType();
-  const waveScale = Math.pow(1 + TUNE.WAVE_TOUGHER, wave - 1);
-  let hp = TUNE.ENEMY_HEALTH * type.hp * waveScale;
+  // How much tougher they get each wave, scaled by the difficulty so that on easy the
+  // climb is gentler as well as the starting point being lower.
+  const waveScale = Math.pow(1 + TUNE.WAVE_TOUGHER * LV().tough, wave - 1);
+  let hp = TUNE.ENEMY_HEALTH * type.hp * waveScale * LV().hp;
   let size = type.size;
-  let speed = type.speed;
+  let speed = type.speed * LV().spd;
   if (boss) { hp *= TUNE.BOSS_HEALTH; size = TUNE.BOSS_SIZE; speed = TUNE.BOSS_SPEED; }
   hp = Math.round(hp);
 
@@ -3022,6 +3090,27 @@ function onDown(e) {
     for (const r of volRects) {
       if (hit(r, e.clientX, e.clientY)) { nudgeVolume(r.key, r.dir); return; }
     }
+    for (const r of pauseRects) {
+      if (!hit(r, e.clientX, e.clientY)) continue;
+      if (r.key === 'resume') { confirmRestart = false; togglePause(); return; }
+      if (r.key === 'shop') {
+        // Left paused behind the shop, so closing it puts you back where you were
+        // rather than throwing away the run.
+        confirmRestart = false;
+        shopOpen(true);
+        SFX.ui();
+        return;
+      }
+      if (r.key === 'restart') {
+        if (!confirmRestart) { confirmRestart = true; SFX.ui(); return; }
+        confirmRestart = false;
+        reset();
+        paused = false;
+        SFX.rankup();
+        return;
+      }
+    }
+    confirmRestart = false;
     togglePause();
     return;
   }
@@ -4976,6 +5065,18 @@ function drawStanding() {
         if (t === SANDBAG && fade === undefined) drawSandbagRows(wx, wy, h);
       } else if (t === HEDGEHOG) {
         drawHedgehog(wx, wy, h, col, fade);
+      } else if (t === WALL) {
+        // Inner walls are drawn narrower than their tile. Only the edges that are not
+        // joined to another wall get pulled in, so a run of wall still meets up
+        // seamlessly along its length and only its sides get slimmer. The boundary is
+        // untouched: an edge facing off the map never counts as exposed, so the outer
+        // ring keeps its full thickness and its full height.
+        const IN = TILE * 0.17;
+        const x0 = wx + ((open & 8) ? IN : 0);
+        const x1 = wx + TILE - ((open & 2) ? IN : 0);
+        const y0 = wy + ((open & 1) ? IN : 0);
+        const y1 = wy + TILE - ((open & 4) ? IN : 0);
+        drawBox(x0, y0, 0, x1 - x0, y1 - y0, h, col, fade, decal, open);
       } else {
         drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
         if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
@@ -5481,10 +5582,44 @@ function drawPause() {
   });
   ctx.textAlign = 'center';
 
-  ctx.fillStyle = 'rgba(238,242,248,0.45)';
-  ctx.font = '700 13px -apple-system, system-ui, sans-serif';
-  ctx.fillText('Tap anywhere else to keep going', VW / 2,
-    rowY0 + rows.length * 38 + 18);
+  // Buttons, so pause is somewhere to make a decision rather than only a place the
+  // game stops. Tapping one does its job and never resumes by accident.
+  pauseRects = [];
+  const menuY = rowY0 + rows.length * 38 + 10;
+  const items = [
+    { key: 'resume', label: 'Keep going',   tint: '#7ed957' },
+    { key: 'shop',   label: 'Change my guy', tint: '#7fc7ff' },
+    { key: 'restart', label: 'Start over',   tint: '#ff9f43' },
+  ];
+  const bwid = Math.min(150, (VW - 60) / 3);
+  const bgap2 = 10;
+  const totW = items.length * bwid + (items.length - 1) * bgap2;
+  items.forEach((it, i) => {
+    const x = VW / 2 - totW / 2 + i * (bwid + bgap2);
+    ctx.fillStyle = 'rgba(24,30,42,0.92)';
+    ctx.fillRect(x, menuY, bwid, 34);
+    ctx.strokeStyle = it.tint;
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(x, menuY, bwid, 34);
+    ctx.fillStyle = it.tint;
+    ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(it.label, x + bwid / 2, menuY + 22);
+    pauseRects.push({ x: x, y: menuY, w: bwid, h: 34, key: it.key });
+  });
+
+  // Starting over is easy to hit by accident, so it asks first.
+  if (confirmRestart) {
+    ctx.fillStyle = '#ff9f43';
+    ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+    ctx.fillText('Tap Start over again to lose this run',
+      VW / 2, menuY + 54);
+  } else {
+    ctx.fillStyle = 'rgba(238,242,248,0.42)';
+    ctx.font = '700 12px -apple-system, system-ui, sans-serif';
+    ctx.fillText(LV().name + '    tap anywhere else to keep going',
+      VW / 2, menuY + 54);
+  }
 
   ctx.fillStyle = 'rgba(238,242,248,0.3)';
   ctx.font = '700 11px -apple-system, system-ui, sans-serif';
@@ -5606,6 +5741,8 @@ function draw() {
 // ---------------------------------------------------------------------------
 let last = 0;
 let frameFaults = 0;
+// Start over asks twice, since losing a run by a stray thumb is miserable.
+let confirmRestart = false;
 function loop(now) {
   if (!last) last = now;
   const raw = Math.min(.05, (now - last) / 1000);
@@ -6190,6 +6327,24 @@ function startGame() {
   requestAnimationFrame(loop);
 }
 // Choosing a theme must not also start the game, so these swallow the tap.
+// Difficulty, chosen before a game starts and remembered afterwards.
+const levelBtns = document.querySelectorAll('.lbtn');
+const lblurbEl = document.getElementById('lblurb');
+function paintLevelButtons() {
+  levelBtns.forEach(b =>
+    b.setAttribute('data-on', parseInt(b.dataset.level, 10) === levelIdx ? '1' : '0'));
+  if (lblurbEl) lblurbEl.textContent = LV().blurb;
+}
+levelBtns.forEach(b => {
+  const go = (ev) => {
+    ev.stopPropagation(); ev.preventDefault();
+    setLevel(parseInt(b.dataset.level, 10));
+  };
+  b.addEventListener('pointerdown', go);
+  b.addEventListener('click', go);
+});
+paintLevelButtons();
+
 const themeBtns = document.querySelectorAll('.tbtn');
 function paintThemeButtons() {
   themeBtns.forEach(b => b.setAttribute('data-on', b.dataset.theme === theme ? '1' : '0'));

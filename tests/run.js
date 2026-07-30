@@ -133,7 +133,11 @@ eval(code + `
    get musicVol(){return musicVol}, get sfxVol(){return sfxVol},
    nudgeVolume, get volRects(){return volRects}, drawPause, drawGuy,
    WEAPONS, weaponByKey, paintDoll, paintWeapon, rr, limb, tryAttack,
-   drawRoundPart, hullOf, smoothPath,
+   drawRoundPart, hullOf, smoothPath, topHeightAt, damageTile, popBarrels,
+   TILE_KIND, tileKind, BARREL, SANDBAG, HEDGEHOG, get tileHp(){return tileHp},
+   LEVELS, LV, setLevel, get levelIdx(){return levelIdx}, waveCount,
+   get pauseRects(){return pauseRects}, get confirmRestart(){return confirmRestart},
+   get grid(){return grid}, loadMap, explode,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2234,6 +2238,152 @@ ok('a nonsense weapon index in a save is repaired rather than trusted', (() => {
   G.loadSave();
   return G.save.look.weapon === 0;
 })());
+
+group('Blowing holes in the map');
+// Earlier tests set off nukes, and blasts now clear scenery, so the map is rebuilt
+// here rather than testing whatever is left of it.
+G.loadMap(); G.reset();
+ok('obstacles are a table, so adding one is a single line',
+  Object.keys(G.TILE_KIND).length >= 5,
+  Object.keys(G.TILE_KIND).map(k => G.TILE_KIND[k].name).join(', '));
+ok('there are barrels, sandbags and steel hedgehogs on the map', (() => {
+  const seen = {};
+  for (let y = 0; y < G.grid.length; y++)
+    for (let x = 0; x < G.grid[y].length; x++) seen[G.grid[y][x]] = true;
+  return !!(seen[G.BARREL] && seen[G.SANDBAG] && seen[G.HEDGEHOG]);
+})());
+ok('a sandbag is low enough to climb over, unlike everything else',
+  G.TILE_KIND[G.SANDBAG].h < 20 && G.TILE_KIND[G.BARREL].h > G.TILE_KIND[G.SANDBAG].h,
+  'sandbag is ' + G.TILE_KIND[G.SANDBAG].h + ' high');
+ok('a steel hedgehog cannot be destroyed', G.TILE_KIND[G.HEDGEHOG].hp === null);
+ok('a barrel is the easiest thing to set off',
+  G.TILE_KIND[G.BARREL].hp < G.TILE_KIND[G.SANDBAG].hp
+  && G.TILE_KIND[G.BARREL].hp < G.TILE_KIND[1].hp);
+
+ok('a big enough blast clears an inner wall', (() => {
+  G.loadMap(); G.reset();
+  let found = null;
+  for (let y = 2; y < G.grid.length - 2 && !found; y++)
+    for (let x = 2; x < G.grid[y].length - 2 && !found; x++)
+      if (G.grid[y][x] === 1) found = [x, y];
+  if (!found) return false;
+  const wx = found[0], wy = found[1];
+  for (let i = 0; i < 6; i++) G.explode(wx * 40 + 20, wy * 40 + 20, 120, 400, '#ffffff');
+  return G.grid[wy][wx] === 0;
+})(), 'a hole appears where the shell landed');
+
+ok('the boundary is never breached, however much is thrown at it', (() => {
+  G.loadMap();
+  const W = G.grid[0].length, H = G.grid.length;
+  for (let i = 0; i < 12; i++) {
+    G.explode(20, 20, 3000, 5000, '#ffffff');
+    G.explode((W - 1) * 40 + 20, (H - 1) * 40 + 20, 3000, 5000, '#ffffff');
+  }
+  for (let x = 0; x < W; x++) if (G.grid[0][x] === 0 || G.grid[H - 1][x] === 0) return false;
+  for (let y = 0; y < H; y++) if (G.grid[y][0] === 0 || G.grid[y][W - 1] === 0) return false;
+  return true;
+})(), 'nothing can wander off the map');
+
+ok('a long row of barrels cannot blow the stack', (() => {
+  G.loadMap();
+  for (let x = 2; x < 20; x++) { G.grid[2][x] = G.BARREL; G.tileHp[2][x] = 40; }
+  try {
+    G.explode(2 * 40 + 20, 2 * 40 + 20, 100, 500, '#ffffff');
+    for (let i = 0; i < 40; i++) G.popBarrels();
+    return true;
+  } catch (err) { console.log('    threw: ' + err.message); return false; }
+})(), 'chains are queued, not recursive');
+
+ok('damage to a tile is remembered rather than reset each frame', (() => {
+  G.loadMap();
+  let w = null;
+  for (let y = 2; y < G.grid.length - 2 && !w; y++)
+    for (let x = 2; x < G.grid[y].length - 2 && !w; x++) if (G.grid[y][x] === 1) w = [x, y];
+  const full = G.tileHp[w[1]][w[0]];
+  G.damageTile(w[0], w[1], 30);
+  return G.tileHp[w[1]][w[0]] === full - 30 && G.grid[w[1]][w[0]] === 1;
+})(), 'so cracks can be drawn on it');
+G.loadMap(); G.reset();
+
+group('Difficulty');
+ok('there are four levels', G.LEVELS.length === 4, G.LEVELS.map(l => l.name).join(', '));
+ok('normal leaves the game exactly as tuned', (() => {
+  const n = G.LEVELS[1];
+  return n.hp === 1 && n.spd === 1 && n.count === 1 && n.gap === 1 && n.tough === 1;
+})());
+ok('each level is harder than the one below it in every way', (() => {
+  for (let i = 1; i < G.LEVELS.length; i++) {
+    const a = G.LEVELS[i - 1], b = G.LEVELS[i];
+    if (!(b.hp > a.hp && b.count > a.count && b.tough > a.tough && b.gap < a.gap)) return false;
+  }
+  return true;
+})());
+ok('easy really is easier: fewer of them, slower, and softer',
+  G.LEVELS[0].hp < .8 && G.LEVELS[0].count < .8 && G.LEVELS[0].spd < 1,
+  'a friend should not lose in the first minute');
+ok('every level says what it means, in words a child can read',
+  G.LEVELS.every(l => l.blurb && l.blurb.length > 8));
+ok('the level changes how many turn up', (() => {
+  G.setLevel(0); const easy = G.waveCount(5);
+  G.setLevel(3); const mad = G.waveCount(5);
+  G.setLevel(1);
+  return mad > easy * 1.8;
+})());
+ok('a wave is never so small it is pointless', (() => {
+  G.setLevel(0); const n = G.waveCount(1); G.setLevel(1);
+  return n >= 3;
+})());
+ok('the choice is remembered between games', (() => {
+  G.setLevel(2);
+  const stored = localStorage.getItem('zn_level');
+  G.setLevel(1);
+  return stored === '2';
+})());
+ok('a nonsense level is refused rather than applied', (() => {
+  const before = G.levelIdx;
+  G.setLevel(99); G.setLevel(-4);
+  return G.levelIdx === before;
+})());
+ok('waves are longer than they were',
+  G.TUNE.WAVE_FIRST_COUNT >= 8 && G.TUNE.WAVE_GROWTH >= 3,
+  'wave 1 is ' + G.waveCount(1) + ' and wave 10 is ' + G.waveCount(10));
+
+group('The pause menu');
+G.reset();
+ok('pause offers real choices, not just a resume tap', (() => {
+  G.drawPause();
+  return G.pauseRects.length === 3;
+})(), G.pauseRects.map(r => r.key).join(', '));
+ok('one of them changes your guy without ending the run',
+  G.pauseRects.some(r => r.key === 'shop'));
+ok('one of them starts over', G.pauseRects.some(r => r.key === 'restart'));
+ok('starting over asks twice, so a stray thumb cannot lose a run',
+  src.indexOf('if (!confirmRestart) { confirmRestart = true;') !== -1);
+ok('the volume rows are still there alongside them', G.volRects.length === 4);
+ok('none of the buttons overlap each other', (() => {
+  const all = G.pauseRects.concat(G.volRects);
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length; j++) {
+      const a = all[i], b = all[j];
+      if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+        console.log('    overlap: ' + (a.key || '?') + ' and ' + (b.key || '?'));
+        return false;
+      }
+    }
+  }
+  return true;
+})());
+ok('and they all fit on the screen', G.pauseRects.concat(G.volRects).every(r =>
+  r.x >= 0 && r.y >= 0 && r.x + r.w <= G.VW && r.y + r.h <= G.VH));
+
+group('Thinner inner walls');
+ok('an inner wall is drawn narrower than its tile',
+  src.indexOf('Inner walls are drawn narrower than their tile') !== -1);
+ok('only edges not joined to another wall are pulled in',
+  src.indexOf('const x0 = wx + ((open & 8) ? IN : 0);') !== -1,
+  'otherwise a run would come apart into slabs again');
+ok('an edge facing off the map never counts as exposed, so the boundary stays thick',
+  src.indexOf('if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) return true;') !== -1);
 
 group('Tanks');
 G.reset();
