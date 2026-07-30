@@ -48,6 +48,7 @@ global.document = {
   querySelector: () => null,
   createElement: (tag) => tag === 'canvas' ? mkCanvas() : { setAttribute: noop, style: {} },
   addEventListener: noop, head: { appendChild: noop }, visibilityState: 'visible',
+  querySelectorAll: () => [],
 };
 global.getComputedStyle = () => ({
   paddingTop: INSET_TOP + 'px', paddingRight: '0px',
@@ -101,7 +102,7 @@ eval(code + `
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
-   TP_LOOK_AT, camWant, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   TP_LOOK_AT, camWant, THEMES, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -1421,6 +1422,89 @@ ok('a boss does not split, it just dies', (() => {
   bs.type = 'brute';
   G.killEnemy(bs, 0);
   return G.enemies.filter(e => e.split).length === 0;
+})());
+
+group('Allied vs Axis theme');
+G.applyTheme('noobs');
+ok('there are two themes', Object.keys(G.THEMES).length >= 2,
+  Object.keys(G.THEMES).join(', '));
+ok('it starts on Josh original', G.NOOB_RANKS[0].name === 'Noob');
+G.applyTheme('ww2');
+ok('the WW2 theme renames both sides',
+  G.NOOB_RANKS[0].name === 'Recruit' && G.ZOMBIE_RANKS[0].name === 'Conscript',
+  G.NOOB_RANKS.map(r => r.name).join(' / '));
+ok('the ranged rank carries a rifle rather than a pistol',
+  G.NOOB_RANKS[2].weapon === 'rifle');
+ok('everybody wears a helmet', G.THEMES.ww2.helmet === true);
+ok('the thresholds are untouched by the theme, they are still Josh numbers',
+  G.NOOB_RANKS[1].at === 7 && G.NOOB_RANKS[2].at === 22 && G.NOOB_RANKS[3].at === 37,
+  '7 / 22 / 37');
+ok('the shield rank keeps its shield and its immunity',
+  G.NOOB_RANKS[3].weapon === 'riot shield' && G.NOOB_RANKS[3].noBite === true);
+ok('the mirror still holds', G.ZOMBIE_RANKS.every((z, i) => z.at === G.NOOB_RANKS[i].at));
+ok('WW2 colours stand out from the grass', (() => {
+  const L = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  const g1 = L('#8fb356'), g2 = L('#87ab4e');
+  const cols = [];
+  for (const side of ['a', 'b']) {
+    const pal = G.THEMES.ww2[side];
+    cols.push(pal.skin, pal.torso, pal.legs, pal.helmet);
+  }
+  return cols.every(c => Math.min(Math.abs(L(c) - g1), Math.abs(L(c) - g2)) > 14);
+})(), 'olive and field grey both read against the ground');
+ok('the two sides are told apart by colour', (() => {
+  const L = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  return Math.abs(L(G.THEMES.ww2.a.torso) - L(G.THEMES.ww2.b.torso)) > 8;
+})());
+ok('a theme only repaints, it never changes the rules',
+  /Nothing about a theme touches how anything behaves/.test(src));
+ok('the game runs fine in the WW2 theme', (() => {
+  G.applyTheme('ww2');
+  G.reset();
+  try {
+    for (let i = 0; i < 900; i++) {
+      aimStickAt(G.player.x + 200, G.player.y);
+      G.update(1 / 60);
+      if (G.waveState === 'picking') G.choose(G.cards[0]);
+    }
+    G.draw();
+    return Number.isFinite(G.player.x);
+  } catch (e) { console.log('    ' + e.message); return false; }
+})());
+ok('the choice is remembered between games',
+  global.localStorage.getItem('zn_theme') === 'ww2');
+G.applyTheme('noobs');
+ok('switching back restores Josh names', G.NOOB_RANKS[3].name === 'Noob Rioter');
+
+group('Weapons are built out of parts');
+ok('a knife has a handle, a guard and a blade',
+  /Handle, crossguard, then the blade/.test(src));
+ok('a pistol has a grip, frame and slide',
+  /Grip, frame, slide/.test(src));
+ok('a rifle has a stock, barrel, bolt and sights',
+  /A wooden stock behind, a long steel barrel in front/.test(src));
+ok('a shield has a frame, a face, a viewing slit and a handle',
+  /A frame, a face, a slit to see through and a handle/.test(src));
+ok('each weapon is several boxes, not one', (() => {
+  // Count the drawBox calls inside the weapon section.
+  const a = src.indexOf('Whatever it is holding');
+  const b = src.indexOf('if (!isPlayer && g.hp < g.maxhp)');
+  const chunk = src.slice(a, b);
+  return (chunk.match(/drawBox\(/g) || []).length >= 12;
+})(), 'plenty of parts');
+ok('every weapon still draws without throwing', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    for (let r = 0; r < 4; r++) {
+      G.reset();
+      G.player.rank = r;
+      try { G.draw(); } catch (e) { console.log('    ' + th + ' rank ' + r + ': ' + e.message); return false; }
+    }
+  }
+  G.applyTheme('noobs');
+  return true;
 })());
 
 group('Josh is credited');

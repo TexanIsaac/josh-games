@@ -47,6 +47,14 @@
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
   @media (prefers-reduced-motion: reduce) { #tapline { animation: none } }
 
+  #themepick { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; margin-top: 0.4rem; }
+  .tbtn {
+    font: 700 0.95rem -apple-system, system-ui, sans-serif;
+    padding: 0.6rem 1rem; border-radius: 0;
+    background: rgba(24,30,42,0.85); color: #eef2f8;
+    border: 2px solid rgba(255,255,255,0.18); cursor: pointer;
+  }
+  .tbtn[data-on="1"] { border-color: #ffd84d; color: #ffd84d; }
   #credit {
     margin-top: 1.5rem; font-size: 0.8rem; letter-spacing: 0.18em;
     text-transform: uppercase; color: rgba(238,242,248,0.45); font-weight: 700;
@@ -80,6 +88,10 @@
   <p style="opacity:0.5;font-size:0.95rem">Just steer. You swing on your own
      whenever something gets close.</p>
   <div id="tapline">Tap to play</div>
+  <div id="themepick">
+    <button class="tbtn" data-theme="noobs">Noobs vs Zombies</button>
+    <button class="tbtn" data-theme="ww2">Allied vs Axis</button>
+  </div>
   <div id="credit">A game by<span>Josh Alexander</span></div>
   <div id="ver"></div>
 </div>
@@ -148,7 +160,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v20';
+const VERSION = 'v21';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -422,6 +434,54 @@ const MAP = `
 ############################################
 `;
 
+
+// ---------------------------------------------------------------------------
+//  THEMES  --  the same game with a different coat of paint.
+//
+//  Every rule underneath stays exactly as Josh designed it: four ranks a side at
+//  7, 22 and 37 kills, biting and infection, the lot. A theme only changes what
+//  the two sides are called, what colour they are, and what the top weapon looks
+//  like. Nothing about a theme touches how anything behaves.
+// ---------------------------------------------------------------------------
+const THEMES = {
+  noobs: {
+    label: 'NOOBS vs ZOMBIES',
+    aName: 'Noob', bName: 'Zombie',
+    ranged: 'pistol',
+    helmet: false,
+    a: { skin: '#f5cd30', torso: '#0d69ac', legs: '#4e8f3a' },
+    b: { skin: '#9ed36a', torso: '#5a2b4a', legs: '#2f3340' },
+    rankA: ['Noob', 'Noob Knifer', 'Noob Gunner', 'Noob Rioter'],
+    rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter', 'Zombie Brute'],
+  },
+  ww2: {
+    label: 'ALLIED vs AXIS',
+    aName: 'Allied', bName: 'Axis',
+    ranged: 'rifle',
+    helmet: true,
+    // Olive drab against field grey, with a helmet on everybody.
+    a: { skin: '#e8c9a0', torso: '#6b7d42', legs: '#57662f', helmet: '#5e6f38' },
+    b: { skin: '#d9b58c', torso: '#4e535b', legs: '#3c4046', helmet: '#43474e' },
+    rankA: ['Recruit', 'Trench Fighter', 'Rifleman', 'Shield Sergeant'],
+    rankB: ['Conscript', 'Grenadier', 'Marksman', 'Stormtrooper'],
+  },
+};
+let theme = 'noobs';
+function TH() { return THEMES[theme] || THEMES.noobs; }
+
+// Renaming the ranks in place, so every rule that reads a rank by index carries on
+// working untouched.
+function applyTheme(name) {
+  theme = THEMES[name] ? name : 'noobs';
+  const t = TH();
+  for (let i = 0; i < NOOB_RANKS.length; i++) {
+    NOOB_RANKS[i].name = t.rankA[i];
+    ZOMBIE_RANKS[i].name = t.rankB[i];
+  }
+  // The one weapon that changes shape between themes.
+  NOOB_RANKS[2].weapon = t.ranged;
+  try { localStorage.setItem('zn_theme', theme); } catch (err) { /* fine */ }
+}
 
 // ---------------------------------------------------------------------------
 //  RANKS  --  four on each side, mirrored, exactly as Josh described.
@@ -2532,9 +2592,8 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // The zombie colours used to sit almost on top of the green baseplate, so their
   // bodies disappeared into the ground and only the head read. Brighter skin and
   // warm clothes fix that without making them look like noobs.
-  let skin  = isNoob ? '#f5cd30' : '#9ed36a';
-  let torso = isNoob ? '#0d69ac' : '#5a2b4a';
-  let legs  = isNoob ? '#4e8f3a' : '#2f3340';
+  const pal = isNoob ? TH().a : TH().b;
+  let skin = pal.skin, torso = pal.torso, legs = pal.legs;
   // Runners and brutes are tinted so you can tell at a glance what is coming.
   if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#12a8e8' : '#b06a18'; }
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
@@ -2657,6 +2716,11 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const headTurn = 0;
   const headZ = torsoZ + torsoH + headBob * .5;
   drawBox(cx0 - headW / 2 + headTurn, y0, headZ, headW, dep, headH, skin);
+  // A helmet, slightly wider than the head and sitting a touch proud of it.
+  if (TH().helmet && pal.helmet) {
+    drawBox(cx0 - headW / 2 - 1 + headTurn, y0 - .8, headZ + headH - 3.4 * s,
+            headW + 2, dep + 1.6, 4.6 * s, pal.helmet);
+  }
 
   // The classic noob face, painted on the front of the head cube.
   const fx = isoX(g.x + headTurn, y0 + dep, headZ + headH * .55);
@@ -2678,25 +2742,57 @@ function drawGuy(g, side, rankIdx, isPlayer) {
     ctx.fillRect(fx + 1.2 * s, fy + 2.2 * s, 1.5 * s, 2.6 * s);
   }
 
-  // Whatever it is holding, as another box out to the side it is facing.
+  // Whatever it is holding. Each weapon is built out of several parts rather than
+  // one plain box, so a rifle reads as a rifle: stock, barrel, bolt and sights.
   const swinging = g.swing > 0;
   const f = g.face || 1;
   const wx = (f > 0 ? g.x + hw + 2 : g.x - hw - 7 * s);
   const wSwing = f > 0 ? armB : armA;
   const wz = armZ + torsoH * .45;
   const lunge = swinging ? 5 : 0;
+  const wy0 = y0 + 2 + wSwing;
+  const px = f > 0 ? 1 : -1;      // which way the weapon points
+
   if (rk.weapon === 'knife') {
-    drawBox(wx + f * lunge, y0 + 2 + wSwing, wz, 11 * s, 2.6 * s, 2.6 * s, '#dfe6f0');
+    // Handle, crossguard, then the blade.
+    drawBox(wx + f * lunge, wy0, wz, 3.4 * s, 2.6 * s, 2.6 * s, '#3b2a1c');
+    drawBox(wx + f * lunge + px * 3.2 * s, wy0 - .7, wz - .4,
+            1.4 * s, 4 * s, 3.4 * s, '#6b6f78');
+    drawBox(wx + f * lunge + px * 4.4 * s, wy0 + .3, wz + .3,
+            8 * s, 1.8 * s, 1.8 * s, '#dfe6f0');
   } else if (rk.weapon === 'pistol') {
-    drawBox(wx, y0 + 2, wz, 10 * s, 3 * s, 3.4 * s, '#2b3038');
-    if (swinging) drawBox(wx + 10 * s, y0 + 2.5, wz, 5 * s, 2 * s, 2 * s, '#ffd84d');
+    // Grip, frame, slide, and a muzzle flash when it goes off.
+    drawBox(wx, wy0 + .4, wz - 2.6 * s, 3 * s, 2.6 * s, 4.4 * s, '#2b2118');
+    drawBox(wx, wy0, wz, 8 * s, 3 * s, 2.6 * s, '#2b3038');
+    drawBox(wx + px * 1.2 * s, wy0 + .3, wz + 2.2 * s, 6.4 * s, 2.4 * s, 1.6 * s, '#3a4048');
+    if (swinging) {
+      drawBox(wx + px * 8 * s, wy0 + .5, wz + .4, 4.4 * s, 2 * s, 2 * s, '#ffd84d');
+    }
+  } else if (rk.weapon === 'rifle') {
+    // A wooden stock behind, a long steel barrel in front, a bolt on the side and
+    // a pair of sights on top.
+    drawBox(wx - px * 5 * s, wy0 + .3, wz - .6, 7 * s, 2.8 * s, 3.4 * s, '#6b4a2c');
+    drawBox(wx - px * 6.2 * s, wy0 + .5, wz - 3 * s, 2.6 * s, 2.4 * s, 3.2 * s, '#5b3f25');
+    drawBox(wx + px * 1.6 * s, wy0 + .4, wz, 13 * s, 2.2 * s, 2.2 * s, '#4a5058');
+    drawBox(wx + px * .6 * s, wy0 + 2.6, wz + .4, 3 * s, 1.4 * s, 1.6 * s, '#6e747c');
+    drawBox(wx + px * 2.2 * s, wy0 + .7, wz + 2 * s, 1.4 * s, 1.6 * s, 1.6 * s, '#3a4048');
+    drawBox(wx + px * 12 * s, wy0 + .7, wz + 2 * s, 1.4 * s, 1.6 * s, 1.6 * s, '#3a4048');
+    if (swinging) {
+      drawBox(wx + px * 15 * s, wy0 + .5, wz + .2, 5 * s, 2.2 * s, 2.2 * s, '#ffd84d');
+    }
   } else if (rk.weapon === 'riot shield') {
-    ctx.globalAlpha *= .72;
-    drawBox(wx, y0 - 3, z + 2, 3.4 * s, dep + 6, legH + torsoH + 6, '#b9c6da');
+    // A frame, a face, a slit to see through and a handle behind.
+    ctx.globalAlpha *= .9;
+    drawBox(wx, y0 - 3, z + 2, 2.2 * s, dep + 6, legH + torsoH + 6, '#8d99ab');
+    drawBox(wx + px * .6, y0 - 1.4, z + 5, 1.4 * s, dep + 3, legH + torsoH, '#c3cedd');
+    drawBox(wx + px * 1.1, y0 + 1, z + legH + torsoH * .62,
+            1.2 * s, dep - 2, 2.6 * s, '#2f3540');
     ctx.globalAlpha = flash ? .68 : 1;
+    drawBox(wx - px * 1.6, y0 + 2, z + legH + torsoH * .4,
+            1.8 * s, 2 * s, 2 * s, '#3b2a1c');
   } else if (rk.weapon === 'claws') {
     for (let i = 0; i < 3; i++) {
-      drawBox(wx + f * lunge, y0 + 1 + i * 3 * s, wz, 7 * s, 1.6 * s, 1.6 * s, '#d8dee8');
+      drawBox(wx + f * lunge, wy0 + i * 3 * s, wz, 7 * s, 1.6 * s, 1.6 * s, '#d8dee8');
     }
   } else if (rk.weapon === 'acid') {
     const ax2 = isoX(wx, g.y, wz), ay2 = isoY(wx, g.y, wz);
@@ -2705,7 +2801,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   } else if (rk.weapon === 'smash') {
     drawBox(wx + f * lunge, y0, wz - 2, 9 * s, 9 * s, 9 * s, '#5b6b45');
   } else if (swinging) {
-    const px2 = isoX(g.x + f * (hw + 6), g.y), py2 = isoY(g.x + f * (hw + 6), g.y, wz);
+    const px2 = isoX(g.x + f * (hw + 6), g.y, wz), py2 = isoY(g.x + f * (hw + 6), g.y, wz);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 2.2;
     ctx.beginPath(); ctx.arc(px2, py2, 8 * s, -.9, .9); ctx.stroke();
@@ -3533,6 +3629,24 @@ function startGame() {
   last = 0;
   requestAnimationFrame(loop);
 }
+// Choosing a theme must not also start the game, so these swallow the tap.
+const themeBtns = document.querySelectorAll('.tbtn');
+function paintThemeButtons() {
+  themeBtns.forEach(b => b.setAttribute('data-on', b.dataset.theme === theme ? '1' : '0'));
+}
+themeBtns.forEach(b => {
+  const pick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    applyTheme(b.dataset.theme);
+    paintThemeButtons();
+  };
+  b.addEventListener('pointerdown', pick);
+  b.addEventListener('click', pick);
+});
+try { applyTheme(localStorage.getItem('zn_theme') || 'noobs'); } catch (err) { applyTheme('noobs'); }
+paintThemeButtons();
+
 titleEl.addEventListener('pointerdown', startGame);
 titleEl.addEventListener('click', startGame);
 </script>
