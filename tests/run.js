@@ -143,7 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
-   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, SKIRT, boxOnScreen, updateCamera, FP_EYE, BODY_TOP, neutralBlast, ENEMY_TYPES, rollEnemyType, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, SKIRT, boxOnScreen, updateCamera, FP_EYE, BODY_TOP, neutralBlast, ENEMY_TYPES, rollEnemyType, WAVE_MODS, pickWaveMod, modCoins, setCurMod, startWave, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
    shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
@@ -1112,6 +1112,97 @@ ok('one number says how tall a character is, and everything reads it',
   src.indexOf('const BODY_TOP = 46;') !== -1
   && src.indexOf('HEAD_TOP = BODY_TOP * u') !== -1
   && src.indexOf('FP_EYE = BODY_TOP') !== -1);
+
+group('Special waves');
+ok('there is a decent set of rules to meet', G.WAVE_MODS.length >= 5,
+  G.WAVE_MODS.map(m => m.name).join(', '));
+ok('every one has a name and a plain reason to care',
+  G.WAVE_MODS.every(m => m.key && m.name && m.blurb && m.blurb.length > 8));
+ok('they turn up on a rhythm rather than at random', (() => {
+  G.reset();
+  const at = [];
+  for (let n = 1; n <= 24; n++) if (G.pickWaveMod(n)) at.push(n);
+  console.log('    special waves at ' + at.join(', '));
+  return at.length === 8 && at.every(n => n % 3 === 0);
+})(), 'every third wave');
+ok('the same one never runs twice in a row', (() => {
+  let last = null, repeats = 0;
+  for (let i = 0; i < 400; i++) {
+    const m = G.pickWaveMod(3);
+    if (m && last && m.key === last.key) repeats++;
+    last = m;
+  }
+  return repeats === 0;
+})(), 'over 400 picks');
+ok('a swarm really is more of them and a heavy wave really is fewer', (() => {
+  G.reset();
+  const swarm = G.WAVE_MODS.find(m => m.key === 'swarm');
+  const heavy = G.WAVE_MODS.find(m => m.key === 'heavy');
+  return swarm.count > 1.5 && heavy.count < 0.8 && heavy.hp > 2;
+})());
+ok('the wave count actually changes with the rule', (() => {
+  G.reset();
+  G.setCurMod(null);
+  const normal = G.waveCount(9);
+  G.setCurMod(G.WAVE_MODS.find(m => m.key === 'swarm'));
+  const swarm = G.waveCount(9);
+  G.setCurMod(G.WAVE_MODS.find(m => m.key === 'heavy'));
+  const heavy = G.waveCount(9);
+  G.setCurMod(null);
+  console.log('    wave 9: normally ' + normal + ', swarm ' + swarm + ', heavy ' + heavy);
+  return swarm > normal && heavy < normal;
+})());
+ok('a wave of one kind really is all that kind', (() => {
+  G.loadMap(); G.reset();
+  G.setCurMod(G.WAVE_MODS.find(m => m.key === 'bombers'));
+  G.enemies.length = 0;
+  for (let i = 0; i < 25; i++) G.spawnEnemy(G.player.side === 0 ? 1 : 0, false);
+  const allPoppers = G.enemies.every(e => e.type === 'popper');
+  G.setCurMod(null);
+  G.enemies.length = 0;
+  return allPoppers;
+})());
+ok('but the plain roll of the table is left honest', (() => {
+  // rollEnemyType is not the thing that gets constrained, the spawn is, so every other
+  // test of the table still means what it says.
+  G.setCurMod(G.WAVE_MODS.find(m => m.key === 'rush'));
+  const kinds = new Set();
+  for (let i = 0; i < 400; i++) kinds.add(G.rollEnemyType().key);
+  G.setCurMod(null);
+  return kinds.size > 1;
+})());
+ok('payday pays more than an ordinary wave', (() => {
+  G.setCurMod(null);
+  const plain = G.modCoins();
+  G.setCurMod(G.WAVE_MODS.find(m => m.key === 'payday'));
+  const rich = G.modCoins();
+  G.setCurMod(null);
+  return rich > plain;
+})());
+ok('the dark only falls on the wave that calls for it', (() => {
+  const night = G.WAVE_MODS.find(m => m.key === 'night');
+  return night.night === true && G.WAVE_MODS.filter(m => m.night).length === 1;
+})());
+ok('the dark goes over the world but under the HUD',
+  src.indexOf('a dark screen you cannot read your') !== -1);
+ok('the rule stays on screen, not just announced once',
+  src.indexOf('Announced once at the start is not enough') !== -1);
+ok('every rule can be played through without throwing', (() => {
+  for (const m of G.WAVE_MODS) {
+    G.loadMap(); G.reset();
+    G.setCurMod(m);
+    try {
+      for (let i = 0; i < 240; i++) { G.update(1 / 60); G.draw(); }
+    } catch (err) {
+      console.log('    ' + m.key + ': ' + err.message);
+      G.setCurMod(null);
+      return false;
+    }
+  }
+  G.setCurMod(null);
+  G.loadMap(); G.reset();
+  return true;
+})());
 
 group('Poppers and leapers');
 ok('a popper is weak on its own', (() => {

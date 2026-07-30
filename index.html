@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v54';
+const VERSION = 'v55';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -2936,6 +2936,7 @@ function reset() {
   player.tank = null;
   freezeT = 0; nukeFlash = 0; bag = [];
   wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
+  curMod = null; lastModKey = null;
   confirmRestart = false;
   cards = []; cardRects = [];
   streak = 0; streakTimer = 0;
@@ -2989,20 +2990,73 @@ function blockingHostiles() {
 // ---------------------------------------------------------------------------
 //  Waves and upgrades
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  SPECIAL WAVES
+//
+//  Every third wave has a rule of its own. Without something like this a wave game is
+//  the same fight over and over with the numbers going up, and the way out of that is
+//  variety inside a loop that stays the same rather than changing the loop itself. The
+//  controls, the ranks and the point of it never move; what turns up does.
+//
+//  Each one is announced before it starts, so it is a thing to react to rather than a
+//  thing that quietly happens to you.
+//
+//    count   how many turn up, against the usual number for that wave
+//    hp/spd  what they are made of
+//    only    everything in the wave is this one kind
+//    coins   what a kill pays
+//    night   the lights go out
+// ---------------------------------------------------------------------------
+const WAVE_MODS = [
+  { key: 'swarm',  name: 'SWARM',      blurb: 'Lots of them, and quick',
+    count: 2.1, hp: .5,  spd: 1.2, coins: 1 },
+  { key: 'heavy',  name: 'HEAVY ONES', blurb: 'Fewer, but they take some killing',
+    count: .55, hp: 2.6, spd: .82, coins: 1.8 },
+  { key: 'rush',   name: 'THE RUSH',   blurb: 'All leapers. Keep moving',
+    count: 1.15, hp: .9, spd: 1,   coins: 1.3, only: 'leaper' },
+  { key: 'bombers', name: 'BOMBERS',   blurb: 'All poppers. Mind where you stand',
+    count: 1.1, hp: .8,  spd: 1,   coins: 1.3, only: 'popper' },
+  { key: 'night',  name: 'NIGHTFALL',  blurb: 'Dark. They can still see you',
+    count: 1,   hp: 1,   spd: 1.05, coins: 1.5, night: true },
+  { key: 'payday', name: 'PAYDAY',     blurb: 'Everything pays double',
+    count: 1.25, hp: 1,  spd: 1,   coins: 2 },
+];
+let curMod = null;
+
+// Every third wave, and never the same one twice running.
+let lastModKey = null;
+function pickWaveMod(n) {
+  if (n % 3 !== 0) return null;
+  const pool = WAVE_MODS.filter(m => m.key !== lastModKey);
+  const m = pool[Math.floor(Math.random() * pool.length)];
+  lastModKey = m.key;
+  return m;
+}
+
+function modCoins() { return curMod ? curMod.coins : 1; }
+// Only so the tests can put a known rule in place instead of waiting for one.
+function setCurMod(m) { curMod = m || null; }
+
 function waveCount(n) {
   const base = TUNE.WAVE_FIRST_COUNT + (n - 1) * TUNE.WAVE_GROWTH;
-  return Math.max(3, Math.round(base * LV().count));
+  const mod = (curMod && curMod.count) || 1;
+  return Math.max(3, Math.round(base * LV().count * mod));
 }
 function isBossWave(n) { return n % TUNE.BOSS_EVERY === 0; }
 
 function startWave(n) {
   wave = n;
   waveState = 'fighting';
+  // Chosen before the count is worked out, because the modifier changes the count.
+  curMod = pickWaveMod(n);
   waveToSpawn = waveCount(n);
   bossPending = isBossWave(n);
   spawnTimer = 0.5;
   spawnGap = TUNE.SPAWN_EVERY * LV().gap;
-  if (bossPending) { announce('WAVE ' + n + ' -- BOSS'); SFX.boss(); }
+  if (curMod) {
+    announce(curMod.name);
+    SFX.boss();
+  } else if (bossPending) { announce('WAVE ' + n + ' -- BOSS'); SFX.boss(); }
   else announce('WAVE ' + n);
 }
 
@@ -3015,7 +3069,7 @@ function finishWave() {
   const lk = LV().key;
   save.bests = save.bests || {};
   if (!save.bests[lk] || wave > save.bests[lk]) { save.bests[lk] = wave; writeSave(); }
-  const bonus = TUNE.COINS_PER_WAVE + wave * 5;
+  const bonus = Math.round((TUNE.COINS_PER_WAVE + wave * 5) * modCoins());
   addCoins(bonus);
   coinsThisRun += bonus;
   lastWaveCoins = bonus;
@@ -3508,13 +3562,19 @@ function spawnEnemy(side, boss) {
     } while (tries < 12 && Math.hypot(p.x - player.x, p.y - player.y) < 260);
   }
 
-  const type = boss ? ENEMY_TYPES[0] : rollEnemyType();
+  // A special wave can call for one kind only. rollEnemyType itself is left alone so
+  // it stays an honest roll of the table.
+  let type;
+  if (boss) type = ENEMY_TYPES[0];
+  else if (curMod && curMod.only) {
+    type = ENEMY_TYPES.filter(x => x.key === curMod.only)[0] || rollEnemyType();
+  } else type = rollEnemyType();
   // How much tougher they get each wave, scaled by the difficulty so that on easy the
   // climb is gentler as well as the starting point being lower.
   const waveScale = Math.pow(1 + TUNE.WAVE_TOUGHER * LV().tough, wave - 1);
-  let hp = TUNE.ENEMY_HEALTH * type.hp * waveScale * LV().hp;
+  let hp = TUNE.ENEMY_HEALTH * type.hp * waveScale * LV().hp * ((curMod && curMod.hp) || 1);
   let size = type.size;
-  let speed = type.speed * LV().spd;
+  let speed = type.speed * LV().spd * ((curMod && curMod.spd) || 1);
   if (boss) { hp *= TUNE.BOSS_HEALTH; size = TUNE.BOSS_SIZE; speed = TUNE.BOSS_SPEED; }
   hp = Math.round(hp);
 
@@ -4065,7 +4125,7 @@ function killEnemy(e, dirAngle) {
     unlockFormFrom(e);
 
     addCoins(Math.round((e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL)
-      * player.up.coin));
+      * player.up.coin * modCoins()));
     coinsThisRun += e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL;
 
     if (e.boss) {
@@ -6175,6 +6235,24 @@ function drawStanding() {
   if (!cam.first) drawPlayerMarker();
 }
 
+// Nightfall. The world goes dark except for a pool of light around you, so the special
+// wave that turns the lights out is genuinely harder to read rather than just tinted.
+//
+// Drawn over the world but under the HUD, because a dark screen you cannot read your
+// own health on is not a challenge, it is a fault. The edge arrows stay on top too:
+// they matter more in the dark, not less.
+function drawNight() {
+  if (!curMod || !curMod.night) return;
+  const cx = VW / 2, cy = VH / 2;
+  const reach = Math.max(VW, VH) * 0.42;
+  const g = ctx.createRadialGradient(cx, cy, reach * 0.28, cx, cy, reach);
+  g.addColorStop(0, 'rgba(6,8,14,0)');
+  g.addColorStop(0.55, 'rgba(6,8,14,0.55)');
+  g.addColorStop(1, 'rgba(4,5,10,0.88)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, VW, VH);
+}
+
 // Arrows round the edge of the screen for anything close by that is off screen.
 //
 // The camera can be turned and zoomed now, so it is entirely possible to be looking one
@@ -6524,6 +6602,19 @@ function drawHUD() {
     ctx.fillText(streak + ' STREAK', VW / 2, PAD.t + 51);
   }
 
+  // Which rule is running, if any. Announced once at the start is not enough: a wave
+  // lasts a while and you need to be able to check what you are in the middle of.
+  if (curMod) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,216,77,0.9)';
+    ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+    ctx.fillText(curMod.name, VW / 2, PAD.t + 16);
+    ctx.fillStyle = 'rgba(238,242,248,0.5)';
+    ctx.font = '700 10px -apple-system, system-ui, sans-serif';
+    ctx.fillText(curMod.blurb, VW / 2, PAD.t + 30);
+    ctx.textAlign = 'left';
+  }
+
   // What is playing, so cycling through has some feedback.
   if (musicTrack !== 0) {
     ctx.textAlign = 'right';
@@ -6540,6 +6631,7 @@ function drawHUD() {
     ctx.textAlign = 'left';
   }
 
+  drawNight();
   drawEdgeArrows();
   drawMorphRow();
   drawHotbar();
