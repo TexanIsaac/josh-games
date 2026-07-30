@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v51';
+const VERSION = 'v52';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -965,6 +965,10 @@ const TUNE = {
   BOSS_MODE_ARMOR: 0.4,
   GRENADE_DMG: 130, GRENADE_RADIUS: 115,
   RPG_DMG: 260, RPG_RADIUS: 150, RPG_SPEED: 330,
+
+  // How often a shot comes out as a flower or a rainbow instead of a bullet. Just
+  // often enough to be a surprise, not often enough to stop being one.
+  SILLY_SHOT: 0.04,
   BOMB_DMG: 210,    BOMB_RADIUS: 180,
   NUKE_DMG: 2200,   NUKE_RADIUS: 3000,
 
@@ -1406,7 +1410,7 @@ function applyTheme(name) {
 const NOOB_RANKS = [
   { name: 'Noob',        weapon: 'fists',       at: 0,                     reach: 44,  dmg: 22, rate: .34, armor: 0,   ranged: false },
   { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER, reach: 60,  dmg: 46, rate: .27, armor: 0,   ranged: false },
-  { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER, reach: 520, dmg: 58, rate: .30, armor: 0,   ranged: true  },
+  { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER, reach: 860, dmg: 58, rate: .30, armor: 0,   ranged: true  },
   { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER, reach: 74,  dmg: 64, rate: .25, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
@@ -1414,7 +1418,7 @@ const NOOB_RANKS = [
 const ZOMBIE_RANKS = [
   { name: 'Zombie',         weapon: 'bite',  at: 0,                     reach: 42,  dmg: 20, rate: .46, armor: 0,   ranged: false },
   { name: 'Zombie Ripper',  weapon: 'claws', at: TUNE.KILLS_FOR_KNIFER, reach: 56,  dmg: 40, rate: .30, armor: 0,   ranged: false },
-  { name: 'Zombie Spitter', weapon: 'acid',  at: TUNE.KILLS_FOR_GUNNER, reach: 470, dmg: 44, rate: .52, armor: 0,   ranged: true  },
+  { name: 'Zombie Spitter', weapon: 'acid',  at: TUNE.KILLS_FOR_GUNNER, reach: 760, dmg: 44, rate: .52, armor: 0,   ranged: true  },
   { name: 'Zombie Brute',   weapon: 'smash', at: TUNE.KILLS_FOR_RIOTER, reach: 76,  dmg: 68, rate: .38, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
@@ -3433,7 +3437,12 @@ function dropHeart(x, y) {
 // fallback for when the ring cannot be placed, which is mostly when you are backed into
 // a corner with rock behind you.
 function ringSpawn() {
-  const MIN = 460, MAX = 780;
+  // The ring has to sit outside the longest weapon in the game, or they arrive already
+  // inside your firing range and get shot the moment they appear. That is not a fight,
+  // it is a queue, and with auto attack on you never see a crowd form at all. Worked out
+  // from the reach itself rather than typed in, so tuning a gun cannot break this again.
+  const longest = Math.max(NOOB_RANKS[2].reach, ZOMBIE_RANKS[2].reach);
+  const MIN = longest + 140, MAX = longest + 460;
   const pgx = Math.floor(player.x / TILE), pgy = Math.floor(player.y / TILE);
   buildFlow(pgx, pgy);
 
@@ -4152,10 +4161,19 @@ function tryAttack(who, isPlayer) {
     who.cool = rate;
     who.swing = .12;
     const isAcid = rk.weapon === 'acid';
+    // Every so often something ridiculous comes out of the barrel instead of a
+    // bullet. It does exactly the same damage; it just looks daft. Rare enough to stay
+    // funny: about one shot in twenty five, and only for you, because thirty enemies
+    // all firing flowers would stop being a surprise very quickly.
+    let fun = null;
+    if (isPlayer && !isAcid && Math.random() < TUNE.SILLY_SHOT) {
+      fun = Math.random() < 0.5 ? 'flower' : 'rainbow';
+    }
     shots.push({
-      x: who.x + ax / dist * 16, y: who.y + ay / dist * 16,
-      vx: ax / dist * (isAcid ? 430 : 760), vy: ay / dist * (isAcid ? 430 : 760),
-      dmg: dmg, side: who.side, life: 1.4, acid: isAcid, bites: isAcid,
+      x: who.x + ax / dist * 16, y: who.y + ay / dist * 16, z: 20,
+      vx: ax / dist * (isAcid ? 430 : 980), vy: ay / dist * (isAcid ? 430 : 980),
+      dmg: dmg, side: who.side, life: isAcid ? 1.8 : 2.6, acid: isAcid, bites: isAcid,
+      fun: fun, spin: 0, ang: Math.atan2(ay, ax),
     });
     // The camera kicks backward from the shot, the way recoil would push you.
     if (isPlayer) addShake(isAcid ? 1.4 : 2.8, -ax / dist, -ay / dist);
@@ -4804,6 +4822,9 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = 46 * u;
   const legH = LEG_TOP, torsoH = TORSO_TOP - LEG_TOP, headH = HEAD_TOP - TORSO_TOP;
 
+  // Is this a gun? A gun is held out in front and pointed, rather than swung.
+  const rangedNow = !!rk.ranged;
+
   // The walk: legs and arms swing forward and back along his own forward axis, which
   // is why the frame above matters. Boxes only turn about the upright, so a swing is a
   // shift rather than a hinge, which is exactly what Roblox does too.
@@ -4832,12 +4853,20 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   // ---- arms ----
   const armW = 5 * u, armD = 5 * u, armH = torsoH * 0.94;
   const armZ = z0 + LEG_TOP + torsoH - armH;
-  B(-9.6 * u, stride2 + act * 5 * u, armZ, armW, armD, armH, shade(torsoCol, 8));
-  B(9.6 * u, stride + act * 6 * u, armZ, armW, armD, armH, torsoCol);
+  // Holding a gun means both arms come up and forward and stay there, rather than
+  // swinging with the walk. Josh asked to see the weapon actually out in front, and an
+  // arm hanging by your side with a rifle stuck to it never looked like aiming.
+  const aim = rangedNow ? Math.max(0.55, act) : 0;
+  const armFwd = aim * 9 * u;
+  const armLift = aim * 5 * u;
+  const swingL = rangedNow ? armFwd : stride2 + act * 5 * u;
+  const swingR = rangedNow ? armFwd : stride + act * 6 * u;
+  B(-9.6 * u, swingL, armZ + armLift, armW, armD, armH, shade(torsoCol, 8));
+  B(9.6 * u, swingR, armZ + armLift, armW, armD, armH, torsoCol);
   // Hands on the ends of the arms, so an arm is not one unbroken stick.
   if (detail) {
-    B(-9.6 * u, stride2 + act * 5 * u, armZ, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
-    B(9.6 * u, stride + act * 6 * u, armZ, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
+    B(-9.6 * u, swingL, armZ + armLift, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
+    B(9.6 * u, swingR, armZ + armLift, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
   }
 
   // ---- head ----
@@ -4907,8 +4936,9 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
       : null;
   }
   if (wKind) {
-    const hy = stride + act * 6 * u;               // the right hand, wherever it is
-    drawBlockWeapon(B, wKind, 8.4 * u, hy, armZ, u, act);
+    // Held wherever the right hand actually is, so it stays in his grip whether he is
+    // walking with it or has it up and pointed.
+    drawBlockWeapon(B, wKind, 9.6 * u, swingR, armZ + armLift, u, act);
   }
 
   ctx.globalAlpha = 1;
@@ -6741,17 +6771,68 @@ function draw() {
 
   drawStanding();
 
+  // Shots you can actually see. A bullet used to be a six pixel smear, which at this
+  // camera distance was near invisible, so a gunfight read as people falling over for
+  // no apparent reason. Every one now has a bright head and a tracer stretched out
+  // behind it along the way it is travelling.
   for (const s of shots) {
-    ctx.fillStyle = s.rocket ? '#5b6270' : s.acid ? '#8ecf4a' : '#ffe08a';
     const sz2 = (s.z || 0) + 16;
     const px = isoX(s.x, s.y, sz2), py = isoY(s.x, s.y, sz2);
-    if (s.acid) { ctx.beginPath(); ctx.arc(px, py, 4, 0, 6.283); ctx.fill(); }
-    else if (s.rocket) {
+    // Where it was a moment ago, so the tracer lies along its real path on screen.
+    const bx = isoX(s.x - s.vx * .035, s.y - s.vy * .035, sz2);
+    const by = isoY(s.x - s.vx * .035, s.y - s.vy * .035, sz2);
+
+    if (s.fun === 'rainbow') {
+      // A ribbon of colour trailing behind it. Does exactly what a bullet does.
+      const bands = ['#ff4d4d', '#ff9f43', '#ffd84d', '#7ed957', '#4da3ff', '#a86cf0'];
+      ctx.lineWidth = 3;
+      for (let i = 0; i < bands.length; i++) {
+        const f0 = i / bands.length, f1 = (i + 1) / bands.length;
+        ctx.strokeStyle = bands[i];
+        ctx.beginPath();
+        ctx.moveTo(px + (bx - px) * f0, py + (by - py) * f0 - i * 1.6);
+        ctx.lineTo(px + (bx - px) * f1, py + (by - py) * f1 - i * 1.6);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#fff6c9';
+      ctx.beginPath(); ctx.arc(px, py, 3.4, 0, 6.283); ctx.fill();
+      continue;
+    }
+
+    if (s.fun === 'flower') {
+      // Five petals and a middle, turning as it goes.
+      s.spin = (s.spin || 0) + 0.35;
+      ctx.fillStyle = '#ff8fc4';
+      for (let i = 0; i < 5; i++) {
+        const a = s.spin + (i / 5) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.ellipse(px + Math.cos(a) * 4, py + Math.sin(a) * 4, 3.4, 2.2, a, 0, 6.283);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffd84d';
+      ctx.beginPath(); ctx.arc(px, py, 2.6, 0, 6.283); ctx.fill();
+      continue;
+    }
+
+    if (s.acid) {
+      ctx.strokeStyle = 'rgba(142,207,74,0.5)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(px, py); ctx.stroke();
+      ctx.fillStyle = '#8ecf4a';
+      ctx.beginPath(); ctx.arc(px, py, 4.4, 0, 6.283); ctx.fill();
+    } else if (s.rocket) {
+      ctx.fillStyle = '#5b6270';
       ctx.fillRect(px - 5, py - 2.4, 10, 4.8);
       ctx.fillStyle = '#ffb44a';
       ctx.fillRect(px - 8, py - 1.4, 3.5, 2.8);
+    } else {
+      // Tracer, then a hot head on the front of it.
+      ctx.strokeStyle = 'rgba(255,214,120,0.55)';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(px, py); ctx.stroke();
+      ctx.fillStyle = '#fff3c4';
+      ctx.beginPath(); ctx.arc(px, py, 2.8, 0, 6.283); ctx.fill();
     }
-    else ctx.fillRect(px - 2.5, py - 1.2, 6, 2.4);
   }
 
   drawBombs();

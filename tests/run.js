@@ -143,7 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
-   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, ringSpawn, get spawnPoints(){return spawnPoints}, NOOB_RANKS, ZOMBIE_RANKS, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
    shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
@@ -1061,6 +1061,89 @@ ok('and everything held down is let go, since no pointerup arrives', (() => {
   return k !== -1 && blk.indexOf('touches.clear()') !== -1
     && blk.indexOf('stick.active = false') !== -1
     && blk.indexOf('paused = true') !== -1;
+})());
+
+group('Guns you can see working');
+G.reset();
+ok('a gun reaches a long way now', G.NOOB_RANKS[2].reach > 800,
+  G.NOOB_RANKS[2].reach + ' units, was 520');
+ok('the spitter got the same treatment', G.ZOMBIE_RANKS[2].reach > 700);
+ok('a bullet lives long enough to actually get there', (() => {
+  // Reach is no use if the shot dies halfway. Speed times life has to cover it.
+  const r = G.NOOB_RANKS[2].reach;
+  return 980 * 2.6 > r;
+})(), 'speed times life covers the reach');
+ok('a bullet is drawn with a tracer behind it, not as a smear',
+  src.indexOf('a bright head and a tracer stretched out') !== -1);
+ok('the tracer lies along the way it is really travelling',
+  src.indexOf('s.x - s.vx * .035') !== -1,
+  'worked out from where it was a moment ago');
+
+ok('a gun is held out in front rather than swinging with the walk',
+  src.indexOf('Holding a gun means both arms come up and forward') !== -1);
+ok('aiming does not depend on being mid-shot', (() => {
+  // Math.max(0.55, act) means the weapon is up whenever a gun is carried, not only in
+  // the instant it fires, which would have been a single frame of pose.
+  return src.indexOf('const aim = rangedNow ? Math.max(0.55, act) : 0;') !== -1;
+})());
+ok('the weapon is drawn wherever the hand actually is', (() => {
+  const i = src.indexOf('drawBlockWeapon(B, wKind');
+  return i !== -1 && src.slice(i, i + 90).indexOf('swingR') !== -1;
+})(), 'so it stays in his grip whether walking or aiming');
+
+ok('enemies never arrive already inside your firing range', (() => {
+  // Raising the gun to 860 while spawning them at 460 to 780 meant they appeared
+  // inside weapon reach and were shot on arrival. With auto attack on, a crowd never
+  // formed at all: the clumping test went from 105 samples down to one. The ring is
+  // worked out from the reach now rather than typed in.
+  G.loadMap(); G.reset();
+  const longest = Math.max(G.NOOB_RANKS[2].reach, G.ZOMBIE_RANKS[2].reach);
+  let nearest = Infinity;
+  for (let i = 0; i < 200; i++) {
+    const r = G.ringSpawn();
+    if (r) nearest = Math.min(nearest, Math.hypot(r.x - G.player.x, r.y - G.player.y));
+  }
+  console.log('    nearest arrival ' + Math.round(nearest) + ', longest gun ' + longest);
+  return nearest > longest;
+})(), 'so there is a fight rather than a queue');
+ok('and the ring is derived from the reach, not typed in',
+  src.indexOf('const longest = Math.max(NOOB_RANKS[2].reach, ZOMBIE_RANKS[2].reach);') !== -1,
+  'so tuning a gun cannot break it again');
+
+group('Flowers and rainbows');
+ok('now and then a shot is something daft', G.TUNE.SILLY_SHOT > 0);
+ok('but it stays rare enough to be a surprise',
+  G.TUNE.SILLY_SHOT <= 0.08,
+  'about one shot in ' + Math.round(1 / G.TUNE.SILLY_SHOT));
+ok('only your own gun does it, not thirty enemies at once', (() => {
+  const i = src.indexOf('let fun = null;');
+  return src.slice(i, i + 200).indexOf('isPlayer') !== -1;
+})());
+ok('a silly shot does exactly the same damage as a normal one', (() => {
+  // It is a costume, not a weapon. If it were weaker or stronger it would stop being
+  // a joke and start being a thing to farm or avoid.
+  const i = src.indexOf('let fun = null;');
+  const blk = src.slice(i, i + 700);
+  // dmg is passed straight through, untouched by the fun branch.
+  return blk.indexOf('dmg: dmg,') !== -1 && blk.indexOf('fun ? ') === -1;
+})());
+ok('both kinds are drawn', src.indexOf("s.fun === 'rainbow'") !== -1
+  && src.indexOf("s.fun === 'flower'") !== -1);
+ok('a flower turns as it flies, so it is obviously a flower',
+  src.indexOf('s.spin = (s.spin || 0) + 0.35;') !== -1);
+ok('shots of every kind draw without throwing', (() => {
+  G.reset();
+  G.shots.length = 0;
+  const base = { x: G.player.x, y: G.player.y, z: 20, vx: 300, vy: 120,
+                 dmg: 10, side: G.player.side, life: 1, spin: 0 };
+  G.shots.push(Object.assign({}, base));
+  G.shots.push(Object.assign({}, base, { acid: true }));
+  G.shots.push(Object.assign({}, base, { rocket: true }));
+  G.shots.push(Object.assign({}, base, { fun: 'flower' }));
+  G.shots.push(Object.assign({}, base, { fun: 'rainbow' }));
+  try { G.draw(); } catch (err) { console.log('    ' + err.message); return false; }
+  G.shots.length = 0;
+  return true;
 })());
 
 group('Medals');
