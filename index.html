@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v47';
+const VERSION = 'v48';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -3594,31 +3594,61 @@ function onDown(e) {
 // Every finger currently on the glass, so a pinch can be told from a drag.
 const touches = new Map();
 
-// Two fingers: the distance between them sets the zoom. This takes over from looking
-// while it is happening, otherwise a pinch also spins the camera about.
+// Two fingers: the distance between them sets the zoom.
+//
+// A hard lesson here. The first version of this bailed out of the whole move handler
+// whenever two fingers were down, so walking with the left thumb while turning the
+// camera with the right stopped the walking dead. Worse, if a pointerup was ever
+// missed, which Safari does whenever it decides to take a gesture over, a stale finger
+// stayed in the list and movement was frozen until the game was restarted. That is
+// exactly what happened to Josh.
+//
+// So two rules now. Moving never depends on this at all: the stick and the camera are
+// updated before any of it. And the thumb driving the stick is not counted as part of a
+// pinch, because it never is one; a pinch is two fingers that are not steering.
 let pinchFrom = 0, pinchZoom = 1;
+
+function pinchPair() {
+  const out = [];
+  for (const [id, pt] of touches) {
+    if (stick.active && id === stick.id) continue;   // that thumb is walking, not pinching
+    out.push(pt);
+    if (out.length === 2) break;
+  }
+  return out.length === 2 ? out : null;
+}
+
 function pinchSpan() {
-  if (touches.size < 2) return 0;
-  const it = touches.values();
-  const a = it.next().value, b = it.next().value;
-  return Math.hypot(a.x - b.x, a.y - b.y);
+  const pr = pinchPair();
+  return pr ? Math.hypot(pr[0].x - pr[1].x, pr[0].y - pr[1].y) : 0;
 }
 
 function onMove(e) {
-  if (touches.has(e.pointerId)) {
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (touches.size >= 2 && !cam.first) {
-      if (!pinchFrom) { pinchFrom = pinchSpan(); pinchZoom = camZoom; }
-      const now = pinchSpan();
-      if (pinchFrom > 20 && now > 20) {
-        // Fingers apart means closer in, which is how every other app behaves.
-        setZoom(pinchZoom * (pinchFrom / now));
-        applyViewpoint();
-        camRefresh();
-      }
-      return;
-    }
+  if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  // A finger that is steering can never be lost to a pinch, and this runs first so
+  // nothing below it can prevent walking.
+  if (stick.active && e.pointerId === stick.id) {
+    let sdx = e.clientX - stick.ox, sdy = e.clientY - stick.oy;
+    const slen = Math.hypot(sdx, sdy);
+    if (slen > STICK_MAX) { sdx = sdx / slen * STICK_MAX; sdy = sdy / slen * STICK_MAX; }
+    stick.dx = sdx; stick.dy = sdy;
   }
+
+  // Pinching, only when there are two fingers down that are not the one steering.
+  if (!cam.first && pinchPair()) {
+    if (!pinchFrom) { pinchFrom = pinchSpan(); pinchZoom = camZoom; }
+    const now = pinchSpan();
+    if (pinchFrom > 20 && now > 20) {
+      // Fingers apart means closer in, which is how every other app behaves.
+      setZoom(pinchZoom * (pinchFrom / now));
+      applyViewpoint();
+      camRefresh();
+    }
+    return;
+  }
+  pinchFrom = 0;
+
   if (look.active && e.pointerId === look.id) {
     // Aim the camera somewhere new; it eases over rather than jumping.
     camWant.yaw += (e.clientX - look.lx) * TUNE.CAM_DRAG_YAW;
@@ -3627,17 +3657,20 @@ function onMove(e) {
     if (camWant.pitch > PITCH_MAX) camWant.pitch = PITCH_MAX;
     look.lx = e.clientX; look.ly = e.clientY;
   }
-  if (stick.active && e.pointerId === stick.id) {
-    let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
-    const len = Math.hypot(dx, dy);
-    if (len > STICK_MAX) { dx = dx / len * STICK_MAX; dy = dy / len * STICK_MAX; }
-    stick.dx = dx; stick.dy = dy;
-  }
+  // The stick was already updated at the top of this function, before anything could
+  // return early. Deliberately not repeated here.
 }
 
 function onUp(e) {
   touches.delete(e.pointerId);
   if (touches.size < 2) pinchFrom = 0;
+  // If nothing is touching the screen at all then nothing can be held down, whatever
+  // the individual flags think. This is the safety net for a lost pointer event.
+  if (touches.size === 0) {
+    stick.active = false; stick.dx = 0; stick.dy = 0; stick.id = null;
+    look.active = false; look.id = null;
+    pinchFrom = 0;
+  }
   if (stick.active && e.pointerId === stick.id) { stick.active = false; stick.dx = 0; stick.dy = 0; }
   if (fire.active && e.pointerId === fire.id) { fire.active = false; }
   if (look.active && e.pointerId === look.id) { look.active = false; look.id = null; }

@@ -148,6 +148,8 @@ eval(code + `
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
    THEMES, get theme(){return theme}, EDGE_WATCH, hurtEnemy, flipSide, draw, writeSave, bricks,
+   onDown, onMove, onUp, get stick(){return stick},
+   get touches(){return touches}, get VW(){return VW}, get VH(){return VH},
    wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint, WALL_H, TILE,
    setFirstPerson, get camWant(){return camWant}, get cam(){return cam},
    startSideFor, NOOB, ZOMB, update,
@@ -2902,8 +2904,58 @@ ok('the zoom is remembered between games', (() => {
   G.setZoom(1);
   return Math.abs(stored - 0.8) < 0.001;
 })());
-ok('a pinch does not also spin the camera about',
-  src.indexOf('otherwise a pinch also spins the camera about') !== -1);
+ok('a pinch does not also spin the camera about', (() => {
+  // Its branch returns before the look-drag code below it.
+  const i = src.indexOf("if (!cam.first && pinchPair()) {");
+  const branch = src.slice(i, src.indexOf('pinchFrom = 0;', i + 40));
+  return i !== -1 && branch.indexOf('return;') !== -1;
+})());
+
+ok('walking still works while a second finger is down', (() => {
+  // This is the freeze Josh hit. Bailing out of the move handler whenever two fingers
+  // were down stopped the stick updating, so walking with one thumb and turning the
+  // camera with the other killed the walking.
+  G.reset();
+  G.setFirstPerson(false);
+  G.onDown({ pointerId: 1, clientX: G.VW * 0.2, clientY: G.VH * 0.6 });
+  G.onDown({ pointerId: 2, clientX: G.VW * 0.8, clientY: G.VH * 0.4 });
+  G.onMove({ pointerId: 1, clientX: G.VW * 0.2 + 40, clientY: G.VH * 0.6 });
+  const moved = Math.abs(G.stick.dx) > 5;
+  G.onUp({ pointerId: 1 }); G.onUp({ pointerId: 2 });
+  return moved;
+})(), 'the stick is updated before anything can return early');
+
+ok('the steering thumb is never counted as part of a pinch',
+  src.indexOf('that thumb is walking, not pinching') !== -1);
+
+ok('a lost finger cannot leave the player stuck for good', (() => {
+  // Safari drops a pointerup whenever it takes a gesture over. If that left a stale
+  // finger in the list the old code froze movement until the game was restarted.
+  G.reset();
+  G.onDown({ pointerId: 7, clientX: G.VW * 0.2, clientY: G.VH * 0.6 });
+  G.onMove({ pointerId: 7, clientX: G.VW * 0.2 + 40, clientY: G.VH * 0.6 });
+  // Every finger comes off, including ones we never saw go down.
+  G.onUp({ pointerId: 7 });
+  const released = !G.stick.active && G.stick.dx === 0;
+  // And it can be used again straight afterwards.
+  G.onDown({ pointerId: 8, clientX: G.VW * 0.2, clientY: G.VH * 0.6 });
+  G.onMove({ pointerId: 8, clientX: G.VW * 0.2 + 40, clientY: G.VH * 0.6 });
+  const worksAgain = Math.abs(G.stick.dx) > 5;
+  G.onUp({ pointerId: 8 });
+  return released && worksAgain;
+})());
+
+ok('holding the attack button does not stop him walking', (() => {
+  G.reset();
+  G.onDown({ pointerId: 1, clientX: G.VW * 0.2, clientY: G.VH * 0.6 });
+  // The attack button sits bottom right.
+  G.onDown({ pointerId: 2, clientX: G.btn.fire ? G.btn.fire.x + 5 : G.VW - 60,
+             clientY: G.btn.fire ? G.btn.fire.y + 5 : G.VH - 60 });
+  G.onMove({ pointerId: 1, clientX: G.VW * 0.2 + 40, clientY: G.VH * 0.6 });
+  const ok2 = Math.abs(G.stick.dx) > 5;
+  G.onUp({ pointerId: 1 }); G.onUp({ pointerId: 2 });
+  return ok2;
+})());
 
 group('Choosing a side when starting over');
 ok('starting over offers both sides', (() => {
