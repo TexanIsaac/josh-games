@@ -225,7 +225,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v27';
+const VERSION = 'v28';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -385,6 +385,21 @@ const TRACKS = [
       ['F4', 2], ['G4', 1], ['A4', 1], ['B4', 1], ['C5', 2], ['D5', 2],
       ['-', 2],
     ],
+    // A third above the melody for most of it, which is what makes a tune sound
+    // like a band playing rather than one instrument.
+    harm: [
+      ['-', 1], ['E4', 2], ['E5', 1], ['B4', 1], ['C5', 1], ['D5', 2],
+      ['G4', 1], ['G4', 1], ['C5', 2], ['B4', 1], ['A4', 1], ['B4', 2],
+      ['E4', 1], ['E4', 1], ['F4', 1], ['F4', 1], ['G4', 1], ['A4', 1],
+      ['A4', 2], ['B4', 1], ['C5', 1], ['D5', 1], ['E5', 2], ['F5', 2],
+      ['-', 2],
+    ],
+    bass: [
+      ['C2', 3], ['G2', 3], ['C2', 2], ['F2', 2],
+      ['C2', 2], ['G2', 2], ['C2', 4],
+      ['F2', 2], ['G2', 2], ['C2', 4], ['G2', 2],
+    ],
+    drum: true,
   },
 
   {
@@ -397,6 +412,10 @@ const TRACKS = [
       ['E4', 1], ['E4', 1], ['F4', 1], ['G4', 1], ['G4', 1], ['F4', 1],
       ['E4', 1], ['D4', 1], ['C4', 1], ['C4', 1], ['D4', 1], ['E4', 1],
       ['D4', 1.5], ['C4', .5], ['C4', 2], ['-', 1],
+    ],
+    bass: [
+      ['C2', 4], ['G2', 4], ['C2', 4], ['G2', 2], ['C2', 2],
+      ['C2', 4], ['G2', 4], ['F2', 2], ['G2', 2], ['C2', 4],
     ],
   },
 
@@ -434,10 +453,21 @@ const TRACKS = [
       ['D3', 1], ['D3', 1], ['F3', 1], ['D3', 1],
       ['E3', 2], ['-', 1],
     ],
+    bass: [
+      ['E1', 2], ['E1', 2], ['A1', 2], ['A1', 2],
+      ['D1', 2], ['D1', 2], ['E1', 4],
+    ],
+    drum: true,
   },
 ];
 
 let musicTrack = 0, musicStep = 0, musicWait = 0;
+// Extra voices. One line of single notes sounds like a doorbell. A melody with a
+// harmony above it, a bass underneath and a drum on the beat sounds like something
+// being played. Each voice keeps its own clock so they do not have to line up.
+let harmStep = 0, harmWait = 0;
+let bassStep = 0, bassWait = 0;
+let drumWait = 0;
 
 function musicName() { return TRACKS[musicTrack] ? TRACKS[musicTrack].name : 'Off'; }
 
@@ -445,6 +475,7 @@ function cycleMusic() {
   musicTrack = (musicTrack + 1) % TRACKS.length;
   musicStep = 0;
   musicWait = 0;
+  harmStep = 0; harmWait = 0; bassStep = 0; bassWait = 0; drumWait = 0;
   try { localStorage.setItem('zn_music', String(musicTrack)); } catch (err) { /* fine */ }
   if (!muted) { audioStart(); SFX.ui(); }
 }
@@ -454,16 +485,50 @@ function cycleMusic() {
 function updateMusic(dt) {
   const t = TRACKS[musicTrack];
   if (!t || !t.notes || muted || !zzfxX) return;
+  // The melody, with a quiet note an octave up to thicken it.
   musicWait -= dt;
-  if (musicWait > 0) return;
-  const step = t.notes[musicStep % t.notes.length];
-  musicStep = (musicStep + 1) % t.notes.length;
-  const beats = step[1];
-  musicWait = beats / t.tempo;
-  const hz = noteHz(step[0]);
-  if (hz > 0) {
-    // A soft triangle with a slow attack, so it sits behind the game.
-    zzfx(.32, .02, hz, .04, musicWait * .5, musicWait * .5, 1, 1.4);
+  if (musicWait <= 0) {
+    const step = t.notes[musicStep % t.notes.length];
+    musicStep = (musicStep + 1) % t.notes.length;
+    musicWait = step[1] / t.tempo;
+    const hz = noteHz(step[0]);
+    if (hz > 0) {
+      zzfx(.30, .02, hz, .05, musicWait * .55, musicWait * .5, 1, 1.4);
+      zzfx(.08, .02, hz * 2, .06, musicWait * .4, musicWait * .4, 1, 1.2);
+    }
+  }
+
+  // A harmony line sitting above the melody.
+  if (t.harm) {
+    harmWait -= dt;
+    if (harmWait <= 0) {
+      const hstep = t.harm[harmStep % t.harm.length];
+      harmStep = (harmStep + 1) % t.harm.length;
+      harmWait = hstep[1] / t.tempo;
+      const hz2 = noteHz(hstep[0]);
+      if (hz2 > 0) zzfx(.15, .03, hz2, .07, harmWait * .5, harmWait * .5, 0, 1.6);
+    }
+  }
+
+  // The bass underneath, on a sawtooth so it has some weight.
+  if (t.bass) {
+    bassWait -= dt;
+    if (bassWait <= 0) {
+      const b = t.bass[bassStep % t.bass.length];
+      bassStep = (bassStep + 1) % t.bass.length;
+      bassWait = b[1] / t.tempo;
+      const bhz = noteHz(b[0]);
+      if (bhz > 0) zzfx(.24, .02, bhz, .04, bassWait * .6, bassWait * .5, 2, 1.1);
+    }
+  }
+
+  // And a drum on the beat, which is what stops it drifting.
+  if (t.drum) {
+    drumWait -= dt;
+    if (drumWait <= 0) {
+      drumWait = 1 / t.tempo;
+      zzfx(.5, .05, 116, .01, 0, .16, 4, 1.1, 0, 0, 0, 0, 0, 1.4);
+    }
   }
 }
 
@@ -642,19 +707,19 @@ const MAP = `
 //  All of it lives in one saved blob so there is a single thing to load, save and
 //  reason about.
 // ---------------------------------------------------------------------------
-const SKINS  = ['#f5cd30', '#e8c9a0', '#c98a4b', '#8d5a2b', '#9ed36a', '#7ad7ff', '#ff9f43', '#e8e9ec'];
-const SHIRTS = ['#0d69ac', '#c4281c', '#f5cd30', '#6b7d42', '#a35ce0', '#12a8e8', '#2f3340', '#f2f3f5'];
-const PANTS  = ['#4e8f3a', '#2f3340', '#6b4a2c', '#57662f', '#4e535b', '#8d99ab', '#5a2b4a', '#c8c8cb'];
+const SKINS  = ['#f5cd30', '#e8c9a0', '#c98a4b', '#a86c33', '#9ed36a', '#7ad7ff', '#ff9f43', '#e8e9ec'];
+const SHIRTS = ['#2f9be8', '#e8402f', '#f5cd30', '#9cb45e', '#b878f0', '#7ad7ff', '#98a3c0', '#f2f3f5'];
+const PANTS  = ['#6aa84f', '#98a3c0', '#bb8d5c', '#8a9c50', '#98a2ad', '#c3cedd', '#d472a8', '#e8e9ec'];
 
 // Hats. The first one is no hat at all and costs nothing.
 const HATS = [
   { name: 'None',      cost: 0 },
   { name: 'Cap',       cost: 60,  color: '#c4281c', kind: 'cap' },
-  { name: 'Helmet',    cost: 120, color: '#5e6f38', kind: 'helmet' },
+  { name: 'Helmet',    cost: 120, color: '#8a9c50', kind: 'helmet' },
   { name: 'Top Hat',   cost: 200, color: '#20242c', kind: 'tall' },
   { name: 'Crown',     cost: 450, color: '#f5cd30', kind: 'crown' },
   { name: 'Headphones',cost: 260, color: '#2f3540', kind: 'phones' },
-  { name: 'Cowboy',    cost: 320, color: '#8d5a2b', kind: 'brim' },
+  { name: 'Cowboy',    cost: 320, color: '#c98f4a', kind: 'brim' },
 ];
 
 // Faces.
@@ -746,14 +811,14 @@ const THEMES = {
     aName: 'Noob', bName: 'Zombie',
     ranged: 'pistol',
     helmet: false,
-    a: { skin: '#f5cd30', torso: '#0d69ac', legs: '#4e8f3a' },
-    b: { skin: '#9ed36a', torso: '#5a2b4a', legs: '#2f3340' },
+    a: { skin: '#f5cd30', torso: '#2f9be8', legs: '#6aa84f' },
+    b: { skin: '#b6e87f', torso: '#f58ac8', legs: '#98a3c0' },
     rankA: ['Noob', 'Noob Knifer', 'Noob Gunner', 'Noob Rioter'],
     rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter', 'Zombie Brute'],
     // Bright Roblox bricks, but weathered by what has happened here.
     bricks: ['#f2f3f5', '#c8c8cb', '#f2f3f5', '#c8c8cb', '#e8e9ec', '#d8d9dc',
-             '#c4281c', '#0d69ac', '#f5cd30'],
-    crate: '#b07a3c',
+             '#c4281c', '#4fa8f0', '#f5cd30'],
+    crate: '#c98f4a',
     decals: 'waste',
     ground: 'waste',
   },
@@ -763,8 +828,8 @@ const THEMES = {
     ranged: 'rifle',
     helmet: true,
     // Olive drab against field grey, with a helmet on everybody.
-    a: { skin: '#e8c9a0', torso: '#6b7d42', legs: '#57662f', helmet: '#5e6f38' },
-    b: { skin: '#d9b58c', torso: '#4e535b', legs: '#3c4046', helmet: '#43474e' },
+    a: { skin: '#f0d4ac', torso: '#9cb45e', legs: '#7d9147', helmet: '#8a9c50' },
+    b: { skin: '#e8c9a0', torso: '#b3bdc8', legs: '#9aa4b2', helmet: '#8a94a0' },
     rankA: ['Recruit', 'Trench Fighter', 'Rifleman', 'Shield Sergeant'],
     rankB: ['Conscript', 'Grenadier', 'Marksman', 'Stormtrooper'],
     // Concrete, sandbag tan and olive rather than bright primaries. A held
@@ -772,9 +837,9 @@ const THEMES = {
     // Every one of these was picked by measuring it against the grass. The first
     // attempt had three that were all but invisible, the sandbag tan worst of all
     // at two points of difference.
-    bricks: ['#b9b6ad', '#c9c6bd', '#c6c3ba', '#8a8780', '#ddd0b0', '#6b7248',
-             '#8f8c84', '#7d8a5c'],
-    crate: '#6b7248',
+    bricks: ['#b9b6ad', '#c9c6bd', '#c6c3ba', '#8a8780', '#ddd0b0', '#a8b26a',
+             '#8f8c84', '#94a05e'],
+    crate: '#8a9456',
     decals: 'war',
     ground: 'war',
   },
@@ -870,7 +935,7 @@ const UPGRADES = [
 //  Add your own by copying a line.
 // ---------------------------------------------------------------------------
 const POWERUPS = [
-  { kind: 'grenade',   name: 'GRENADE',   color: '#6b8f3a', weight: 30 },
+  { kind: 'grenade',   name: 'GRENADE',   color: '#c2e34a', weight: 30 },
   { kind: 'bomb',      name: 'BOMB',      color: '#3a3f4a', weight: 22 },
   { kind: 'lightning', name: 'LIGHTNING', color: '#7ad7ff', weight: 16 },
   { kind: 'freeze',    name: 'FREEZE',    color: '#9fe8ff', weight: 14 },
@@ -895,9 +960,9 @@ function rollPowerup() {
 //  Boss form runs on a timer; the rest stay until you change again.
 // ---------------------------------------------------------------------------
 const FORMS = [
-  { key: 'normal', name: 'NORMAL', size: 1,    spd: 1,    hp: 1,   dmg: 1,   color: '#0d69ac' },
+  { key: 'normal', name: 'NORMAL', size: 1,    spd: 1,    hp: 1,   dmg: 1,   color: '#4fa8f0' },
   { key: 'runner', name: 'RUNNER', size: .92,  spd: 1.55, hp: .8,  dmg: .85, color: '#12a8e8' },
-  { key: 'brute',  name: 'BRUTE',  size: 1.62, spd: .74,  hp: 2.2, dmg: 1.8, color: '#8a5ad8' },
+  { key: 'brute',  name: 'BRUTE',  size: 1.62, spd: .74,  hp: 2.2, dmg: 1.8, color: '#c98af5' },
   { key: 'boss',   name: 'BOSS',   size: 1.85, spd: .92,  hp: 2.5, dmg: 2.6, color: '#ff9f43',
     timed: true, armor: 0.4 },
 ];
@@ -1092,7 +1157,10 @@ function brickAt(gx, gy) {
 // Sunlit grass, and a sky to sit against. Roblox is bright: the old near-black
 // background and dim grey-green plate were most of what made this look nothing
 // like it.
-const GRASS_A = '#8fb356', GRASS_B = '#87ab4e';
+// A deeper green on purpose. When the grass was bright, every character colour
+// had to be dark to stay readable against it, which is the real reason they all
+// looked so gloomy. Darker ground lets the people standing on it be bright.
+const GRASS_A = '#5d8038', GRASS_B = '#57783a';
 const SKY = '#a8d4ea';
 
 // ---------------------------------------------------------------------------
@@ -1207,13 +1275,18 @@ const LIGHT_ANGLE = -Math.PI * 0.25;
 
 // The old axis-aligned entry point. Everything that is not a character still uses
 // this, and it just hands over to the turnable one with no turn applied.
-function drawBox(wx, wy, wz, w, d, h, color, alpha, decal) {
-  return drawBoxRot(wx + w / 2, wy + d / 2, wz, w, d, h, color, 0, alpha, decal);
+function drawBox(wx, wy, wz, w, d, h, color, alpha, decal, open) {
+  return drawBoxRot(wx + w / 2, wy + d / 2, wz, w, d, h, color, 0, alpha, decal, open);
 }
 
 // A box, turned by `rot` about its own middle, and placed by its middle rather
 // than by a corner so that turning it does not also move it.
-function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal) {
+// `open` says which sides of a block are actually exposed, as a set of flags:
+// 1 north, 2 east, 4 south, 8 west. A side buried against the next wall along is
+// not drawn at all, and no outline is put along that edge, so a run of wall reads
+// as one wall rather than a row of separate cubes. It is faster as well.
+const OPEN_ALL = 15;
+function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   const zt = wz + h, zb = wz;
   if (alpha !== undefined) ctx.globalAlpha = alpha;
 
@@ -1240,16 +1313,16 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal) {
 
   // Each side, with how far off it is so they can be drawn back to front, and the
   // direction it faces so it can be lit correctly however the box is turned.
-  const sides = [
-    { a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
-      p: [ax, ay, bx, by, bxB, byB, axB, ayB] },
-    { a: rot, d: viewDepth(mBC[0], mBC[1], zb),
-      p: [bx, by, cx, cy, cxB, cyB, bxB, byB] },
-    { a: rot + Math.PI / 2, d: viewDepth(mCD[0], mCD[1], zb),
-      p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] },
-    { a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
-      p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] },
-  ];
+  const op = (open === undefined) ? OPEN_ALL : open;
+  const sides = [];
+  if (op & 1) sides.push({ a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
+    p: [ax, ay, bx, by, bxB, byB, axB, ayB] });
+  if (op & 2) sides.push({ a: rot, d: viewDepth(mBC[0], mBC[1], zb),
+    p: [bx, by, cx, cy, cxB, cyB, bxB, byB] });
+  if (op & 4) sides.push({ a: rot + Math.PI / 2, d: viewDepth(mCD[0], mCD[1], zb),
+    p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] });
+  if (op & 8) sides.push({ a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
+    p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] });
   sides.sort((p1, p2) => p2.d - p1.d);
 
   const mix = (ta, tb, k) => ta + (tb - ta) * k;
@@ -1291,7 +1364,7 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal) {
 
   // Anything painted on the wall goes on the face nearest the camera, which is the
   // last one drawn, so it is never hidden behind another face.
-  if (decal) decal(sides[sides.length - 1].p, color);
+  if (decal && sides.length) decal(sides[sides.length - 1].p, color);
 
   // Top face last, so it always sits on top of the sides.
   ctx.fillStyle = shade(color, 16);
@@ -1313,15 +1386,17 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal) {
   ctx.closePath();
   ctx.stroke();
 
-  // And a dark outline right round the top, so blocks read as separate pieces
-  // butted together instead of merging into one mass.
+  // An outline, but only along edges that are actually the outside of something.
+  // Outlining every tile is what made a run of wall look like a row of cubes.
   ctx.strokeStyle = shade(color, -44);
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-  ctx.lineTo(cx, cy); ctx.lineTo(dx, dy);
-  ctx.closePath();
-  ctx.stroke();
+  const edge = (u, v, uu, vv) => {
+    ctx.beginPath(); ctx.moveTo(u, v); ctx.lineTo(uu, vv); ctx.stroke();
+  };
+  if (op & 1) edge(ax, ay, bx, by);
+  if (op & 2) edge(bx, by, cx, cy);
+  if (op & 4) edge(cx, cy, dx, dy);
+  if (op & 8) edge(dx, dy, ax, ay);
 
   if (alpha !== undefined) ctx.globalAlpha = 1;
 }
@@ -2465,9 +2540,9 @@ function killEnemy(e, dirAngle) {
       kid.size = .84; kid.spd = 1.75; kid.r = 11;
       kid.hp = kid.maxhp = Math.max(18, Math.round(e.maxhp * .22));
       kid.split = true;
-      spray(kid.x, kid.y, '#a35ce0', 10);
+      spray(kid.x, kid.y, '#d49bf7', 10);
     }
-    popup(e.x, e.y - 30, 'IT SPLIT', '#a35ce0');
+    popup(e.x, e.y - 30, 'IT SPLIT', '#d49bf7');
   }
   spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', e.boss ? 46 : 18, dirAngle);
   SFX.die();
@@ -2658,8 +2733,8 @@ function tryAttack(who, isPlayer) {
   // dangerous rather than only being in reach of it.
   if (!isPlayer && (who.type === 'brute') && !who.boss) {
     blasts.push({ x: who.x, y: who.y, r: 6, max: TUNE.BRUTE_SLAM_RADIUS,
-                  life: .3, maxLife: .3, c: '#a35ce0' });
-    spray(who.x, who.y, '#a35ce0', 14);
+                  life: .3, maxLife: .3, c: '#d49bf7' });
+    spray(who.x, who.y, '#d49bf7', 14);
     addShake(4);
     const pd = Math.hypot(player.x - who.x, player.y - who.y);
     if (player.side !== who.side && pd < TUNE.BRUTE_SLAM_RADIUS) {
@@ -3139,8 +3214,8 @@ function drawGuy(g, side, rankIdx, isPlayer) {
     legs = PANTS[save.look.legs] || legs;
   }
   // Runners and brutes are tinted so you can tell at a glance what is coming.
-  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#12a8e8' : '#b06a18'; }
-  if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
+  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#7ad7ff' : '#f0a63c'; }
+  if (!isPlayer && g.type === 'brute')  { torso = '#b878f0'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
   // You, while boss mode is running.
   if (isPlayer && player.form !== 'normal') {
@@ -3463,7 +3538,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   } else {
     // A scavenged backpack with a bedroll strapped on.
     P(0, -dep * .6, packZ, torsoW * .7, 4 * s, torsoH * .66, shade(torso, -20));
-    P(0, -dep * .72, packZ + torsoH * .34, torsoW * .62, 3 * s, 3 * s, '#8d5a2b');
+    P(0, -dep * .72, packZ + torsoH * .34, torsoW * .62, 3 * s, 3 * s, '#a86c33');
     P(torsoW * .3, dep * .5, torsoZ + 1.6 * s, 3.6 * s, 1.6 * s, 3.4 * s, shade(torso, -28));
   }
 
@@ -3863,7 +3938,21 @@ function drawStanding() {
       const col = t === WALL ? brickAt(gx, gy) : crateColor();
       // Walls carry marks; crates get their lid instead.
       const decal = (t === WALL && fade === undefined) ? decalFor(gx, gy) : null;
-      drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal);
+      // A side touching another wall of the same height is buried, so leave it out.
+      let open = OPEN_ALL;
+      if (t === WALL) {
+        const same = (ox, oy) => {
+          const nx = gx + ox, ny = gy + oy;
+          if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) return true;
+          return grid[ny][nx] === WALL && wallHeightAt(nx, ny) === h;
+        };
+        open = 0;
+        if (!same(0, -1)) open |= 1;
+        if (!same(1, 0)) open |= 2;
+        if (!same(0, 1)) open |= 4;
+        if (!same(-1, 0)) open |= 8;
+      }
+      drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
       if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
     } else {
       // Your own body is not drawn in first person: you would be staring at the

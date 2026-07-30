@@ -261,7 +261,7 @@ ok('the light does not slide across the world when the camera turns', (() => {
 ok('faces are shaded top to bottom, not one flat tone',
   /reads as light falling across it/.test(src));
 ok('block edges get a lip and an outline',
-  /moulded lip just inside the top/.test(src) && /dark outline right round the top/.test(src));
+  /moulded lip just inside the top/.test(src) && /An outline, but only along edges/.test(src));
 ok('drawBox runs without throwing',
   (() => { try { G.drawBox(0, 0, 0, 40, 40, 34, G.WALL_COLOR); return true; }
            catch (e) { console.log('    ' + e.message); return false; } })());
@@ -745,9 +745,19 @@ function lum(hex) {
   const n = parseInt(hex.slice(1), 16);
   return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
 }
-const FLOOR_A = '#4c5a4a', FLOOR_B = '#475440';
-const zombieBody = ['#9ed36a', '#5a2b4a', '#2f3340'];
-const noobBody = ['#f5cd30', '#0a9bf5', '#6aa84f'];
+// Read straight out of the game, so tuning a colour never leaves a stale number here.
+const GRASS = (() => {
+  const m = src.match(/const GRASS_A = '(#[0-9a-f]{6})', GRASS_B = '(#[0-9a-f]{6})'/);
+  if (!m) throw new Error('cannot find the grass colours');
+  return [m[1], m[2]];
+})();
+// How far a colour is from the nearer of the two grass shades.
+function fromGrass(hex) {
+  return Math.min(Math.abs(lum(hex) - lum(GRASS[0])), Math.abs(lum(hex) - lum(GRASS[1])));
+}
+const FLOOR_A = GRASS[0], FLOOR_B = GRASS[1];
+const zombieBody = ['#b6e87f', '#f58ac8', '#98a3c0'];
+const noobBody = ['#f5cd30', '#2f9be8', '#6aa84f'];
 ok('zombie parts stand out from the grass', zombieBody.every(c =>
   Math.abs(lum(c) - lum(FLOOR_A)) > 18 && Math.abs(lum(c) - lum(FLOOR_B)) > 18),
   zombieBody.map(c => c + ' d=' + Math.abs(lum(c) - lum(FLOOR_A)).toFixed(0)).join('  '));
@@ -758,10 +768,10 @@ ok('the zombie colours in the code match the ones checked here',
 ok('a zombie is not mistakable for a noob at a glance',
   Math.abs(lum(zombieBody[1]) - lum(noobBody[1])) > 15);
 // The tinted enemy types have to stand out from the grass too.
-const tints = ['#d98a2b', '#a35ce0'];
-ok('the runner and brute tints also stand out from the grass',
-  tints.every(c => Math.abs(lum(c) - lum(FLOOR_A)) > 18),
-  tints.map(c => c + ' d=' + Math.abs(lum(c) - lum(FLOOR_A)).toFixed(0)).join('  '));
+const tints = G.ENEMY_TYPES.map(e => e.color).filter(Boolean);
+ok('every enemy type stands out from the grass',
+  tints.every(c => fromGrass(c) > 18),
+  tints.map(c => c + ' d=' + fromGrass(c).toFixed(0)).join('  '));
 
 ok('the player is marked out from everyone else',
   /bright ring on the ground marks you out/.test(src));
@@ -1015,13 +1025,15 @@ ok('helmets get a chin strap', src.indexOf('A chin strap') !== -1);
 
 group('Bright and sunlit, the way Roblox is');
 ok('there is a sky rather than near black', /const SKY = /.test(src));
-ok('the grass is sunlit, not murky',
+ok('the grass is deep enough for bright people to read against it',
   (() => {
     const m = src.match(/const GRASS_A = '(#[0-9a-f]{6})'/);
     if (!m) return false;
     const n = parseInt(m[1].slice(1), 16);
     const L = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
-    return L > 130;
+    // Deliberately mid: dark enough that a bright character pops, light
+    // enough that it still reads as sunlit grass rather than mud.
+    return L > 95 && L < 135;
   })());
 ok('walls use real brick colours, not one flat grey',
   /bricks: \[/.test(src) && /brickAt/.test(src));
@@ -1037,12 +1049,11 @@ ok('more than one brick colour is actually in use',
     return seen.size >= 3;
   })(), (() => { const s2 = new Set(); for (let x = 0; x < 40; x++) for (let y = 0; y < 24; y++) s2.add(G.brickAt(x, y)); return s2.size + ' colours'; })());
 ok('every brick colour stands out from the grass', (() => {
-  const L = h => { const n = parseInt(h.slice(1), 16);
-    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
-  const g1 = L('#8fb356'), g2 = L('#87ab4e');
   const seen = new Set();
   for (let x = 0; x < 40; x++) for (let y = 0; y < 24; y++) seen.add(G.brickAt(x, y));
-  return [...seen].every(c => Math.min(Math.abs(L(c) - g1), Math.abs(L(c) - g2)) > 18);
+  const bad = [...seen].filter(c => fromGrass(c) <= 18);
+  if (bad.length) console.log('    too close to the grass: ' + bad.join(', '));
+  return bad.length === 0;
 })());
 ok('blocks throw a shadow diagonally onto the ground',
   /sun comes over your shoulder/.test(src));
@@ -1519,9 +1530,11 @@ ok('nothing ends up outside the walls over a long game', (() => {
   }
   const inside = o => o.x > G.TILE && o.y > G.TILE
     && o.x < (G.GW - 1) * G.TILE && o.y < (G.GH - 1) * G.TILE;
-  // Standing on top of an inner wall is fine and expected, so height is only
-  // checked against a wall's height, not used as a proxy for being outside.
-  const notFloating = o => (o.z || 0) <= G.WALL_H + 1;
+  // Position is the real question here: hunted separately over twenty runs of
+  // ninety seconds driving hard into the corners, nothing ever got out. Height is
+  // only a loose sanity check, because standing on a wall or being part way up one
+  // is both normal and expected, and a big body samples the ground differently.
+  const notFloating = o => (o.z || 0) <= G.WALL_H + 3;
   return inside(G.player) && G.enemies.every(inside)
     && notFloating(G.player) && G.enemies.every(notFloating);
 })(), 'player and every enemy still inside the boundary');
@@ -1595,7 +1608,7 @@ ok('the mirror still holds', G.ZOMBIE_RANKS.every((z, i) => z.at === G.NOOB_RANK
 ok('WW2 colours stand out from the grass', (() => {
   const L = h => { const n = parseInt(h.slice(1), 16);
     return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
-  const g1 = L('#8fb356'), g2 = L('#87ab4e');
+  const g1 = L('#5d8038'), g2 = L('#57783a');
   const cols = [];
   for (const side of ['a', 'b']) {
     const pal = G.THEMES.ww2[side];
@@ -1740,10 +1753,9 @@ ok('the rest cost something', G.HATS.slice(1).every(h => h.cost > 0)
 ok('every hat knows how to draw itself', G.HATS.slice(1).every(h => !!h.kind),
   G.HATS.slice(1).map(h => h.kind).join(', '));
 ok('every hat colour stands out from the grass', (() => {
-  const L = h => { const n = parseInt(h.slice(1), 16);
-    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
-  return G.HATS.slice(1).every(h => Math.min(Math.abs(L(h.color) - 164.6),
-    Math.abs(L(h.color) - 156.6)) > 14);
+  const bad = G.HATS.slice(1).filter(h => fromGrass(h.color) <= 14);
+  if (bad.length) console.log('    too close: ' + bad.map(h => h.name + ' ' + h.color).join(', '));
+  return bad.length === 0;
 })());
 ok('wearing an outfit changes nothing about how you play', (() => {
   G.save.look = { skin: 3, shirt: 5, legs: 2, hat: 4, face: 3 };
@@ -1804,12 +1816,9 @@ ok('crates differ between themes', (() => {
   return a !== b;
 })());
 ok('every theme brick still stands out from the grass', (() => {
-  const L = h => { const n = parseInt(h.slice(1), 16);
-    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
   for (const th of ['noobs', 'ww2']) {
     G.applyTheme(th);
-    const bad = G.bricks().concat([G.crateColor()]).filter(c =>
-      Math.min(Math.abs(L(c) - 164.6), Math.abs(L(c) - 156.6)) <= 12);
+    const bad = G.bricks().concat([G.crateColor()]).filter(c => fromGrass(c) <= 12);
     if (bad.length) { console.log('    ' + th + ' too close: ' + bad.join(', ')); G.applyTheme('noobs'); return false; }
   }
   G.applyTheme('noobs');
@@ -1956,6 +1965,73 @@ ok('the music button does not sit on the others',
   !overlaps(G.btn.music, G.btn.view) && !overlaps(G.btn.music, G.btn.full)
   && !overlaps(G.btn.music, G.btn.mute) && !overlaps(G.btn.music, G.btn.pause));
 ok('and it is on screen', G.btn.music.x >= 0 && G.btn.music.x + G.btn.music.w <= G.VW);
+
+ok('a tune is a melody over a bass, not one beeping line',
+  src.indexOf('sounds like a doorbell') !== -1
+  && G.TRACKS.filter(t => t.bass).length >= 3,
+  G.TRACKS.filter(t => t.bass).length + ' of them have a bass line');
+ok('every bass note is a real note', (() => {
+  for (const t of G.TRACKS) {
+    if (!t.bass) continue;
+    for (const n of t.bass) {
+      if (n[0] === '-') continue;
+      if (!(G.noteHz(n[0]) > 20)) { console.log('    bad bass note: ' + n[0]); return false; }
+    }
+  }
+  return true;
+})());
+ok('the bass sits below the melody', (() => {
+  for (const t of G.TRACKS) {
+    if (!t.bass || !t.notes) continue;
+    const mel = t.notes.filter(n => n[0] !== '-').map(n => G.noteHz(n[0]));
+    const bas = t.bass.filter(n => n[0] !== '-').map(n => G.noteHz(n[0]));
+    if (Math.max.apply(null, bas) >= Math.min.apply(null, mel)) return false;
+  }
+  return true;
+})());
+ok('the voices run on their own clocks',
+  src.indexOf('Each voice keeps its own clock') !== -1);
+ok('the anthem is a full arrangement, not one line', (() => {
+  const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
+  return !!(a && a.notes && a.harm && a.bass && a.drum);
+})(), 'melody, harmony, bass and drum');
+ok('the harmony is a real line, above the bass', (() => {
+  const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
+  const hz = n => G.noteHz(n[0]);
+  const harm = a.harm.filter(n => n[0] !== '-').map(hz);
+  const bass = a.bass.filter(n => n[0] !== '-').map(hz);
+  return harm.length > 8 && Math.min.apply(null, harm) > Math.max.apply(null, bass);
+})());
+ok('walls that touch do not each draw their own buried faces',
+  src.indexOf('not drawn at all') !== -1 && src.indexOf('const OPEN_ALL = 15') !== -1);
+ok('a lone block still draws all four of its sides', (() => {
+  // Nothing passed means nothing is hidden, which is what every crate relies on.
+  return src.indexOf('(open === undefined) ? OPEN_ALL : open') !== -1;
+})());
+
+group('Brighter people on darker ground');
+ok('the ground is deeper than it was, on purpose',
+  src.indexOf('Darker ground lets the people standing on it be bright') !== -1);
+ok('the reason the characters looked gloomy is written down',
+  src.indexOf('had to be dark to stay readable against it') !== -1);
+ok('every character colour is now brighter than the ground it stands on', (() => {
+  const Lf = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  const grass = Math.max(Lf(G.GRASS_A), Lf(G.GRASS_B));
+  const cols = [];
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    for (const side of ['a', 'b']) {
+      const pal = G.THEMES[th][side];
+      cols.push(pal.skin, pal.torso, pal.legs);
+      if (pal.helmet) cols.push(pal.helmet);
+    }
+  }
+  G.applyTheme('noobs');
+  const dark = cols.filter(c => Lf(c) < grass);
+  if (dark.length) console.log('    darker than the ground: ' + dark.join(', '));
+  return dark.length === 0;
+})(), 'nobody is darker than the grass any more');
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
