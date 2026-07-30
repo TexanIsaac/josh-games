@@ -128,6 +128,42 @@
     border-radius: 9px;
   }
   .dname { font-size: 11.5px; font-weight: 800; }
+
+  /* Medals, and the best wave on each difficulty. */
+  .bestrow { display: flex; gap: .45rem; flex-wrap: wrap; margin-bottom: .2rem; }
+  .bestcard {
+    flex: 1 1 5.5rem; padding: .45rem .5rem; border-radius: 10px;
+    background: rgba(22,28,38,0.9); border: 1px solid rgba(255,255,255,0.08);
+  }
+  .bestname {
+    font-size: 9px; font-weight: 800; letter-spacing: .07em;
+    color: rgba(238,242,248,0.45);
+  }
+  .bestval { font-size: 14px; font-weight: 800; color: #ffd84d; }
+  .bestval[data-none="1"] { color: rgba(238,242,248,0.25); }
+
+  .mgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+    gap: .5rem;
+  }
+  .mcard {
+    display: flex; flex-direction: column; align-items: center; gap: .2rem;
+    padding: .5rem .4rem; border-radius: 12px;
+    background: rgba(22,28,38,0.9); border: 1px solid rgba(255,255,255,0.08);
+  }
+  .mcard[data-on="1"] { border-color: #ffd84d; background: rgba(255,216,77,0.1); }
+  .mdisc {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 800;
+    background: rgba(255,255,255,0.08); color: rgba(238,242,248,0.3);
+  }
+  .mcard[data-on="1"] .mdisc { background: #ffd84d; color: #0d0f14; }
+  .mname { font-size: 11.5px; font-weight: 800; text-align: center; }
+  .mhint {
+    font-size: 9.5px; line-height: 1.3; text-align: center;
+    color: rgba(238,242,248,0.45); min-height: 2.4em;
+  }
   .wblurb {
     font-size: 10.5px; line-height: 1.35; text-align: center;
     color: rgba(238,242,248,0.5); min-height: 2.6em;
@@ -326,6 +362,7 @@
     <button class="stab" data-tab="look">Your Guy</button>
     <button class="stab" data-tab="weapons">Weapons</button>
     <button class="stab" data-tab="perk">Upgrades</button>
+    <button class="stab" data-tab="medals">Medals</button>
   </div>
   <div id="sbody"></div>
 </div>
@@ -370,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v46';
+const VERSION = 'v47';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1124,6 +1161,53 @@ function perkCost(perk, level) {
   return Math.round(perk.base * Math.pow(1.5, level));
 }
 
+// ---------------------------------------------------------------------------
+//  MEDALS
+//
+//  Coins are a good reason to keep playing but they are only one axis: more coins buys
+//  a bigger number. Medals give things to go after that are not just spending, and a
+//  locked one on the shelf is a visible reason to try something Josh has not tried yet.
+//  They are kept for good, like coins are.
+// ---------------------------------------------------------------------------
+const MEDALS = [
+  { id: 'first',    name: 'First Blood',   hint: 'Get your first kill.' },
+  { id: 'knifer',   name: 'Armed',         hint: 'Reach the second rank.' },
+  { id: 'gunner',   name: 'Gunner',        hint: 'Reach the third rank.' },
+  { id: 'rioter',   name: 'Top Rank',      hint: 'Reach the fourth rank.' },
+  { id: 'turned',   name: 'Bitten',        hint: 'Get infected and change sides.' },
+  { id: 'backagain', name: 'Both Sides',   hint: 'Change sides, then change back.' },
+  { id: 'streak',   name: 'On A Roll',     hint: 'Get ten kills in a row.' },
+  { id: 'bossform', name: 'The Boss',      hint: 'Save up and become the boss.' },
+  { id: 'bosskill', name: 'Boss Slayer',   hint: 'Take a boss down.' },
+  { id: 'tank',     name: 'Tanker',        hint: 'Find a tank and drive it.' },
+  { id: 'air',      name: 'Bombs Away',    hint: 'Call in a bombing run.' },
+  { id: 'chain',    name: 'Chain Reaction', hint: 'Set off three barrels at once.' },
+  { id: 'wave10',   name: 'Ten Waves',     hint: 'Clear wave ten.' },
+  { id: 'wave20',   name: 'Twenty Waves',  hint: 'Clear wave twenty.' },
+  { id: 'insane',   name: 'Madness',       hint: 'Reach wave five on Insane.' },
+  { id: 'armoury',  name: 'Armoury',       hint: 'Own five different weapons.' },
+];
+
+function hasMedal(id) { return !!(save.medals && save.medals[id]); }
+
+// Awarding one is deliberately quiet if it is already held, so these can be called
+// from anywhere without having to check first.
+function awardMedal(id) {
+  if (hasMedal(id)) return;
+  save.medals = save.medals || {};
+  save.medals[id] = 1;
+  writeSave();
+  const m = MEDALS.filter(x => x.id === id)[0];
+  announce('MEDAL: ' + (m ? m.name.toUpperCase() : id));
+  SFX.rankup();
+}
+
+function medalCount() {
+  let n = 0;
+  for (const m of MEDALS) if (hasMedal(m.id)) n++;
+  return n;
+}
+
 const SAVE_KEY = 'zn_save_v1';
 const freshSave = () => ({
   coins: 0,
@@ -1132,6 +1216,10 @@ const freshSave = () => ({
   ownedFaces: { 0: true },
   ownedWeapons: { fists: true },
   perks: {},
+  medals: {},
+  // A best wave per difficulty. One shared best meant a good run on Easy buried a
+  // harder won one on Hard for good.
+  bests: {},
 });
 let save = freshSave();
 
@@ -1152,6 +1240,8 @@ function loadSave() {
     const wi = save.look.weapon;
     if (!(wi >= 0 && wi < WEAPONS.length)) save.look.weapon = 0;
     save.perks = got.perks || {};
+    save.medals = got.medals || {};
+    save.bests = got.bests || {};
     if (typeof save.coins !== 'number' || !isFinite(save.coins)) save.coins = 0;
   } catch (err) { save = freshSave(); }
 }
@@ -1225,12 +1315,20 @@ const THEMES = {
     b: { skin: '#b6e87f', torso: '#f58ac8', legs: '#98a3c0' },
     rankA: ['Noob', 'Noob Knifer', 'Noob Gunner', 'Noob Rioter'],
     rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter', 'Zombie Brute'],
-    // Bright Roblox bricks, but weathered by what has happened here.
-    bricks: ['#f2f3f5', '#c8c8cb', '#f2f3f5', '#c8c8cb', '#e8e9ec', '#d8d9dc',
+    // An overrun town rather than a battlefield: stained render, mossy concrete and
+    // rust, with the odd bright Roblox brick still showing through where a wall has
+    // not been ruined yet. Every one of these was checked against the grass so nothing
+    // disappears into it.
+    bricks: ['#e4e0d4', '#cfc9ba', '#b9b3a4', '#a89f8c', '#8f9a76', '#c98a52',
              '#c4281c', '#4fa8f0', '#f5cd30'],
-    crate: '#c98f4a',
+    crate: '#a8794a',
     decals: 'waste',
     ground: 'waste',
+    // What the scenery is made of in this theme. A zombie apocalypse does not have
+    // sandbag emplacements and steel tank traps in it; it has junk piled against
+    // doorways and scrap welded into spikes.
+    barricade: { color: '#9aa08c', name: 'rubble' },
+    spikes: { color: '#8a5f42', steel: false },
   },
   ww2: {
     label: 'ALLIED vs AXIS',
@@ -1252,6 +1350,8 @@ const THEMES = {
     crate: '#8a9456',
     decals: 'war',
     ground: 'war',
+    barricade: { color: '#c2ad72', name: 'sandbags' },
+    spikes: { color: '#8f959e', steel: true },
   },
 };
 let theme = 'noobs';
@@ -2161,6 +2261,7 @@ let pendingBarrels = [];
 // Barrels that were set off go up one after another, each able to catch the next.
 function popBarrels() {
   let guard = 0;
+  if (pendingBarrels.length >= 3) awardMedal('chain');
   while (pendingBarrels.length && guard++ < 60) {
     const b = pendingBarrels.shift();
     explode(b.x, b.y, 190, 210, '#ffb44a');
@@ -2662,6 +2763,14 @@ best = Number(localStorage.getItem('zn_best') || 0);
 bestStreak = Number(localStorage.getItem('zn_streak') || 0);
 muted = localStorage.getItem('zn_muted') === '1';
 
+// Reaching a rank is worth a medal. Checked here because every path that can change
+// your rank comes through this one function.
+function noteRank(idx) {
+  if (idx >= 1) awardMedal('knifer');
+  if (idx >= 2) awardMedal('gunner');
+  if (idx >= 3) awardMedal('rioter');
+}
+
 function rankFor(side, kills) {
   const table = side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
   let idx = 0;
@@ -2776,6 +2885,13 @@ function startWave(n) {
 
 function finishWave() {
   waveState = 'picking';
+  if (wave >= 10) awardMedal('wave10');
+  if (wave >= 20) awardMedal('wave20');
+  if (wave >= 5 && levelIdx === 3) awardMedal('insane');
+  // The best wave reached, kept per difficulty.
+  const lk = LV().key;
+  save.bests = save.bests || {};
+  if (!save.bests[lk] || wave > save.bests[lk]) { save.bests[lk] = wave; writeSave(); }
   const bonus = TUNE.COINS_PER_WAVE + wave * 5;
   addCoins(bonus);
   coinsThisRun += bonus;
@@ -2891,6 +3007,7 @@ function enterTank() {
     reload: 0, tread: 0,
   };
   announce('TANK');
+  awardMedal('tank');
   addShake(7);
   SFX.boss();
 }
@@ -3006,6 +3123,7 @@ function callAirstrike() {
     side: player.side,
   });
   announce('BOMBING RUN');
+  awardMedal('air');
   SFX.boss();
 }
 
@@ -3140,6 +3258,7 @@ function dropPowerup(x, y) {
 // does NOT change: a wider body is what used to wedge things in corridors, so a
 // brute-shaped player is only bigger to look at and to hit with.
 function morphTo(key) {
+  if (key === 'boss') awardMedal('bossform');
   // Tapping NORMAL while driving means get out, which is what it already means for
   // every other form.
   if (player.tank && key === 'normal') { leaveTank(); return; }
@@ -3686,10 +3805,13 @@ function killEnemy(e, dirAngle) {
   const wasEnemyOfPlayer = (e.side !== player.side);
   if (wasEnemyOfPlayer) {
     player.kills[player.side]++;
+    awardMedal('first');
+    if (e.boss) awardMedal('bosskill');
 
     // Kills close together build a streak, and a streak hits harder.
     streak++;
     streakTimer = TUNE.STREAK_WINDOW;
+    if (streak >= 10) awardMedal('streak');
     if (streak > bestStreak) {
       bestStreak = streak;
       localStorage.setItem('zn_streak', String(bestStreak));
@@ -3719,6 +3841,7 @@ function killEnemy(e, dirAngle) {
     popup(e.x, e.y - 22, e.boss ? 'BOSS DOWN' : '+1', e.boss ? '#ff9f43' : '#ffd84d');
 
     const newRank = rankFor(player.side, k);
+    if (newRank > 0) noteRank(newRank);
     if (newRank > player.rank) {
       player.rank = newRank;
       announce(myRanks()[newRank].name.toUpperCase() + '!');
@@ -3797,6 +3920,8 @@ function flipSide() {
   const wasNoob = player.side === NOOB;
   player.side = wasNoob ? ZOMB : NOOB;
   player.rank = rankFor(player.side, player.kills[player.side]);
+  // Changing sides is the heart of Josh's design, so both directions get a medal.
+  awardMedal(wasNoob ? 'turned' : 'backagain');
   player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
   player.hp = player.maxhp;
   player.bite = 0;
@@ -4430,117 +4555,290 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   }
 }
 
+// ---------------------------------------------------------------------------
+//  THE CHARACTERS: BIG BLOCKS, IN REAL 3D
+//
+//  Third design, and worth writing down why, because the first two both failed for
+//  reasons that look contradictory and are not.
+//
+//  The first was about twenty small boxes, each placed in 3D, each rounded and shaded
+//  and outlined on its own. At ninety pixels tall that makes every box ten pixels
+//  across, and twenty independently shaded ten pixel blobs read as gravel, not as a
+//  person. So the problem was never that they were boxes. It was that there were
+//  twenty tiny ones.
+//
+//  The second was flat: one figure facing the camera, mirrored to show direction. It
+//  was readable, which was the point, but it is not 3D and Josh could tell.
+//
+//  This one is what Roblox actually does. Eight big blocks: head, torso, two arms, two
+//  legs, and headgear. Every one is a proper box in the world, turned to face the way
+//  the character is going, flat shaded per face by the same lighting as the walls, with
+//  crisp edges. Blocky on purpose, genuinely three dimensional, and readable because
+//  eight large shapes are eight shapes rather than a pile of grit.
+// ---------------------------------------------------------------------------
 function drawGuyInner(g, side, rankIdx, isPlayer) {
   const isNoob = side === NOOB;
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
 
-  // Colours. Your own guy wears whatever was picked in the shop; everyone else wears
-  // the theme colours, with runners and brutes tinted so you can tell at a glance
-  // what is coming at you.
   const pal = isNoob ? TH().a : TH().b;
-  let skin = pal.skin, torso = pal.torso, legs = pal.legs;
+  let skin = pal.skin, torsoCol = pal.torso, legCol = pal.legs;
   if (isPlayer) {
     skin = SKINS[save.look.skin] || skin;
-    torso = SHIRTS[save.look.shirt] || torso;
-    legs = PANTS[save.look.legs] || legs;
+    torsoCol = SHIRTS[save.look.shirt] || torsoCol;
+    legCol = PANTS[save.look.legs] || legCol;
   }
-  if (!isPlayer && g.type === 'runner') torso = isNoob ? '#7ad7ff' : '#f0a63c';
-  if (!isPlayer && g.type === 'brute') torso = '#c98af5';
-  if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
+  if (!isPlayer && g.type === 'runner') torsoCol = isNoob ? '#7ad7ff' : '#f0a63c';
+  if (!isPlayer && g.type === 'brute') torsoCol = '#c98af5';
+  if (g.boss) { skin = '#ff9f43'; torsoCol = '#8c2f2f'; legCol = '#5c2020'; }
   if (isPlayer && player.form !== 'normal') {
     const f2 = formByKey(player.form);
-    if (f2.key === 'boss') { skin = '#ffb340'; torso = '#a8332f'; legs = '#6b2424'; }
-    else torso = f2.color;
+    if (f2.key === 'boss') { skin = '#ffb340'; torsoCol = '#a8332f'; legCol = '#6b2424'; }
+    else torsoCol = f2.color;
   }
 
-  const s2 = g.size || 1;
-  const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
-  const z = (g.z || 0) + bob;
+  const sz = g.size || 1;
+  const u = sz;                                  // everything below is in world units
+  const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 0.8;
+  const z0 = (g.z || 0) + bob;
 
-  // Shadow, on whatever surface is underneath rather than always on the floor, so you
-  // can tell how high up someone standing on a wall actually is.
+  // Shadow, on whatever is underneath, so height off the ground still reads.
   const shx = isoX(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   const shy = isoY(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.beginPath();
-  ctx.ellipse(shx, shy, 12 * s2, 6 * s2, 0, 0, 6.283);
+  ctx.ellipse(shx, shy, 12 * sz, 6 * sz, 0, 0, 6.283);
   ctx.fill();
 
-  // Where the figure goes, and how big. Both come from the projection, so a character
-  // shrinks with distance and sits correctly on the ground exactly as the old boxes
-  // did. BODY is how tall a character is in world units.
-  const BODY_H = 48 * s2;
-  const footY = isoY(g.x, g.y, z);
-  const headYpx = isoY(g.x, g.y, z + BODY_H);
-  const H = Math.max(14, footY - headYpx);
-  const cx = isoX(g.x, g.y, z + BODY_H * .5);
-
-  // Which way is he facing, worked out on screen rather than in the world, so it is
-  // right whichever way the camera has been dragged. A point a little way in front of
-  // him is projected: if it comes out lower on screen he is walking towards us.
-  const ang = g.faceAng || 0;
-  const ax2 = g.x + Math.cos(ang) * 14, ay2 = g.y + Math.sin(ang) * 14;
-  const dx = isoX(ax2, ay2, z) - isoX(g.x, g.y, z);
-  const dy = isoY(ax2, ay2, z) - isoY(g.x, g.y, z);
-  let view = 'side';
-  if (Math.abs(dy) > Math.abs(dx) * 1.25) view = (dy > 0) ? 'front' : 'back';
-  const flip = (view === 'side') ? (dx < 0) : false;
-
-  // What he is holding. Your own guy carries whatever was bought in the shop, which is
-  // the whole point of buying it; everyone else carries what their rank gives them.
-  let weapon = null;
-  if (isPlayer) {
-    weapon = WEAPONS[save.look.weapon || 0];
-  } else {
-    const w = rk.weapon;
-    const kind = (w === 'knife') ? 'knife'
-      : (w === 'rifle' || w === 'pistol') ? 'rifle'
-      : (w === 'riot shield') ? 'shield'
-      : null;
-    weapon = kind ? { kind: kind } : null;
+  if (isPlayer && player.invuln > 0 && Math.floor(player.invuln * 10) % 2 === 0) {
+    ctx.globalAlpha = .5;
   }
 
-  // Headgear and face. The shop choices are yours alone. In the WW2 theme everybody
-  // wears a helmet, and zombies scowl.
+  // The body frame: across the shoulders, out in front, and up. Turned to whichever
+  // way he is facing, so this is real 3D rather than a picture that gets mirrored.
+  const ang = g.faceAng || 0;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const rot = ang - Math.PI / 2;
+  const LX = (lx, ly) => g.x + lx * sa + ly * ca;
+  const LY = (lx, ly) => g.y - lx * ca + ly * sa;
+  // One block, placed by its middle in the character's own frame.
+  const B = (lx, ly, lz, w, d, h, col) =>
+    drawBoxRot(LX(lx, ly), LY(lx, ly), lz, w, d, h, col, rot);
+
+  // Roblox proportions, in world units: legs to 17, torso to 33, head to 46.
+  const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = 46 * u;
+  const legH = LEG_TOP, torsoH = TORSO_TOP - LEG_TOP, headH = HEAD_TOP - TORSO_TOP;
+
+  // The walk: legs and arms swing forward and back along his own forward axis, which
+  // is why the frame above matters. Boxes only turn about the upright, so a swing is a
+  // shift rather than a hinge, which is exactly what Roblox does too.
+  const ph = g.walk || 0;
+  const stride = g.moving ? Math.sin(ph) * 3.4 * u : 0;
+  const stride2 = g.moving ? Math.sin(ph + Math.PI) * 3.4 * u : 0;
+  // And a swing or a shot throws the near arm forward.
+  const act = Math.max(0, Math.min(1, (g.swing || 0) / 0.16));
+
+  // ---- legs ----
+  const legW = 5.2 * u, legD = 5.6 * u;
+  B(-3 * u, stride, z0, legW, legD, legH, legCol);
+  B(3 * u, stride2, z0, legW, legD, legH, shade(legCol, -12));
+
+  // ---- torso ----
+  B(0, 0, z0 + LEG_TOP, 13 * u, 6.4 * u, torsoH, torsoCol);
+  // A belt, because one flat slab of shirt from waist to neck reads as a slab.
+  B(0, 0, z0 + LEG_TOP, 13.4 * u, 6.8 * u, 2 * u, '#3f444c');
+
+  // ---- arms ----
+  const armW = 3.8 * u, armD = 4.2 * u, armH = torsoH * 0.94;
+  const armZ = z0 + LEG_TOP + torsoH - armH;
+  B(-8.4 * u, stride2 + act * 5 * u, armZ, armW, armD, armH, shade(torsoCol, 8));
+  B(8.4 * u, stride + act * 6 * u, armZ, armW, armD, armH, torsoCol);
+  // Hands on the ends of the arms, so an arm is not one unbroken stick.
+  B(-8.4 * u, stride2 + act * 5 * u, armZ, armW + .4 * u, armD + .4 * u, 4 * u, skin);
+  B(8.4 * u, stride + act * 6 * u, armZ, armW + .4 * u, armD + .4 * u, 4 * u, skin);
+
+  // ---- head ----
+  const headW = 8.6 * u, headD = 7.2 * u;
+  B(0, 0, z0 + TORSO_TOP, headW, headD, headH, skin);
+
+  // The face goes on the front of the head. The front is a flat plane in the world, so
+  // a point on it is projected the same as anything else and the face sits on the head
+  // properly from any angle instead of floating.
   let hatKind = null, hatCol = '#8a9c50', faceKind = 'smile';
   if (isPlayer) {
     const hat = HATS[save.look.hat || 0] || HATS[0];
-    const face = FACES[save.look.face || 0] || FACES[0];
+    const fc = FACES[save.look.face || 0] || FACES[0];
     if (hat && hat.kind) { hatKind = hat.kind; hatCol = hat.color; }
-    faceKind = face ? face.kind : 'smile';
+    faceKind = fc ? fc.kind : 'smile';
   } else {
     if (TH().helmet) { hatKind = 'helmet'; hatCol = pal.helmet || '#8a9c50'; }
     faceKind = isNoob ? 'smile' : 'angry';
   }
   if (g.boss) faceKind = 'angry';
 
-  // Blink while you cannot be hurt, so the moment after turning sides is obvious.
-  let alpha;
-  if (isPlayer && player.invuln > 0 && Math.floor(player.invuln * 10) % 2 === 0) alpha = .45;
+  // Only worth drawing when the front of the head is actually towards us.
+  const facingUs = (isoY(LX(0, 8 * u), LY(0, 8 * u), z0)
+                    - isoY(g.x, g.y, z0)) > 0;
+  if (facingUs) {
+    drawBlockFace(g, LX, LY, rot, headD / 2 + .4 * u, z0 + TORSO_TOP + headH * .58,
+                  u, faceKind, skin);
+  }
 
-  paintFigure(ctx, cx, footY, H, {
-    skin: skin, shirt: torso, legs: legs,
-    hatKind: hatKind, hatCol: hatCol, faceKind: faceKind, weapon: weapon,
-  }, {
-    view: view,
-    flip: flip,
-    phase: g.walk || 0,
-    moving: !!g.moving,
-    // swing counts down from a fraction of a second, so it is turned into nought to one.
-    swing: Math.max(0, Math.min(1, (g.swing || 0) / 0.16)),
-    alpha: alpha,
-  });
+  // ---- headgear, as blocks like everything else ----
+  if (hatKind === 'helmet') {
+    B(0, 0, z0 + HEAD_TOP - 1.5 * u, headW + 1.2 * u, headD + 1.2 * u, 3.4 * u, hatCol);
+    B(0, 0, z0 + HEAD_TOP - 4.5 * u, headW + 2.6 * u, headD + 2.6 * u, 1.6 * u, shade(hatCol, -16));
+  } else if (hatKind === 'cap') {
+    B(0, 0, z0 + HEAD_TOP - 1.5 * u, headW + .8 * u, headD + .8 * u, 3 * u, hatCol);
+    B(0, headD * .7, z0 + HEAD_TOP - 2 * u, headW * .8, 3.4 * u, 1.2 * u, shade(hatCol, -18));
+  } else if (hatKind === 'tall') {
+    B(0, 0, z0 + HEAD_TOP - 1 * u, headW + 2.4 * u, headD + 2.4 * u, 1.4 * u, shade(hatCol, -14));
+    B(0, 0, z0 + HEAD_TOP, headW * .8, headD * .8, 9 * u, hatCol);
+  } else if (hatKind === 'crown') {
+    B(0, 0, z0 + HEAD_TOP - 1 * u, headW * .9, headD * .9, 2.2 * u, hatCol);
+    for (const off of [-2.6, 0, 2.6]) {
+      B(off * u, 0, z0 + HEAD_TOP + 1.2 * u, 1.8 * u, headD * .8, 3 * u, hatCol);
+    }
+  } else if (hatKind === 'phones') {
+    B(0, 0, z0 + HEAD_TOP - 1 * u, headW * .5, headD + 1.6 * u, 1.6 * u, shade(hatCol, -8));
+    for (const sx of [-1, 1]) {
+      B(sx * (headW / 2 + .8 * u), 0, z0 + TORSO_TOP + headH * .45,
+        2.2 * u, 4.4 * u, 4.4 * u, hatCol);
+    }
+  } else if (hatKind === 'brim') {
+    B(0, 0, z0 + HEAD_TOP - 1 * u, headW + 4 * u, headD + 4 * u, 1.4 * u, hatCol);
+    B(0, 0, z0 + HEAD_TOP, headW * .78, headD * .78, 5 * u, shade(hatCol, 10));
+  }
+
+  // ---- what he is carrying, as blocks in his hand ----
+  let wKind = null;
+  if (isPlayer) {
+    const w = WEAPONS[save.look.weapon || 0];
+    wKind = (w && w.kind !== 'fists') ? w.kind : null;
+  } else {
+    const w = rk.weapon;
+    wKind = (w === 'knife') ? 'knife'
+      : (w === 'rifle' || w === 'pistol') ? 'rifle'
+      : (w === 'riot shield') ? 'shield'
+      : null;
+  }
+  if (wKind) {
+    const hy = stride + act * 6 * u;               // the right hand, wherever it is
+    drawBlockWeapon(B, wKind, 8.4 * u, hy, armZ, u, act);
+  }
+
+  ctx.globalAlpha = 1;
 
   // How much fight is left in an enemy, over its head.
   if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
-    const bx = cx - bw2 / 2;
-    const by = footY - H - 8;
+    const bx = isoX(g.x, g.y, z0 + HEAD_TOP + 10 * u) - bw2 / 2;
+    const by = isoY(g.x, g.y, z0 + HEAD_TOP + 10 * u);
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(bx, by, bw2, bh);
     ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');
     ctx.fillRect(bx, by, bw2 * Math.max(0, g.hp / g.maxhp), bh);
+  }
+}
+
+// The face, painted onto the flat front of the head. `fwd` is how far forward that
+// plane is, and everything is placed on it in the character's own frame, so it stays
+// stuck to the head whichever way he turns.
+function drawBlockFace(g, LX, LY, rot, fwd, eyeZ, u, kind, skin) {
+  const at = (across, up) => {
+    const wx = LX(across, fwd), wy = LY(across, fwd);
+    return [isoX(wx, wy, eyeZ + up), isoY(wx, wy, eyeZ + up)];
+  };
+  const dot = (across, up, w, h, col) => {
+    const q = at(across, up);
+    ctx.fillStyle = col;
+    ctx.fillRect(q[0] - w / 2, q[1] - h / 2, w, h);
+  };
+
+  if (kind === 'shades') {
+    const l = at(-3.2 * u, 0), r = at(3.2 * u, 0);
+    ctx.fillStyle = '#23282f';
+    ctx.beginPath();
+    ctx.moveTo(l[0] - 2, l[1] - 3); ctx.lineTo(r[0] + 2, r[1] - 3);
+    ctx.lineTo(r[0] + 2, r[1] + 3); ctx.lineTo(l[0] - 2, l[1] + 3);
+    ctx.closePath(); ctx.fill();
+    return;
+  }
+  if (kind === 'robot') {
+    const l = at(-3.4 * u, 0), r = at(3.4 * u, 0);
+    ctx.fillStyle = '#2b3340';
+    ctx.beginPath();
+    ctx.moveTo(l[0] - 2, l[1] - 4); ctx.lineTo(r[0] + 2, r[1] - 4);
+    ctx.lineTo(r[0] + 2, r[1] + 3); ctx.lineTo(l[0] - 2, l[1] + 3);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#7ad7ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(r[0], r[1]); ctx.stroke();
+    return;
+  }
+
+  // Eyes, and a brow that comes down for an angry one.
+  dot(-2.6 * u, 0, 3, 3.4, '#23282f');
+  dot(2.6 * u, 0, 3, 3.4, '#23282f');
+  if (kind === 'angry') {
+    ctx.strokeStyle = shade(skin, -54);
+    ctx.lineWidth = 1.8;
+    for (const sx of [-1, 1]) {
+      const a = at(sx * 4 * u, 2.6 * u), b = at(sx * 1.4 * u, 1.2 * u);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+  }
+  // Mouth.
+  const ml = at(-2.2 * u, -3.4 * u), mr = at(2.2 * u, -3.4 * u);
+  if (kind === 'grin') {
+    ctx.fillStyle = '#f6f8fb';
+    ctx.beginPath();
+    ctx.moveTo(ml[0], ml[1] - 2); ctx.lineTo(mr[0], mr[1] - 2);
+    ctx.lineTo(mr[0], mr[1] + 2); ctx.lineTo(ml[0], ml[1] + 2);
+    ctx.closePath(); ctx.fill();
+  } else {
+    ctx.strokeStyle = shade(skin, -58);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(ml[0], ml[1]);
+    if (kind === 'angry') ctx.quadraticCurveTo((ml[0] + mr[0]) / 2, ml[1] - 3, mr[0], mr[1]);
+    else ctx.quadraticCurveTo((ml[0] + mr[0]) / 2, ml[1] + 3.5, mr[0], mr[1]);
+    ctx.stroke();
+  }
+}
+
+// Weapons, as blocks in the hand rather than as a flat drawing, so they turn with him.
+function drawBlockWeapon(B, kind, hx, hy, handZ, u, act) {
+  const z = handZ + 1.5 * u;
+  const steel = '#8f959e', dark = '#4f5560', wood = '#8a5a2b';
+  if (kind === 'knife') {
+    B(hx, hy + 2 * u, z, 1.4 * u, 8 * u, 1.4 * u, steel);
+    B(hx, hy - 1.4 * u, z, 2 * u, 2.4 * u, 2 * u, wood);
+  } else if (kind === 'knuckles') {
+    B(hx, hy + 1.6 * u, z, 4.4 * u, 1.8 * u, 2.2 * u, '#d8a63c');
+  } else if (kind === 'rifle' || kind === 'sniper') {
+    const len = (kind === 'sniper') ? 20 * u : 15 * u;
+    B(hx, hy + len * .45, z + 1.5 * u, 1.4 * u, len, 1.4 * u, dark);
+    B(hx, hy - 3 * u, z + 1 * u, 2.2 * u, 7 * u, 2.6 * u, wood);
+    if (kind === 'sniper') B(hx, hy + 3 * u, z + 3.4 * u, 1.6 * u, 5 * u, 1.6 * u, '#3a3f4a');
+  } else if (kind === 'smg' || kind === 'minigun') {
+    B(hx, hy + 6 * u, z + 1.5 * u, 2 * u, 10 * u, 2 * u, dark);
+    B(hx, hy, z - 1.5 * u, 1.8 * u, 2.4 * u, 5 * u, steel);
+    if (kind === 'minigun') B(hx, hy + 2 * u, z + 1.5 * u, 3.4 * u, 5 * u, 3.4 * u, '#5b6270');
+  } else if (kind === 'shotgun') {
+    B(hx, hy + 6 * u, z + 1.5 * u, 2.6 * u, 12 * u, 1.8 * u, dark);
+    B(hx, hy - 3 * u, z + 1 * u, 2.4 * u, 6 * u, 2.6 * u, wood);
+  } else if (kind === 'flamer') {
+    B(hx, hy + 5 * u, z + 1.5 * u, 1.6 * u, 9 * u, 1.6 * u, dark);
+    B(hx - 1 * u, hy - 4 * u, z, 3.4 * u, 4 * u, 7 * u, '#5d6b3a');
+    B(hx, hy + 10 * u, z + 1.5 * u, 2 * u, 2 * u, 2 * u, '#ffb44a');
+  } else if (kind === 'panzer') {
+    B(hx, hy + 6 * u, z + 1.5 * u, 2.4 * u, 14 * u, 2.4 * u, dark);
+    B(hx, hy + 13 * u, z + 1.5 * u, 4 * u, 4 * u, 4 * u, steel);
+  } else if (kind === 'shield') {
+    // Held out in front, which is the whole point of it.
+    B(hx - 2 * u, hy + 4 * u + act * 2 * u, handZ - 6 * u, 11 * u, 1.6 * u, 20 * u, '#aab3c0');
+    B(hx - 2 * u, hy + 4.6 * u + act * 2 * u, handZ + 4 * u, 6 * u, .8 * u, 3 * u, 'rgba(30,40,55,0.8)');
   }
 }
 
@@ -4887,6 +5185,24 @@ function drawSandbags(wx, wy, h, col, fade) {
 
   if (fade !== undefined) { ctx.globalAlpha = 1; return; }
 
+  // In the apocalypse this is a barricade of junk rather than sandbags, so it gets
+  // boards nailed across it instead of neat courses of bags.
+  if (!(TH().barricade && TH().barricade.name === 'sandbags')) {
+    ctx.strokeStyle = 'rgba(70,50,32,0.7)';
+    ctx.lineWidth = 2.4;
+    for (const f of [0.3, 0.62]) {
+      const z = h * f;
+      ctx.beginPath();
+      ctx.moveTo(isoX(wx + 2, wy + TILE * (0.2 + f * 0.2), z),
+                 isoY(wx + 2, wy + TILE * (0.2 + f * 0.2), z));
+      ctx.lineTo(isoX(wx + TILE - 2, wy + TILE * (0.8 - f * 0.2), z),
+                 isoY(wx + TILE - 2, wy + TILE * (0.8 - f * 0.2), z));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+
   // Three bags along the top, drawn as seams rather than as separate boxes, so the
   // shape stays one clean bank at this size.
   ctx.strokeStyle = 'rgba(96,80,46,0.55)';
@@ -5023,6 +5339,10 @@ function drawDoor(gx, gy, wx, wy, h, col, fade) {
 // gets through it and nothing blows it up either.
 function drawHedgehog(wx, wy, h, col, fade) {
   if (fade !== undefined) ctx.globalAlpha = fade;
+  // Welded angle iron in the war, scrap timber and rebar spikes in the apocalypse. Same
+  // three crossed lengths either way, just a different material.
+  const steel = !(TH().spikes && TH().spikes.steel === false);
+  if (!steel) col = TH().spikes ? TH().spikes.color : col;
   const cx = wx + TILE / 2, cy = wy + TILE / 2;
   const r = TILE * 0.36;
   const bars = [[0, 0], [Math.PI / 3, 0], [-Math.PI / 3, 0]];
@@ -5415,6 +5735,8 @@ function drawStanding() {
       const kind = tileKind(t);
       const col = t === WALL ? brickAt(gx, gy)
         : t === CRATE ? crateColor()
+        : t === SANDBAG ? (TH().barricade ? TH().barricade.color : kind.color)
+        : t === HEDGEHOG ? (TH().spikes ? TH().spikes.color : kind.color)
         : (kind && kind.color) || crateColor();
       // Walls carry marks; crates get their lid instead.
       const decal = (t === WALL && fade === undefined) ? decalFor(gx, gy) : null;
@@ -5463,6 +5785,55 @@ function drawStanding() {
     }
   }
   if (!cam.first) drawPlayerMarker();
+}
+
+// Arrows round the edge of the screen for anything close by that is off screen.
+//
+// The camera can be turned and zoomed now, so it is entirely possible to be looking one
+// way while something walks up behind you. A small marker at the edge, pointing the way
+// it is, fixes that without cluttering the middle of the screen. Only things that are
+// actually near enough to matter get one, otherwise the whole rim fills with arrows.
+const EDGE_WATCH = 620;         // how close something has to be to be worth a marker
+function drawEdgeArrows() {
+  if (cam.first) return;        // out of your own eyes the rim is already the whole view
+  const pad = 26;
+  const cx = VW / 2, cy = VH / 2;
+  const mine = player.side;
+
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.side === mine) continue;
+    const d = Math.hypot(e.x - player.x, e.y - player.y);
+    if (d > EDGE_WATCH) continue;
+    const sx = isoX(e.x, e.y, e.z || 0) + cx;
+    const sy = isoY(e.x, e.y, e.z || 0) + cy;
+    // On screen already, with a margin so an arrow does not flicker at the boundary.
+    if (sx > pad && sx < VW - pad && sy > pad && sy < VH - pad) continue;
+
+    // Point from the middle of the screen towards it, and put the marker where that
+    // direction leaves the safe area.
+    const ang = Math.atan2(sy - cy, sx - cx);
+    const hw = VW / 2 - pad - PAD.r, hh = VH / 2 - pad - PAD.b;
+    const t = Math.min(Math.abs(hw / Math.cos(ang)) || 1e9,
+                       Math.abs(hh / Math.sin(ang)) || 1e9);
+    const ax = cx + Math.cos(ang) * t, ay = cy + Math.sin(ang) * t;
+
+    const near = 1 - Math.min(1, d / EDGE_WATCH);
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(ang);
+    ctx.globalAlpha = 0.35 + near * 0.5;
+    ctx.fillStyle = e.boss ? '#ff9f43' : (e.side === NOOB ? '#4da3ff' : '#8ecf4a');
+    const sc = 1 + near * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(9 * sc, 0);
+    ctx.lineTo(-5 * sc, -6 * sc);
+    ctx.lineTo(-2 * sc, 0);
+    ctx.lineTo(-5 * sc, 6 * sc);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
 }
 
 // The morph row. Forms you have not unlocked yet are shown but greyed out, so it
@@ -5773,6 +6144,7 @@ function drawHUD() {
     ctx.textAlign = 'left';
   }
 
+  drawEdgeArrows();
   drawMorphRow();
   drawHotbar();
   drawMinimap();
@@ -5896,6 +6268,8 @@ function drawPause() {
     player.kills.noob + ' kills as a noob',
     player.kills.zombie + ' kills as a zombie',
     'Best run: ' + best + '    Best streak: ' + bestStreak,
+    'Best on ' + LV().name + ': wave ' + ((save.bests && save.bests[LV().key]) || 0),
+    'Medals: ' + medalCount() + ' of ' + MEDALS.length,
   ];
   ctx.font = '600 15px -apple-system, system-ui, sans-serif';
   lines.forEach((ln, i) => {
@@ -6905,6 +7279,41 @@ function buildPreview() {
 
 // The weapons tab. Every one is drawn rather than described, because a name and a
 // price tell an eight year old nothing about what he is getting.
+// The medal shelf. Locked ones are shown rather than hidden, because a locked medal
+// with its hint on it is the whole point: it is a thing to go and try.
+function medalRow() {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, 'Medals  ' + medalCount() + ' of ' + MEDALS.length));
+
+  // Best wave reached on each difficulty, which used to be one shared number so a good
+  // run on Easy buried a harder won one on Hard.
+  const bests = el('div', 'bestrow');
+  for (const lv of LEVELS) {
+    const b = el('div', 'bestcard');
+    b.appendChild(el('div', 'bestname', lv.name));
+    const v = (save.bests && save.bests[lv.key]) || 0;
+    const val = el('div', 'bestval', v ? ('WAVE ' + v) : '--');
+    if (!v) val.setAttribute('data-none', '1');
+    b.appendChild(val);
+    bests.appendChild(b);
+  }
+  row.appendChild(bests);
+
+  const grid = el('div', 'mgrid');
+  MEDALS.forEach(m => {
+    const got = hasMedal(m.id);
+    const card = el('div', 'mcard');
+    card.setAttribute('data-on', got ? '1' : '0');
+    const disc = el('div', 'mdisc', got ? '\u2605' : '?');
+    card.appendChild(disc);
+    card.appendChild(el('div', 'mname', m.name));
+    card.appendChild(el('div', 'mhint', got ? 'Done' : m.hint));
+    grid.appendChild(card);
+  });
+  row.appendChild(grid);
+  return row;
+}
+
 function weaponRow() {
   const row = el('div', 'srow');
   row.appendChild(el('h3', null, 'Weapons'));
@@ -6954,6 +7363,7 @@ function weaponRow() {
         save.coins -= w.cost;
         save.ownedWeapons = save.ownedWeapons || {};
         save.ownedWeapons[w.key] = true;
+        if (Object.keys(save.ownedWeapons).length >= 5) awardMedal('armoury');
         save.look.weapon = i;
         writeSave();
         SFX.rankup();
@@ -7164,6 +7574,8 @@ function drawShop() {
     sbody.appendChild(swatchRow('Trousers', PANTS, 'legs'));
     sbody.appendChild(el('div', 'shint',
       'Coins come from kills and from clearing waves, and they stay saved between games.'));
+  } else if (shopTab === 'medals') {
+    sbody.appendChild(medalRow());
   } else if (shopTab === 'weapons') {
     sbody.appendChild(buildPreview());
     sbody.appendChild(weaponRow());

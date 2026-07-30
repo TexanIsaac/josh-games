@@ -144,7 +144,10 @@ eval(code + `
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
    DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
-   shadeRaw, partGradient,
+   shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
+   MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
+   noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
+   THEMES, get theme(){return theme}, EDGE_WATCH, hurtEnemy, flipSide, draw, writeSave, bricks,
    wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint, WALL_H, TILE,
    setFirstPerson, get camWant(){return camWant}, get cam(){return cam},
    startSideFor, NOOB, ZOMB, update,
@@ -933,15 +936,35 @@ ok('the weapons all look different from each other', (() => {
   });
   return new Set(sigs).size === sigs.length;
 })());
-ok('your guy carries what you bought, in the game and not only in the shop',
-  src.indexOf('carries whatever was bought in the shop') !== -1);
-ok('everyone else carries what their rank gives them',
-  src.indexOf('everyone else carries what their rank gives them') !== -1);
+ok('your guy carries what you bought, in the game and not only in the shop', (() => {
+  // The player reads the shop choice; everyone else reads their rank.
+  const i = src.indexOf('let wKind = null;');
+  const blk = src.slice(i, i + 520);
+  return i !== -1 && blk.indexOf('WEAPONS[save.look.weapon') !== -1
+    && blk.indexOf('rk.weapon') !== -1;
+})());
+ok('a carried weapon is built from blocks so it turns with him',
+  typeof G.drawBlockWeapon === 'function');
+ok('every weapon kind a character can hold is drawn as blocks', (() => {
+  const kinds = ['knife', 'knuckles', 'rifle', 'sniper', 'smg', 'minigun',
+                 'shotgun', 'flamer', 'panzer', 'shield'];
+  const missing = kinds.filter(k => src.indexOf("'" + k + "'") === -1);
+  if (missing.length) console.log('    not held: ' + missing.join(', '));
+  return missing.length === 0;
+})());
 
 group('Facing, worked out on screen');
-ok('which way he faces is decided from the projection, not from world angles',
-  src.indexOf('worked out on screen rather than in the world') !== -1,
-  'so it is right whichever way the camera has been dragged');
+ok('a body part is placed in his own frame, so the rig is really 3D', (() => {
+  // Across the shoulders, out in front, and up, then turned to his facing. This is what
+  // makes it three dimensional rather than a flat picture that gets mirrored.
+  return src.indexOf('const LX = (lx, ly) => g.x + lx * sa + ly * ca;') !== -1
+    && src.indexOf('drawBoxRot(LX(lx, ly), LY(lx, ly), lz, w, d, h, col, rot)') !== -1;
+})());
+ok('there are eight big blocks, not twenty small ones',
+  src.indexOf('twenty independently shaded ten pixel blobs read as gravel') !== -1);
+ok('the face is stuck to the front of the head in 3D, not floating',
+  typeof G.drawBlockFace === 'function'
+  && src.indexOf('a point on it is projected the same as anything else') !== -1);
 ok('walking towards the camera shows his front', (() => {
   G.reset();
   // Facing the same way the camera looks means walking away from the viewer.
@@ -967,6 +990,154 @@ ok('the theme handler no longer grabs the difficulty buttons',
   src.indexOf("querySelectorAll('.tbtn[data-theme]')") !== -1);
 ok('and the reason it looked like they did nothing is written down',
   src.indexOf('so it looked like the buttons did nothing') !== -1);
+
+group('Medals');
+G.reset();
+ok('there are a good number of them', G.MEDALS.length >= 12, G.MEDALS.length + ' medals');
+ok('every one has a name and a hint you could act on',
+  G.MEDALS.every(m => m.id && m.name && m.hint && m.hint.length > 10));
+ok('no two share an id', new Set(G.MEDALS.map(m => m.id)).size === G.MEDALS.length);
+ok('none are held to start with', (() => {
+  G.save.medals = {};
+  return G.medalCount() === 0;
+})());
+ok('awarding one sticks and is counted', (() => {
+  G.save.medals = {};
+  G.awardMedal('tank');
+  return G.hasMedal('tank') && G.medalCount() === 1;
+})());
+ok('awarding the same one twice does not count twice', (() => {
+  G.awardMedal('tank'); G.awardMedal('tank');
+  return G.medalCount() === 1;
+})(), 'so it can be called from anywhere without checking first');
+ok('an unknown id does not throw', (() => {
+  try { G.awardMedal('nonsense-medal'); return true; } catch (err) { return false; }
+})());
+ok('medals survive a save and reload', (() => {
+  G.save.medals = {};
+  G.awardMedal('air');
+  G.writeSave();
+  G.loadSave();
+  return G.hasMedal('air');
+})());
+
+ok('a first kill really does award one', (() => {
+  G.save.medals = {}; G.reset();
+  // Put one enemy right next to the player and kill it outright.
+  G.enemies.length = 0;
+  G.spawnEnemy ? null : null;
+  const e = { x: G.player.x + 10, y: G.player.y, z: 0, r: 10, hp: 1, maxhp: 1,
+              side: G.player.side === 0 ? 1 : 0, rank: 0, size: 1, kills: 0,
+              walk: 0, faceAng: 0, type: 'normal' };
+  G.enemies.push(e);
+  G.hurtEnemy(e, 999, G.player.x, G.player.y);
+  return G.hasMedal('first');
+})(), 'the hook is really wired in, not just declared');
+
+ok('reaching a rank awards its medal', (() => {
+  G.save.medals = {};
+  G.noteRank(3);
+  return G.hasMedal('knifer') && G.hasMedal('gunner') && G.hasMedal('rioter');
+})(), 'and the ranks below it too');
+ok('changing sides awards one', (() => {
+  G.save.medals = {}; G.reset();
+  G.flipSide();
+  return G.hasMedal('turned') || G.hasMedal('backagain');
+})());
+ok('clearing wave ten awards it', (() => {
+  G.save.medals = {}; G.reset();
+  G.wave = 10;
+  G.finishWave();
+  return G.hasMedal('wave10');
+})());
+ok('becoming the boss awards one', (() => {
+  G.save.medals = {};
+  G.morphTo('boss');
+  return G.hasMedal('bossform');
+})());
+G.save.medals = {}; G.reset();
+
+group('A best wave for each difficulty');
+ok('bests are kept per difficulty, not as one number', (() => {
+  G.save.bests = {};
+  G.setLevel(0); G.reset(); G.wave = 7; G.finishWave();
+  G.setLevel(2); G.reset(); G.wave = 3; G.finishWave();
+  G.setLevel(1);
+  return G.save.bests.easy === 7 && G.save.bests.hard === 3;
+})(), 'a good Easy run no longer buries a hard won Hard one');
+ok('a worse run does not overwrite a better one', (() => {
+  G.setLevel(0); G.reset(); G.wave = 2; G.finishWave(); G.setLevel(1);
+  return G.save.bests.easy === 7;
+})());
+ok('they survive a reload', (() => {
+  G.writeSave(); G.loadSave();
+  return G.save.bests.easy === 7;
+})());
+G.save.bests = {}; G.reset();
+
+group('Arrows for what you cannot see');
+ok('there is a marker for off-screen enemies', typeof G.drawEdgeArrows === 'function');
+ok('it does not run in first person, where the rim is the whole view',
+  src.indexOf('out of your own eyes the rim is already the whole view') !== -1);
+ok('only things near enough to matter get one', G.EDGE_WATCH > 200 && G.EDGE_WATCH < 1200,
+  'within ' + G.EDGE_WATCH + ' units');
+ok('drawing them never throws, with a crowd all round', (() => {
+  G.reset();
+  G.enemies.length = 0;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    G.enemies.push({ x: G.player.x + Math.cos(a) * 400, y: G.player.y + Math.sin(a) * 400,
+                     z: 0, r: 10, hp: 5, maxhp: 5, side: G.player.side === 0 ? 1 : 0,
+                     rank: 0, size: 1, walk: 0, faceAng: 0, type: 'normal' });
+  }
+  try { G.drawEdgeArrows(); } catch (err) { console.log('    ' + err.message); return false; }
+  return true;
+})());
+ok('your own side never gets an arrow', (() => {
+  // Only things on the other side are a threat worth pointing at.
+  const i = src.indexOf('function drawEdgeArrows');
+  return src.slice(i, i + 900).indexOf('e.side === mine') !== -1;
+})());
+G.reset();
+
+group('Noobs vs Zombies is an apocalypse, not a war');
+ok('the two themes use different scenery', (() => {
+  const a = G.THEMES.noobs, b = G.THEMES.ww2;
+  return a.barricade && b.barricade && a.barricade.name !== b.barricade.name
+    && a.spikes.steel !== b.spikes.steel;
+})(), 'rubble and scrap against sandbags and steel');
+ok('the reason is written down',
+  src.indexOf('does not have\n    // sandbag emplacements') !== -1
+  || src.indexOf('sandbag emplacements') !== -1);
+ok('the apocalypse bricks are weathered rather than bright white', (() => {
+  G.applyTheme('noobs');
+  const list = G.bricks();
+  G.applyTheme('noobs');
+  // Pure white was the most common brick before; it should not be any more.
+  return list.indexOf('#f2f3f5') === -1;
+})());
+ok('but a few bright Roblox bricks still show through',
+  G.THEMES.noobs.bricks.some(c => c === '#c4281c' || c === '#4fa8f0' || c === '#f5cd30'));
+ok('every brick in both themes still reads against the grass', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    const bad = G.bricks().filter(c => fromGrass(c) <= 18);
+    if (bad.length) { console.log('    ' + th + ': ' + bad.join(', ')); G.applyTheme('noobs'); return false; }
+  }
+  G.applyTheme('noobs');
+  return true;
+})());
+ok('both themes draw a whole frame without throwing', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    G.reset();
+    try { for (let i = 0; i < 4; i++) { G.update(1 / 60); G.draw(); } }
+    catch (err) { console.log('    ' + th + ': ' + err.message); G.applyTheme('noobs'); return false; }
+  }
+  G.applyTheme('noobs');
+  G.reset();
+  return true;
+})());
 
 group('Pickups and the item row');
 ok('there is a version marker on screen', typeof G.VERSION === 'string' && G.VERSION.length > 0,
