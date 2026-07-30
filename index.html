@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v18';
+const VERSION = 'v19';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -703,6 +703,17 @@ const cam = {
   dist: 900,             // how far back it sits
   first: false,          // stood in the player's own shoes
 };
+
+// Where the camera is heading, as opposed to where it currently is.
+//
+// Everything about the camera used to snap: the look-at point sat exactly on the
+// player every frame and the angle jumped straight to wherever your finger was.
+// That is what made scrolling feel horrible. Now the camera chases these targets
+// instead, so following and dragging both glide.
+const camWant = { yaw: Math.PI * 0.25, pitch: 0.58, tx: 0, ty: 0 };
+const CAM_FOLLOW = 7.5;     // how quickly it catches up with the player
+const CAM_TURN = 12;        // how quickly it settles onto the angle you dragged to
+const CAM_FOLLOW_FP = 30;   // first person has to be tight or it feels seasick
 const FOCAL = 1400;      // smaller means more exaggerated perspective
 const CAM_DIST = 620;    // how far back it sits looking over the shoulder
 // The camera looks down, so aiming at floor level pushed the player up out of the
@@ -1204,7 +1215,11 @@ function reset() {
   fire.active = false; fire.id = null;
   look.active = false; look.id = null;
   cam.first = false; PITCH_MIN = TP_PITCH_MIN; PITCH_MAX = TP_PITCH_MAX;
-  cam.pitch = 0.58; cam.yaw = Math.PI * 0.25; camRefresh();
+  cam.pitch = 0.58; cam.yaw = Math.PI * 0.25;
+  camWant.pitch = 0.58; camWant.yaw = Math.PI * 0.25;
+  cam.tx = camWant.tx = playerStart.x;
+  cam.ty = camWant.ty = playerStart.y;
+  camRefresh();
   startWave(1);
   spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
   running = true;
@@ -1685,13 +1700,12 @@ function onDown(e) {
 
 function onMove(e) {
   if (look.active && e.pointerId === look.id) {
-    cam.yaw += (e.clientX - look.lx) * TUNE.CAM_DRAG_YAW;
-    cam.pitch -= (e.clientY - look.ly) * TUNE.CAM_DRAG_PITCH;
-    // Stop it from tipping past straight down or flat along the ground.
-    if (cam.pitch < PITCH_MIN) cam.pitch = PITCH_MIN;
-    if (cam.pitch > PITCH_MAX) cam.pitch = PITCH_MAX;
+    // Aim the camera somewhere new; it eases over rather than jumping.
+    camWant.yaw += (e.clientX - look.lx) * TUNE.CAM_DRAG_YAW;
+    camWant.pitch -= (e.clientY - look.ly) * TUNE.CAM_DRAG_PITCH;
+    if (camWant.pitch < PITCH_MIN) camWant.pitch = PITCH_MIN;
+    if (camWant.pitch > PITCH_MAX) camWant.pitch = PITCH_MAX;
     look.lx = e.clientX; look.ly = e.clientY;
-    camRefresh();
   }
   if (stick.active && e.pointerId === stick.id) {
     let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
@@ -1724,12 +1738,10 @@ addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
 // On a laptop, Q and E spin the camera and R and F change the angle.
 function cameraKeys(dt) {
-  let moved = false;
-  if (keys['q']) { cam.yaw -= dt * 1.6; moved = true; }
-  if (keys['e']) { cam.yaw += dt * 1.6; moved = true; }
-  if (keys['r']) { cam.pitch = Math.min(PITCH_MAX, cam.pitch + dt * 1.1); moved = true; }
-  if (keys['f']) { cam.pitch = Math.max(PITCH_MIN, cam.pitch - dt * 1.1); moved = true; }
-  if (moved) camRefresh();
+  if (keys['q']) camWant.yaw -= dt * 1.6;
+  if (keys['e']) camWant.yaw += dt * 1.6;
+  if (keys['r']) camWant.pitch = Math.min(PITCH_MAX, camWant.pitch + dt * 1.1);
+  if (keys['f']) camWant.pitch = Math.max(PITCH_MIN, camWant.pitch - dt * 1.1);
 }
 
 function inputVector() {
@@ -2035,6 +2047,7 @@ function update(dt) {
   if (waveState === 'picking') { driftEffects(dt); return; }
 
   cameraKeys(dt);
+  moveCamera(dt);
 
   // The stick points where you want to go on screen; this turns that into a
   // direction across the world, whichever way the camera is facing.
@@ -2339,11 +2352,12 @@ function setFirstPerson(on) {
   cam.first = !!on;
   if (cam.first) {
     PITCH_MIN = FP_PITCH_MIN; PITCH_MAX = FP_PITCH_MAX;
-    cam.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, 0.08));
+    camWant.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, 0.08));
   } else {
     PITCH_MIN = TP_PITCH_MIN; PITCH_MAX = TP_PITCH_MAX;
-    cam.pitch = 0.58;
+    camWant.pitch = 0.58;
   }
+  cam.pitch = camWant.pitch;
   applyViewpoint();
   camRefresh();
   if (!muted) SFX.ui();
@@ -2364,9 +2378,38 @@ function applyViewpoint() {
   }
 }
 
+// Called every frame with the time step, so the camera can ease rather than snap.
+function moveCamera(dt) {
+  camWant.tx = player.x;
+  camWant.ty = player.y;
+
+  // A time-based ease, so it feels the same whatever the frame rate.
+  const follow = 1 - Math.exp(-(cam.first ? CAM_FOLLOW_FP : CAM_FOLLOW) * dt);
+  cam.tx += (camWant.tx - cam.tx) * follow;
+  cam.ty += (camWant.ty - cam.ty) * follow;
+
+  const turn = 1 - Math.exp(-CAM_TURN * dt);
+  // Take the shorter way round, so passing the back of the circle does not send it
+  // the long way about.
+  let dYaw = camWant.yaw - cam.yaw;
+  while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+  while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+  cam.yaw += dYaw * turn;
+  cam.pitch += (camWant.pitch - cam.pitch) * turn;
+
+  applyViewpoint();
+  camRefresh();
+}
+
+// Used when something needs the camera to be exactly right this instant rather
+// than eased into place.
 function updateCamera() {
   cam.tx = player.x;
   cam.ty = player.y;
+  camWant.tx = player.x;
+  camWant.ty = player.y;
+  cam.yaw = camWant.yaw;
+  cam.pitch = camWant.pitch;
   applyViewpoint();
   camRefresh();
 }
@@ -3266,7 +3309,8 @@ function drawPause() {
 }
 
 function draw() {
-  updateCamera();
+  applyViewpoint();
+  camRefresh();
   ctx.save();
   if (shake.mag > .3) {
     const j = shake.mag;

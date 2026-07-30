@@ -101,7 +101,7 @@ eval(code + `
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
-   TP_LOOK_AT,
+   TP_LOOK_AT, camWant, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -191,10 +191,15 @@ ok('the Lego-vs-Roblox reasoning is written down', /made it look like Lego/.test
 
 group('It is drawn in 3D, not flat top-down')
 ok('there is a tilted projection', typeof G.isoX === 'function' && typeof G.isoY === 'function');
+// Measured near the player. World (0,0) is the far corner behind the camera now,
+// where the projection clamps and the numbers stop meaning anything.
+G.updateCamera();
+const px0 = G.player.x, py0 = G.player.y;
 ok('moving across the ground moves you diagonally on screen',
-  G.isoX(40, 0, 0) !== G.isoX(0, 40, 0));
-ok('height lifts things up the screen', G.isoY(0, 0, 40) < G.isoY(0, 0, 0),
-  'z=40 sits ' + (G.isoY(0, 0, 0) - G.isoY(0, 0, 40)).toFixed(0) + 'px higher');
+  G.isoX(px0 + 40, py0, 0) !== G.isoX(px0, py0 + 40, 0));
+ok('height lifts things up the screen',
+  G.isoY(px0, py0, 40) < G.isoY(px0, py0, 0),
+  'z=40 sits ' + (G.isoY(px0, py0, 0) - G.isoY(px0, py0, 40)).toFixed(0) + 'px higher');
 ok('blocks are drawn as boxes with three faces', /function drawBox/.test(src)
   && /Left side, the one in most shadow/.test(src)
   && /Right side, catching more light/.test(src)
@@ -1277,6 +1282,57 @@ ok('a block far behind the camera is dropped', (() => {
   const bx = G.player.x - Math.sin(G.cam.yaw) * 3000;
   const by = G.player.y - Math.cos(G.cam.yaw) * 3000;
   return !G.boxOnScreen(bx, by, G.WALL_H);
+})());
+
+group('The camera glides instead of snapping');
+G.reset();
+ok('there is a target for it to chase', typeof G.camWant === 'object'
+  && 'yaw' in G.camWant && 'tx' in G.camWant);
+ok('the reason it felt bad is written down', /what made scrolling feel horrible/.test(src));
+ok('dragging aims the target rather than yanking the camera',
+  /camWant\.yaw \+=/.test(src) && !/cam\.yaw \+= \(e\.clientX/.test(src));
+ok('following the player is eased, not glued', (() => {
+  G.reset(); G.updateCamera();
+  // Jump the player a long way; the camera should follow over several frames.
+  G.player.x += 400;
+  const startGap = Math.hypot(G.cam.tx - G.player.x, G.cam.ty - G.player.y);
+  G.moveCamera(1 / 60);
+  const afterOne = Math.hypot(G.cam.tx - G.player.x, G.cam.ty - G.player.y);
+  return afterOne < startGap && afterOne > 1;
+})(), 'it closes the gap gradually');
+ok('and it does get there in the end', (() => {
+  for (let i = 0; i < 240; i++) G.moveCamera(1 / 60);
+  return Math.hypot(G.cam.tx - G.player.x, G.cam.ty - G.player.y) < 2;
+})());
+ok('turning is eased too', (() => {
+  G.reset(); G.updateCamera();
+  G.camWant.yaw = G.cam.yaw + 1.2;
+  const before = G.cam.yaw;
+  G.moveCamera(1 / 60);
+  return G.cam.yaw > before && G.cam.yaw < G.camWant.yaw;
+})());
+ok('it takes the short way round rather than the long way',
+  /shorter way round/.test(src));
+ok('spinning past the back of the circle does not send it the wrong way', (() => {
+  G.reset(); G.updateCamera();
+  G.cam.yaw = 0.1;
+  G.camWant.yaw = -0.1;          // just the other side of zero
+  const before = G.cam.yaw;
+  G.moveCamera(1 / 60);
+  return G.cam.yaw < before;     // should ease down, not spin all the way round
+})());
+ok('first person follows tighter, so it does not feel seasick',
+  G.CAM_FOLLOW_FP > G.CAM_FOLLOW, G.CAM_FOLLOW_FP + ' vs ' + G.CAM_FOLLOW);
+ok('easing is frame-rate independent', /feels the same whatever the frame rate/.test(src));
+ok('a long run with the camera easing stays sane', (() => {
+  G.reset();
+  for (let i = 0; i < 1200; i++) {
+    aimStickAt(G.player.x + 200, G.player.y + 80);
+    G.update(1 / 60);
+    if (G.waveState === 'picking') G.choose(G.cards[0]);
+  }
+  return Number.isFinite(G.cam.tx) && Number.isFinite(G.cam.yaw)
+    && Math.hypot(G.cam.tx - G.player.x, G.cam.ty - G.player.y) < 200;
 })());
 
 group('Josh is credited');
