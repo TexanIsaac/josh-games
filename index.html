@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v14';
+const VERSION = 'v17';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -320,6 +320,7 @@ const TUNE = {
   BOSS_MODE_HP: 2.5,
   BOSS_MODE_ARMOR: 0.4,
   GRENADE_DMG: 130, GRENADE_RADIUS: 115,
+  RPG_DMG: 260, RPG_RADIUS: 150, RPG_SPEED: 330,
   BOMB_DMG: 210,    BOMB_RADIUS: 180,
   NUKE_DMG: 2200,   NUKE_RADIUS: 3000,
   LIGHTNING_DMG: 190, LIGHTNING_JUMPS: 6,
@@ -356,6 +357,10 @@ const TUNE = {
   WALL_FADE: 0.42,
 
   // Feel. Turn these up for more chaos.
+  // Dragging the right hand side of the screen swings the camera round.
+  CAM_DRAG_YAW: 0.006,        // how far it spins per pixel dragged sideways
+  CAM_DRAG_PITCH: 0.004,      // and how much the angle changes dragging up or down
+
   SCREEN_SHAKE: 1.0,
   BLOOD: 1.0,
   HITSTOP: 1.0,
@@ -401,11 +406,20 @@ const MAP = `
 // ---------------------------------------------------------------------------
 //  RANKS  --  four on each side, mirrored, exactly as Josh described.
 // ---------------------------------------------------------------------------
+// The Rioter used to be useless, and there was a real reason for it: it comes
+// after the Gunner, so reaching the top rank took your gun away and handed you a
+// melee weapon instead. Fifteen more kills of work for a straight downgrade.
+//
+// It is now the sneaky-good one. Nothing about it looks flashy, but it hits harder
+// than the gun, swings faster, shrugs off two thirds of what lands on it, shoves
+// whatever it touches off its feet, and quietly cannot be infected at all. On the
+// noob side that means the shield stops you ever turning into a zombie, which is
+// the strongest thing in the game while looking like the least.
 const NOOB_RANKS = [
   { name: 'Noob',        weapon: 'fists',       at: 0,                     reach: 44,  dmg: 22, rate: .34, armor: 0,   ranged: false },
   { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER, reach: 60,  dmg: 46, rate: .27, armor: 0,   ranged: false },
   { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER, reach: 520, dmg: 58, rate: .30, armor: 0,   ranged: true  },
-  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER, reach: 66,  dmg: 44, rate: .30, armor: .45, ranged: false },
+  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER, reach: 74,  dmg: 64, rate: .25, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
 // The zombie side gets the same shape: melee, better melee, ranged, tank.
@@ -413,7 +427,7 @@ const ZOMBIE_RANKS = [
   { name: 'Zombie',         weapon: 'bite',  at: 0,                     reach: 42,  dmg: 20, rate: .46, armor: 0,   ranged: false },
   { name: 'Zombie Ripper',  weapon: 'claws', at: TUNE.KILLS_FOR_KNIFER, reach: 56,  dmg: 40, rate: .30, armor: 0,   ranged: false },
   { name: 'Zombie Spitter', weapon: 'acid',  at: TUNE.KILLS_FOR_GUNNER, reach: 470, dmg: 44, rate: .52, armor: 0,   ranged: true  },
-  { name: 'Zombie Brute',   weapon: 'smash', at: TUNE.KILLS_FOR_RIOTER, reach: 68,  dmg: 52, rate: .42, armor: .45, ranged: false },
+  { name: 'Zombie Brute',   weapon: 'smash', at: TUNE.KILLS_FOR_RIOTER, reach: 76,  dmg: 68, rate: .38, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
 
@@ -470,6 +484,7 @@ const POWERUPS = [
   { kind: 'rage',      name: 'RAGE',      color: '#ff6b4a', weight: 13 },
   { kind: 'shield',    name: 'SHIELD',    color: '#c9d6e8', weight: 12 },
   { kind: 'speed',     name: 'FAST FEET', color: '#ffd84d', weight: 12 },
+  { kind: 'rpg',       name: 'RPG',       color: '#4f5560', weight: 13 },
   { kind: 'nuke',      name: 'NUKE',      color: '#ff9f43', weight: 5  },
 ];
 const POWERUP_WEIGHT = POWERUPS.reduce((s, p) => s + p.weight, 0);
@@ -557,6 +572,7 @@ function layout() {
   btn.pause = { x: VW - PAD.r - s,                 y: top, w: s, h: s, key: 'pause' };
   btn.mute  = { x: VW - PAD.r - s * 2 - g,         y: top, w: s, h: s, key: 'mute'  };
   btn.full  = { x: VW - PAD.r - s * 3 - g * 2,     y: top, w: s, h: s, key: 'full'  };
+  btn.view  = { x: VW - PAD.r - s * 4 - g * 3,     y: top, w: s, h: s, key: 'view'  };
 
   // Minimap tucks in under the buttons, top right.
   const mw = Math.min(150, Math.max(96, VW * 0.17));
@@ -657,24 +673,79 @@ function brickAt(gx, gy) {
 const GRASS_A = '#8fb356', GRASS_B = '#87ab4e';
 const SKY = '#a8d4ea';
 
-const ISO_X = 0.66, ISO_Y = 0.35;
+// ---------------------------------------------------------------------------
+//  The camera
+//
+//  This used to be a fixed 45 degree view with no perspective: everything the
+//  same size however far away it was, and no way to look round a corner. Now
+//  there is a real camera. It sits back from whatever it is looking at, points
+//  down at an angle, and everything is divided by how far away it is, so things
+//  further off are genuinely smaller. Drag the right hand side of the screen to
+//  swing it round and change how steeply you are looking down.
+//
+//  A point in the world has three numbers: x and y across the ground and z for
+//  height. These turn that into a position on screen.
+// ---------------------------------------------------------------------------
+const cam = {
+  yaw: Math.PI * 0.25,   // which way round it is looking
+  pitch: 0.58,           // how steeply it looks down
+  tx: 0, ty: 0, tz: 0,   // the point it is looking at
+  dist: 900,             // how far back it sits
+  first: false,          // stood in the player's own shoes
+};
+const FOCAL = 1400;      // smaller means more exaggerated perspective
+const CAM_DIST = 900;    // how far back it sits looking over the shoulder
+const CAM_SCALE = 1.0;
+let PITCH_MIN = 0.22, PITCH_MAX = 1.15;
 
-// How far in the camera sits. Zoomed all the way out the whole map fitted on an
-// iPad at once and everyone was the size of a grain of rice, which is why none of
-// the detail was landing. Close in, the blocks and the characters are big enough
-// to actually look like something.
-const ZOOM = 2.35;
+// First person. The camera drops to about head height, sits almost on top of the
+// player and looks nearly level, and the player's own body is not drawn because
+// you would be looking at the inside of your own head.
+const FP_EYE = 36, FP_DIST = 26;
+const FP_PITCH_MIN = -0.45, FP_PITCH_MAX = 0.55;
+const TP_PITCH_MIN = 0.22, TP_PITCH_MAX = 1.15;
 
-function isoX(wx, wy) { return (wx - wy) * ISO_X; }
-function isoY(wx, wy, wz) { return (wx + wy) * ISO_Y - (wz || 0); }
+// The angles only change when you drag, so the sines and cosines are worked out
+// once per frame rather than for every corner of every block.
+let _cy = 1, _sy = 0, _cp = 1, _sp = 0;
+function camRefresh() {
+  _cy = Math.cos(cam.yaw); _sy = Math.sin(cam.yaw);
+  _cp = Math.cos(cam.pitch); _sp = Math.sin(cam.pitch);
+}
+camRefresh();
 
-// Turning the joystick into world movement. Because the world is tilted, pushing
-// up has to send you away from the camera rather than along a grid line, or the
-// controls feel wrong.
+// How far from the camera a point is. Bigger means further away. Used both for
+// the perspective divide and for working out what to draw first.
+function viewDepth(wx, wy, wz) {
+  const dx = wx - cam.tx, dy = wy - cam.ty;
+  const fwd = dx * _sy + dy * _cy;
+  return fwd * _cp - ((wz || 0) - cam.tz) * _sp + cam.dist;
+}
+
+function isoX(wx, wy, wz) {
+  const dx = wx - cam.tx, dy = wy - cam.ty, dz = (wz || 0) - cam.tz;
+  const right = dx * _cy - dy * _sy;
+  const fwd = dx * _sy + dy * _cy;
+  const depth = fwd * _cp - dz * _sp + cam.dist;
+  return right * (FOCAL / (depth < 40 ? 40 : depth)) * CAM_SCALE;
+}
+
+function isoY(wx, wy, wz) {
+  const dx = wx - cam.tx, dy = wy - cam.ty, dz = (wz || 0) - cam.tz;
+  const fwd = dx * _sy + dy * _cy;
+  const depth = fwd * _cp - dz * _sp + cam.dist;
+  const up = fwd * _sp + dz * _cp;
+  return -up * (FOCAL / (depth < 40 ? 40 : depth)) * CAM_SCALE;
+}
+
+// Turning the joystick into world movement. Pushing up has to send you away from
+// the camera whichever way round the camera happens to be pointing, so the stick
+// direction gets turned back through the camera angle.
 function stickToWorld(sdx, sdy) {
   if (sdx === 0 && sdy === 0) return { dx: 0, dy: 0 };
-  const a = sdx / ISO_X, b = sdy / ISO_Y;
-  let dx = (a + b) / 2, dy = (b - a) / 2;
+  const right = sdx, fwd = -sdy;
+  let dx = right * _cy + fwd * _sy;
+  let dy = -right * _sy + fwd * _cy;
   const len = Math.hypot(dx, dy) || 1;
   return { dx: dx / len, dy: dy / len };
 }
@@ -690,10 +761,10 @@ function drawBox(wx, wy, wz, w, d, h, color, alpha) {
   const zt = wz + h, zb = wz;
   if (alpha !== undefined) ctx.globalAlpha = alpha;
 
-  const axT = isoX(x0, y0), ayT = isoY(x0, y0, zt);
-  const bxT = isoX(x1, y0), byT = isoY(x1, y0, zt);
-  const cxT = isoX(x1, y1), cyT = isoY(x1, y1, zt);
-  const dxT = isoX(x0, y1), dyT = isoY(x0, y1, zt);
+  const axT = isoX(x0, y0, zt), ayT = isoY(x0, y0, zt);
+  const bxT = isoX(x1, y0, zt), byT = isoY(x1, y0, zt);
+  const cxT = isoX(x1, y1, zt), cyT = isoY(x1, y1, zt);
+  const dxT = isoX(x0, y1, zt), dyT = isoY(x0, y1, zt);
   const bxB = bxT, byB = isoY(x1, y0, zb);
   const cxB = cxT, cyB = isoY(x1, y1, zb);
   const dxB = dxT, dyB = isoY(x0, y1, zb);
@@ -1096,6 +1167,7 @@ function newPlayer() {
     side: NOOB, kills: { noob: 0, zombie: 0 },
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
+    walk: 0, moving: false,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: freshUpgrades(), rageT: 0, speedT: 0,
     points: 0, bossT: 0, size: 1,
@@ -1117,6 +1189,9 @@ function reset() {
   // Starting a fresh game should not inherit a thumb that was still down.
   stick.active = false; stick.dx = 0; stick.dy = 0; stick.id = null;
   fire.active = false; fire.id = null;
+  look.active = false; look.id = null;
+  cam.first = false; PITCH_MIN = TP_PITCH_MIN; PITCH_MAX = TP_PITCH_MAX;
+  cam.pitch = 0.58; cam.yaw = Math.PI * 0.25; camRefresh();
   startWave(1);
   spawnTimer = 0.6; spawnGap = TUNE.SPAWN_EVERY;
   running = true;
@@ -1239,6 +1314,20 @@ function usePowerup(kind) {
     const ty = near.target ? near.target.y : player.y + player.aimy * 90;
     explode(tx, ty, TUNE.GRENADE_RADIUS, TUNE.GRENADE_DMG, '#c9e86a');
     SFX.smash();
+  } else if (kind === 'rpg') {
+    // A rocket that actually flies there and blows up on contact, rather than
+    // going off instantly like the grenade does.
+    const near2 = nearestTarget(player, enemySide());
+    const ang2 = near2.target
+      ? Math.atan2(near2.target.y - player.y, near2.target.x - player.x)
+      : Math.atan2(player.aimy, player.aimx);
+    shots.push({
+      x: player.x + Math.cos(ang2) * 18, y: player.y + Math.sin(ang2) * 18, z: 14,
+      vx: Math.cos(ang2) * TUNE.RPG_SPEED, vy: Math.sin(ang2) * TUNE.RPG_SPEED,
+      dmg: 0, side: player.side, life: 2.4, rocket: true, smoke: 0,
+    });
+    SFX.gun();
+    addShake(3.4, -Math.cos(ang2), -Math.sin(ang2));
   } else if (kind === 'bomb') {
     explode(player.x, player.y, TUNE.BOMB_RADIUS, TUNE.BOMB_DMG, '#ffb44a');
     SFX.smash();
@@ -1406,6 +1495,7 @@ function spawnEnemy(side, boss) {
     hp: hp, maxhp: hp, type: type.key, size: size, spd: speed, boss: !!boss,
     rank: rank, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
     squash: 0, wob: Math.random() * 6.28, z: 0, climbing: false,
+    walk: Math.random() * 6.28, moving: false,
     lastX: p.x, lastY: p.y, stuckT: 0,
     // Which way this one prefers to circle, and how long it has been charging.
     turn: Math.random() < .5 ? -1 : 1, chargeT: 0, chargeCool: 1 + Math.random() * 2,
@@ -1470,6 +1560,10 @@ function nearestTarget(from, wantSide) {
 // ---------------------------------------------------------------------------
 const stick = { active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
 const fire = { active: false, id: null };
+// Dragging anywhere on the right that is not a button swings the camera, which is
+// the usual way round for a game you play with two thumbs: left one walks, right
+// one looks.
+const look = { active: false, id: null, lx: 0, ly: 0 };
 const keys = {};
 const STICK_MAX = 62;
 
@@ -1528,6 +1622,7 @@ function onDown(e) {
   if (hit(btn.pause, e.clientX, e.clientY)) { togglePause(); return; }
   if (hit(btn.mute,  e.clientX, e.clientY)) { toggleMute();  return; }
   if (hit(btn.full,  e.clientX, e.clientY)) { toggleFullscreen(); return; }
+  if (hit(btn.view,  e.clientX, e.clientY)) { setFirstPerson(!cam.first); return; }
 
   if (paused) { togglePause(); return; }
 
@@ -1557,8 +1652,8 @@ function onDown(e) {
     return;
   }
 
-  // The hit button, checked before the steering so a thumb on it never gets
-  // mistaken for the stick.
+  // The hit button, checked before anything else so a thumb on it never gets
+  // mistaken for steering or for looking around.
   if (hit(btn.hit, e.clientX, e.clientY) && !fire.active) {
     fire.active = true; fire.id = e.pointerId;
     tryAttack(player, true);
@@ -1569,12 +1664,22 @@ function onDown(e) {
   if (leftHalf && !stick.active) {
     stick.active = true; stick.id = e.pointerId;
     stick.ox = e.clientX; stick.oy = e.clientY; stick.dx = 0; stick.dy = 0;
-  } else if (!fire.active) {
-    fire.active = true; fire.id = e.pointerId;
+  } else if (!look.active) {
+    look.active = true; look.id = e.pointerId;
+    look.lx = e.clientX; look.ly = e.clientY;
   }
 }
 
 function onMove(e) {
+  if (look.active && e.pointerId === look.id) {
+    cam.yaw += (e.clientX - look.lx) * TUNE.CAM_DRAG_YAW;
+    cam.pitch -= (e.clientY - look.ly) * TUNE.CAM_DRAG_PITCH;
+    // Stop it from tipping past straight down or flat along the ground.
+    if (cam.pitch < PITCH_MIN) cam.pitch = PITCH_MIN;
+    if (cam.pitch > PITCH_MAX) cam.pitch = PITCH_MAX;
+    look.lx = e.clientX; look.ly = e.clientY;
+    camRefresh();
+  }
   if (stick.active && e.pointerId === stick.id) {
     let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
     const len = Math.hypot(dx, dy);
@@ -1586,6 +1691,7 @@ function onMove(e) {
 function onUp(e) {
   if (stick.active && e.pointerId === stick.id) { stick.active = false; stick.dx = 0; stick.dy = 0; }
   if (fire.active && e.pointerId === fire.id) { fire.active = false; }
+  if (look.active && e.pointerId === look.id) { look.active = false; look.id = null; }
 }
 
 canvas.addEventListener('pointerdown', onDown);
@@ -1597,10 +1703,21 @@ addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (e.key.toLowerCase() === 'p') togglePause();
   if (e.key.toLowerCase() === 'm') toggleMute();
+  if (e.key.toLowerCase() === 'v') setFirstPerson(!cam.first);
   const n = parseInt(e.key, 10);
   if (n >= 1 && n <= TUNE.BAG_SLOTS) useSlot(n - 1);
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// On a laptop, Q and E spin the camera and R and F change the angle.
+function cameraKeys(dt) {
+  let moved = false;
+  if (keys['q']) { cam.yaw -= dt * 1.6; moved = true; }
+  if (keys['e']) { cam.yaw += dt * 1.6; moved = true; }
+  if (keys['r']) { cam.pitch = Math.min(PITCH_MAX, cam.pitch + dt * 1.1); moved = true; }
+  if (keys['f']) { cam.pitch = Math.max(PITCH_MIN, cam.pitch - dt * 1.1); moved = true; }
+  if (moved) camRefresh();
+}
 
 function inputVector() {
   let dx = 0, dy = 0;
@@ -1665,7 +1782,7 @@ function announce(text) { flashText = text; flashTime = 1.5; slowmo = .55; }
 // ---------------------------------------------------------------------------
 //  Damage
 // ---------------------------------------------------------------------------
-function hurtEnemy(e, dmg, fromX, fromY) {
+function hurtEnemy(e, dmg, fromX, fromY, shoveMul) {
   const table = e.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
   const armor = Math.min(.85, table[e.rank].armor + (e.boss ? TUNE.BOSS_ARMOR : 0));
   const dealt = dmg * (1 - armor);
@@ -1674,7 +1791,9 @@ function hurtEnemy(e, dmg, fromX, fromY) {
   e.squash = .14;
   const a = Math.atan2(e.y - fromY, e.x - fromX);
   spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', 7, a);
-  moveEntity(e, Math.cos(a) * (9 / e.size), Math.sin(a) * (9 / e.size));
+  // A shield bash shoves much harder than a punch does.
+  const shove = (shoveMul || 1) * (9 / e.size);
+  moveEntity(e, Math.cos(a) * shove, Math.sin(a) * shove);
   addHitstop(.045);
   if (e.hp > 0) popup(e.x, e.y - 18, String(Math.round(dealt)), 'rgba(255,255,255,0.75)');
   if (e.hp <= 0) killEnemy(e, a);
@@ -1769,7 +1888,10 @@ function hurtPlayer(dmg, biteAmount) {
   spray(player.x, player.y, '#c0392b', 6);
   streak = 0;
 
-  if (biteAmount > 0 && player.side === NOOB) {
+  // Behind the riot shield you cannot be infected at all. It is the quiet reason
+  // the top rank is worth having.
+  const shielded = !!myRanks()[player.rank].noBite;
+  if (biteAmount > 0 && player.side === NOOB && !shielded) {
     player.bite = Math.min(100, player.bite + biteAmount * player.up.biteRes);
     SFX.bite();
     if (player.bite >= 100) { flipSide(); return; }
@@ -1872,7 +1994,7 @@ function tryAttack(who, isPlayer) {
     if (who.side === ZOMB && found.target.side === NOOB && isPlayer && !found.target.boss) {
       infectEnemy(found.target);
     } else {
-      hurtEnemy(found.target, dmg, who.x, who.y);
+      hurtEnemy(found.target, dmg, who.x, who.y, rk.shove);
     }
   }
   if (isPlayer) addShake(rk.weapon === 'smash' ? 4.5 : 1.8, ax / dist, ay / dist);
@@ -1899,14 +2021,20 @@ function update(dt) {
   // text keep moving so the screen does not look locked up.
   if (waveState === 'picking') { driftEffects(dt); return; }
 
+  cameraKeys(dt);
+
   // The stick points where you want to go on screen; this turns that into a
-  // direction across the tilted world.
+  // direction across the world, whichever way the camera is facing.
   const raw = inputVector();
   const mv = stickToWorld(raw.dx, raw.dy);
   const form = formByKey(player.form);
   const speedMul = (player.speedT > 0 ? TUNE.SPEED_MULT : 1) * form.spd;
   const sp = TUNE.PLAYER_SPEED * player.up.speed * speedMul * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
+  // The stride keeps pace with how fast you are actually going, so the legs
+  // never look like they are skating along the ground.
+  player.moving = (mv.dx !== 0 || mv.dy !== 0);
+  if (player.moving) player.walk += dt * 9 * player.up.speed * speedMul;
   // Climb whatever you are pushing against, or fall if you walked off an edge.
   updateHeight(player, mv.dx, mv.dy, dt);
   unstick(player);
@@ -2097,6 +2225,8 @@ function update(dt) {
 
       if (moving) {
         moveEntity(e, sx * spd * dt, sy * spd * dt);
+        e.moving = true;
+        e.walk += dt * 9 * e.spd;
         // They climb with exactly the same rules you do, so they will follow you
         // up onto a wall rather than milling about at the bottom of it.
         updateHeight(e, sx, sy, dt);
@@ -2117,6 +2247,7 @@ function update(dt) {
           e.lastX = e.x; e.lastY = e.y; e.stuckT = 0;
         }
       } else {
+        e.moving = false;
         e.stuckT = 0; e.lastX = e.x; e.lastY = e.y;
         updateHeight(e, 0, 0, dt);
       }
@@ -2139,19 +2270,39 @@ function update(dt) {
   for (const s of shots) {
     s.x += s.vx * dt; s.y += s.vy * dt;
     s.life -= dt;
-    if (solidAt(s.x, s.y)) { s.life = 0; spray(s.x, s.y, '#8a8f98', 4); continue; }
+    if (s.rocket) {
+      // A puff of smoke behind it every so often.
+      s.smoke -= dt;
+      if (s.smoke <= 0) {
+        s.smoke = .02;
+        bits.push({ x: s.x, y: s.y, z: s.z || 14, vx: 0, vy: 0,
+                    life: .45, max: .45, c: 'rgba(190,195,205,0.9)', s: 3 });
+      }
+    }
+    if (solidAt(s.x, s.y)) {
+      s.life = 0;
+      if (s.rocket) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
+      else spray(s.x, s.y, '#8a8f98', 4);
+      continue;
+    }
     const wantSide = s.side === NOOB ? ZOMB : NOOB;
     if (player.side === wantSide && Math.hypot(player.x - s.x, player.y - s.y) < player.r + 5) {
-      hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * .7 : 0);
+      if (s.rocket) { explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a'); }
+      else hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * .7 : 0);
       s.life = 0; continue;
     }
+    let hitOne = false;
     for (const e of enemies) {
       if (e.side !== wantSide || e.hp <= 0) continue;
       if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + 5) {
-        hurtEnemy(e, s.dmg, s.x - s.vx * .01, s.y - s.vy * .01);
-        s.life = 0; break;
+        if (s.rocket) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
+        else hurtEnemy(e, s.dmg, s.x - s.vx * .01, s.y - s.vy * .01);
+        s.life = 0; hitOne = true; break;
       }
     }
+    if (hitOne) continue;
+    // A rocket that runs out of fuel goes off where it is.
+    if (s.rocket && s.life <= 0) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
   }
   shots = shots.filter(s => s.life > 0);
 
@@ -2166,19 +2317,50 @@ function update(dt) {
 // The camera just keeps you in the middle. Because the world is drawn tilted,
 // this is an offset applied once to the whole scene rather than subtracted from
 // every single point.
-const camOff = { x: 0, y: 0 };
-
-function updateCamera() {
-  camOff.x = isoX(player.x, player.y);
-  camOff.y = isoY(player.x, player.y, 0);
+// The camera follows the player.
+function setFirstPerson(on) {
+  cam.first = !!on;
+  if (cam.first) {
+    PITCH_MIN = FP_PITCH_MIN; PITCH_MAX = FP_PITCH_MAX;
+    cam.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, 0.08));
+  } else {
+    PITCH_MIN = TP_PITCH_MIN; PITCH_MAX = TP_PITCH_MAX;
+    cam.pitch = 0.58;
+  }
+  applyViewpoint();
+  camRefresh();
+  if (!muted) SFX.ui();
 }
 
-// Rough check so offscreen blocks are skipped instead of drawn for nothing.
-function onScreen(wx, wy) {
-  const sx = (isoX(wx, wy) - camOff.x) * ZOOM + VW / 2;
-  const sy = (isoY(wx, wy, 0) - camOff.y) * ZOOM + VH / 2;
-  const m = 90 * ZOOM;
-  return sx > -m && sx < VW + m && sy > -m && sy < VH + m * 1.6;
+// Where the camera sits and how high it looks from, for whichever view is on.
+// Split out so switching views takes effect straight away instead of waiting for
+// the next frame to be drawn.
+function applyViewpoint() {
+  if (cam.first) {
+    // Looking out of the player's own eyes, so the viewpoint rides at head
+    // height and sits almost on top of them.
+    cam.tz = (player.z || 0) + FP_EYE * (player.size || 1);
+    cam.dist = FP_DIST;
+  } else {
+    cam.tz = 0;
+    cam.dist = CAM_DIST;
+  }
+}
+
+function updateCamera() {
+  cam.tx = player.x;
+  cam.ty = player.y;
+  applyViewpoint();
+  camRefresh();
+}
+
+// Rough check so things off screen are skipped rather than drawn for nothing.
+// Anything behind the camera is skipped too, which a fixed angle never needed.
+function onScreen(wx, wy, wz) {
+  if (viewDepth(wx, wy, wz || 0) <= 70) return false;
+  const sx = isoX(wx, wy, wz || 0) + VW / 2;
+  const sy = isoY(wx, wy, wz || 0) + VH / 2;
+  return sx > -200 && sx < VW + 200 && sy > -240 && sy < VH + 280;
 }
 
 // A character, built out of real boxes stacked on top of each other: two legs, a
@@ -2211,7 +2393,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
 
   // Shadow on whatever surface is underneath, so you can tell how high up
   // something is when it is standing on a wall.
-  const shx = isoX(g.x, g.y);
+  const shx = isoX(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   const shy = isoY(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.beginPath();
@@ -2243,6 +2425,18 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const hs = 1 - sq * .35;
   const ws = 1 + sq * .25;
 
+  // Walking. The legs take turns lifting and stepping, the arms swing the
+  // opposite way to the legs the way real arms do, and the head and chest ride
+  // up and down with each stride. Standing still it settles into a slow breath.
+  const ph = g.walk || 0;
+  const striding = g.moving ? 1 : 0;
+  const swing = Math.sin(ph) * striding;
+  const swingB = Math.sin(ph + Math.PI) * striding;
+  const lift = Math.max(0, swing) * 3.4 * s;
+  const liftB = Math.max(0, swingB) * 3.4 * s;
+  const breathe = striding ? 0 : Math.sin((g.wob || 0) * .6) * .5 * s;
+  const headBob = (striding ? Math.abs(Math.sin(ph)) * 1.6 : 0) * s + breathe;
+
   const legH = 15.2 * s * hs, torsoH = 15.2 * s * hs, headH = 11.4 * s * hs;
   const hw = 7.6 * s * ws;            // half the width of the torso
   const dep = 7.6 * s;                // one stud deep
@@ -2258,37 +2452,43 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const torsoW = U * 2 * ws;
   const cx0 = g.x;
 
-  // Legs, side by side, touching.
-  drawBox(cx0 - legW, y0, z, legW, dep, legH, legs);
-  drawBox(cx0, y0, z, legW, dep, legH, legs);
-  // Shoes.
+  // Legs, side by side, taking turns to lift and step.
+  const stepA = swing * 2.6 * s, stepB = swingB * 2.6 * s;
+  drawBox(cx0 - legW, y0 + stepA, z + lift, legW, dep, legH, legs);
+  drawBox(cx0, y0 + stepB, z + liftB, legW, dep, legH, legs);
+  // Shoes, riding with the leg they belong to.
   const shoe = shade(legs, -34);
-  drawBox(cx0 - legW, y0 - .6, z, legW, dep + .6, 3.2 * s, shoe);
-  drawBox(cx0, y0 - .6, z, legW, dep + .6, 3.2 * s, shoe);
-  // Arms, flush against each side of the torso.
-  const armZ = z + legH;
-  drawBox(cx0 - torsoW / 2 - armW, y0, armZ, armW, dep, torsoH, skin);
-  drawBox(cx0 + torsoW / 2, y0, armZ, armW, dep, torsoH, skin);
+  drawBox(cx0 - legW, y0 + stepA - .6, z + lift, legW, dep + .6, 3.2 * s, shoe);
+  drawBox(cx0, y0 + stepB - .6, z + liftB, legW, dep + .6, 3.2 * s, shoe);
+  // Arms, flush against the torso, swinging opposite to the legs.
+  const armZ = z + legH + headBob * .4;
+  const armA = swingB * 2.9 * s, armB = swing * 2.9 * s;
+  drawBox(cx0 - torsoW / 2 - armW, y0 + armA, armZ, armW, dep, torsoH, skin);
+  drawBox(cx0 + torsoW / 2, y0 + armB, armZ, armW, dep, torsoH, skin);
   // Hands on the bottom of each arm.
-  drawBox(cx0 - torsoW / 2 - armW, y0 - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
-  drawBox(cx0 + torsoW / 2, y0 - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
-  // Torso.
-  drawBox(cx0 - torsoW / 2, y0, z + legH, torsoW, dep, torsoH, torso);
+  drawBox(cx0 - torsoW / 2 - armW, y0 + armA - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
+  drawBox(cx0 + torsoW / 2, y0 + armB - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
+  // Torso, riding the same bob as the head.
+  const torsoZ = z + legH + headBob * .5;
+  drawBox(cx0 - torsoW / 2, y0, torsoZ, torsoW, dep, torsoH, torso);
   // A belt across the bottom of the torso.
-  drawBox(cx0 - torsoW / 2, y0 - .3, z + legH, torsoW, dep + .3, 2.6 * s, shade(torso, -34));
+  drawBox(cx0 - torsoW / 2, y0 - .3, torsoZ, torsoW, dep + .3, 2.6 * s, shade(torso, -34));
   // Shoulders sitting in the shadow of the head.
-  drawBox(cx0 - torsoW / 2, y0 + .5, z + legH + torsoH - 1.2, torsoW, dep - 1,
+  drawBox(cx0 - torsoW / 2, y0 + .5, torsoZ + torsoH - 1.2, torsoW, dep - 1,
           1.2 * s, shade(torso, -22));
   // A collar where the torso meets the head.
-  drawBox(cx0 - torsoW * .3, y0 + .8, z + legH + torsoH - 1.4, torsoW * .6, dep - 1.6,
+  drawBox(cx0 - torsoW * .3, y0 + .8, torsoZ + torsoH - 1.4, torsoW * .6, dep - 1.6,
           2.4 * s, shade(torso, 24));
-  // Head, two studs wide like the real thing.
+  // Head, two studs wide like the real thing, nodding with each stride and
+  // turning a little towards whatever is being aimed at.
   const headW = U * 2 * ws;
-  drawBox(cx0 - headW / 2, y0, z + legH + torsoH, headW, dep, headH, skin);
+  const headTurn = isPlayer ? player.aimx * 1.1 * s : 0;
+  const headZ = torsoZ + torsoH + headBob * .5;
+  drawBox(cx0 - headW / 2 + headTurn, y0, headZ, headW, dep, headH, skin);
 
   // The classic noob face, painted on the front of the head cube.
-  const fx = isoX(g.x, y0 + dep);
-  const fy = isoY(g.x, y0 + dep, z + legH + torsoH + headH * .55);
+  const fx = isoX(g.x + headTurn, y0 + dep, headZ + headH * .55);
+  const fy = isoY(g.x + headTurn, y0 + dep, headZ + headH * .55);
   const e = 2.1 * s;
   ctx.fillStyle = '#241c14';
   ctx.fillRect(fx - 4.4 * s, fy - e, e * 1.3, e * 1.9);
@@ -2309,11 +2509,12 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // Whatever it is holding, as another box out to the side it is facing.
   const swinging = g.swing > 0;
   const f = g.face || 1;
-  const wx = f > 0 ? g.x + hw + 2 : g.x - hw - 7 * s;
-  const wz = z + legH + torsoH * .45;
+  const wx = (f > 0 ? g.x + hw + 2 : g.x - hw - 7 * s);
+  const wSwing = f > 0 ? armB : armA;
+  const wz = armZ + torsoH * .45;
   const lunge = swinging ? 5 : 0;
   if (rk.weapon === 'knife') {
-    drawBox(wx + f * lunge, y0 + 2, wz, 11 * s, 2.6 * s, 2.6 * s, '#dfe6f0');
+    drawBox(wx + f * lunge, y0 + 2 + wSwing, wz, 11 * s, 2.6 * s, 2.6 * s, '#dfe6f0');
   } else if (rk.weapon === 'pistol') {
     drawBox(wx, y0 + 2, wz, 10 * s, 3 * s, 3.4 * s, '#2b3038');
     if (swinging) drawBox(wx + 10 * s, y0 + 2.5, wz, 5 * s, 2 * s, 2 * s, '#ffd84d');
@@ -2326,7 +2527,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
       drawBox(wx + f * lunge, y0 + 1 + i * 3 * s, wz, 7 * s, 1.6 * s, 1.6 * s, '#d8dee8');
     }
   } else if (rk.weapon === 'acid') {
-    const ax2 = isoX(wx, g.y), ay2 = isoY(wx, g.y, wz);
+    const ax2 = isoX(wx, g.y, wz), ay2 = isoY(wx, g.y, wz);
     ctx.fillStyle = '#8ecf4a';
     ctx.beginPath(); ctx.arc(ax2, ay2, 4.6 * s, 0, 6.283); ctx.fill();
   } else if (rk.weapon === 'smash') {
@@ -2342,8 +2543,8 @@ function drawGuy(g, side, rankIdx, isPlayer) {
 
     if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
-    const bx = isoX(g.x, g.y) - bw2 / 2;
-    const by = isoY(g.x, g.y, z + legH + torsoH + headH) - 7;
+    const bx = isoX(g.x, g.y, z + legH + torsoH + headH) - bw2 / 2;
+    const by = isoY(g.x, g.y, headZ + headH) - 7;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(bx, by, bw2, bh);
     ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');
@@ -2355,17 +2556,13 @@ function drawGuy(g, side, rankIdx, isPlayer) {
 // which is what a Roblox baseplate looks like. The studs live here and nowhere
 // else: putting them on the walls as well is what made it look like Lego.
 function drawFloor() {
-  const w = TILE * ISO_X, h = TILE * ISO_Y;
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
       if (grid[gy][gx] !== 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
-      const cx = isoX(wx + TILE / 2, wy + TILE / 2);
-      const cy = isoY(wx + TILE / 2, wy + TILE / 2, 0);
-      // Ground tucked up against a block sits in its shadow. Counting the solid
-      // neighbours and darkening to match is cheap and does more for how solid
-      // the world looks than almost anything else.
+      if (!onScreen(wx + TILE / 2, wy + TILE / 2, 0)) continue;
+
+      // Ground tucked up against a block sits in its shadow.
       let shadowed = 0;
       if (gx > 0 && grid[gy][gx - 1] !== 0) shadowed++;
       if (gy > 0 && grid[gy - 1][gx] !== 0) shadowed += 2;      // the lit side
@@ -2374,19 +2571,28 @@ function drawFloor() {
       // The sun comes over your shoulder, so a block also throws a shadow
       // diagonally onto the ground in front of it.
       if (gx > 0 && gy > 0 && grid[gy - 1][gx - 1] !== 0) shadowed += 2;
+
       const base = ((gx + gy) % 2 === 0) ? GRASS_A : GRASS_B;
       ctx.fillStyle = shadowed ? shade(base, -Math.min(26, shadowed * 8)) : base;
+      // Four corners, because under perspective a square of ground is no longer
+      // a regular diamond: its far edge is shorter than its near one.
       ctx.beginPath();
-      ctx.moveTo(cx, cy - h);
-      ctx.lineTo(cx + w, cy);
-      ctx.lineTo(cx, cy + h);
-      ctx.lineTo(cx - w, cy);
+      ctx.moveTo(isoX(wx, wy, 0), isoY(wx, wy, 0));
+      ctx.lineTo(isoX(wx + TILE, wy, 0), isoY(wx + TILE, wy, 0));
+      ctx.lineTo(isoX(wx + TILE, wy + TILE, 0), isoY(wx + TILE, wy + TILE, 0));
+      ctx.lineTo(isoX(wx, wy + TILE, 0), isoY(wx, wy + TILE, 0));
       ctx.closePath();
       ctx.fill();
-      // One soft stud per square.
+
+      const cx = isoX(wx + TILE / 2, wy + TILE / 2, 0);
+      const cy = isoY(wx + TILE / 2, wy + TILE / 2, 0);
+      // How big this tile lands on screen, so the stud and the tufts shrink with
+      // distance along with everything else.
+      const sc = Math.max(.25, Math.abs(isoX(wx + TILE, wy + TILE / 2, 0) - cx) / (TILE / 2));
+
       ctx.fillStyle = 'rgba(255,255,255,0.055)';
       ctx.beginPath();
-      ctx.ellipse(cx, cy - 1.5, w * .34, h * .34, 0, 0, 6.283);
+      ctx.ellipse(cx, cy - 1.5 * sc, TILE * .22 * sc, TILE * .11 * sc, 0, 0, 6.283);
       ctx.fill();
 
       // A few tufts of grass, in the same place every time so the ground does
@@ -2395,14 +2601,17 @@ function drawFloor() {
       const t1 = (Math.abs(tuft) % 100) / 100, t2 = (Math.abs(tuft >> 7) % 100) / 100;
       ctx.fillStyle = 'rgba(40,62,26,0.20)';
       ctx.beginPath();
-      ctx.ellipse(cx + (t1 - .5) * w * 1.1, cy + (t2 - .5) * h * 1.1, 2.4, 1.3, 0, 0, 6.283);
+      ctx.ellipse(cx + (t1 - .5) * TILE * .7 * sc, cy + (t2 - .5) * TILE * .35 * sc,
+                  2.4 * sc, 1.3 * sc, 0, 0, 6.283);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(cx + (t2 - .5) * w * 1.2, cy + (t1 - .5) * h * .9, 1.9, 1.1, 0, 0, 6.283);
+      ctx.ellipse(cx + (t2 - .5) * TILE * .75 * sc, cy + (t1 - .5) * TILE * .3 * sc,
+                  1.9 * sc, 1.1 * sc, 0, 0, 6.283);
       ctx.fill();
       ctx.fillStyle = 'rgba(190,225,140,0.16)';
       ctx.beginPath();
-      ctx.ellipse(cx - (t1 - .5) * w, cy - (t2 - .5) * h, 2.1, 1.1, 0, 0, 6.283);
+      ctx.ellipse(cx - (t1 - .5) * TILE * .65 * sc, cy - (t2 - .5) * TILE * .3 * sc,
+                  2.1 * sc, 1.1 * sc, 0, 0, 6.283);
       ctx.fill();
     }
   }
@@ -2411,11 +2620,11 @@ function drawFloor() {
 function drawHeartAt(h) {
   if (h.life < 3 && Math.floor(h.life * 8) % 2 === 0) return;
   const lift = 7 + Math.sin(h.bob) * 2.5;
-  const hx = isoX(h.x, h.y);
+  const hx = isoX(h.x, h.y, (h.z || 0) + lift);
   const hy = isoY(h.x, h.y, (h.z || 0) + lift);
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath();
-  ctx.ellipse(isoX(h.x, h.y), isoY(h.x, h.y, h.z || 0), 6, 3, 0, 0, 6.283);
+  ctx.ellipse(isoX(h.x, h.y, h.z || 0), isoY(h.x, h.y, h.z || 0), 6, 3, 0, 0, 6.283);
   ctx.fill();
   ctx.fillStyle = '#e8544f';
   ctx.beginPath();
@@ -2432,11 +2641,11 @@ function drawPowerupAt(p) {
   const sz = 13;
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath();
-  ctx.ellipse(isoX(p.x, p.y), isoY(p.x, p.y, 0), 8, 4, 0, 0, 6.283);
+  ctx.ellipse(isoX(p.x, p.y, 0), isoY(p.x, p.y, 0), 8, 4, 0, 0, 6.283);
   ctx.fill();
   drawBox(p.x - sz / 2, p.y - sz / 2, lift, sz, sz, sz, p.color);
   // First letter on the lid so you can tell them apart at a glance.
-  const tx = isoX(p.x, p.y), ty = isoY(p.x, p.y, lift + sz) + 4;
+  const tx = isoX(p.x, p.y, lift + sz), ty = isoY(p.x, p.y, lift + sz) + 4;
   ctx.fillStyle = 'rgba(20,24,30,0.85)';
   ctx.font = '800 10px -apple-system, system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -2451,12 +2660,12 @@ function drawCrateLid(wx, wy, h) {
   ctx.lineWidth = 1.2;
   for (const f of [0.33, 0.66]) {
     ctx.beginPath();
-    ctx.moveTo(isoX(wx + TILE * f, wy), isoY(wx + TILE * f, wy, z));
-    ctx.lineTo(isoX(wx + TILE * f, wy + TILE), isoY(wx + TILE * f, wy + TILE, z));
+    ctx.moveTo(isoX(wx + TILE * f, wy, z), isoY(wx + TILE * f, wy, z));
+    ctx.lineTo(isoX(wx + TILE * f, wy + TILE, z), isoY(wx + TILE * f, wy + TILE, z));
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(isoX(wx, wy + TILE * f), isoY(wx, wy + TILE * f, z));
-    ctx.lineTo(isoX(wx + TILE, wy + TILE * f), isoY(wx + TILE, wy + TILE * f, z));
+    ctx.moveTo(isoX(wx, wy + TILE * f, z), isoY(wx, wy + TILE * f, z));
+    ctx.lineTo(isoX(wx + TILE, wy + TILE * f, z), isoY(wx + TILE, wy + TILE * f, z));
     ctx.stroke();
   }
 }
@@ -2468,7 +2677,7 @@ function drawPlayerMarker() {
   const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
   const s2 = player.size || 1;
   const top = (player.z || 0) + (15.2 + 15.2 + 11.4) * s2;
-  const ax = isoX(player.x, player.y);
+  const ax = isoX(player.x, player.y, top);
   const ay = isoY(player.x, player.y, top) - 12
            - Math.abs(Math.sin(performance.now() / 260)) * 3.5;
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
@@ -2501,7 +2710,7 @@ function buildOccludees() {
   const add = (o, pad) => {
     _occludees.push({
       d: o.x + o.y,
-      sx: isoX(o.x, o.y),
+      sx: isoX(o.x, o.y, o.z || 0),
       sy: isoY(o.x, o.y, o.z || 0),
       pad: pad,
     });
@@ -2516,8 +2725,8 @@ function buildOccludees() {
 // hiding a character goes see-through while it is in the way.
 function hidesSomeone(wx, wy, h) {
   const blockD = wx + wy + TILE;
-  const left = isoX(wx, wy + TILE);
-  const right = isoX(wx + TILE, wy);
+  const left = isoX(wx, wy + TILE, 0);
+  const right = isoX(wx + TILE, wy, h);
   const top = isoY(wx, wy, h);
   const bottom = isoY(wx + TILE, wy + TILE, 0);
   for (const o of _occludees) {
@@ -2534,41 +2743,65 @@ function hidesSomeone(wx, wy, h) {
   return false;
 }
 
+// Everything that stands up, drawn far to near.
+//
+// This used to walk the grid diagonally, which only works if the camera never
+// moves. Now that it can be swung round, everything gets sorted by how far from
+// the camera it actually is. The list of slots is reused between frames so that
+// spinning the camera does not churn through memory.
 const _standing = [];
+const _slots = [];
+let _slotCount = 0;
+function slot(depth, kind, a2, b2, c2) {
+  let o = _slots[_slotCount];
+  if (!o) { o = { d: 0, k: 0, a: 0, b: 0, c: 0 }; _slots[_slotCount] = o; }
+  o.d = depth; o.k = kind; o.a = a2; o.b = b2; o.c = c2;
+  _slotCount++;
+}
+
 function drawStanding() {
-  _standing.length = 0;
-  for (const e of enemies) _standing.push(e);
-  for (const h of hearts) _standing.push(h);
-  for (const p of powerups) _standing.push(p);
-  _standing.push(player);
-  _standing.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+  _slotCount = 0;
   buildOccludees();
 
-  let si = 0;
-  const lastDiag = GW + GH - 2;
-  for (let d = 0; d <= lastDiag; d++) {
-    const bound = d * TILE;
-    while (si < _standing.length && (_standing[si].x + _standing[si].y) <= bound) {
-      drawOne(_standing[si++]);
-    }
-    const gxStart = Math.max(0, d - (GH - 1));
-    const gxEnd = Math.min(GW - 1, d);
-    for (let gx = gxStart; gx <= gxEnd; gx++) {
-      const gy = d - gx;
+  // Blocks, measured at the middle of the tile so a whole block sorts as one.
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
       const t = grid[gy][gx];
       if (t === 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
+      const h = t === WALL ? WALL_H : CRATE_H;
+      if (!onScreen(wx + TILE / 2, wy + TILE / 2, h * .5)) continue;
+      slot(viewDepth(wx + TILE / 2, wy + TILE / 2, 0), 0, gx, gy, t);
+    }
+  }
+  // Characters, hearts and pickups.
+  for (const e of enemies) slot(viewDepth(e.x, e.y, 0), 1, e, 0, 0);
+  for (const h of hearts) slot(viewDepth(h.x, h.y, 0), 1, h, 0, 0);
+  for (const pu of powerups) slot(viewDepth(pu.x, pu.y, 0), 1, pu, 0, 0);
+  slot(viewDepth(player.x, player.y, 0), 1, player, 0, 0);
+
+  // Furthest away first, so nearer things paint over them.
+  const list = _slots.slice(0, _slotCount);
+  list.sort((p1, p2) => p2.d - p1.d);
+
+  for (const o of list) {
+    if (o.k === 0) {
+      const gx = o.a, gy = o.b, t = o.c;
+      const wx = gx * TILE, wy = gy * TILE;
       const h = t === WALL ? WALL_H : CRATE_H;
       const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
         ? TUNE.WALL_FADE : undefined;
       const col = t === WALL ? brickAt(gx, gy) : CRATE_COLOR;
       drawBox(wx, wy, 0, TILE, TILE, h, col, fade);
       if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
+    } else {
+      // Your own body is not drawn in first person: you would be staring at the
+      // inside of your own head.
+      if (cam.first && o.a === player) continue;
+      drawOne(o.a);
     }
   }
-  while (si < _standing.length) drawOne(_standing[si++]);
-  drawPlayerMarker();
+  if (!cam.first) drawPlayerMarker();
 }
 
 // The morph row. Forms you have not unlocked yet are shown but greyed out, so it
@@ -2648,8 +2881,6 @@ function drawHotbar() {
   ctx.textAlign = 'left';
 }
 
-// A little map in the corner, because the level is bigger than the screen and
-// otherwise you have no idea where the next one is coming from.
 function drawMinimap() {
   const m = miniRect;
   const sx = m.w / GW, sy = m.h / GH;
@@ -2715,6 +2946,18 @@ function drawIconButton(r, kind, on) {
       ctx.strokeStyle = 'rgba(238,242,248,0.82)'; ctx.lineWidth = 1.8;
       ctx.beginPath(); ctx.arc(cx + 4, cy, 4, -.9, .9); ctx.stroke();
       ctx.beginPath(); ctx.arc(cx + 4, cy, 8, -.9, .9); ctx.stroke();
+    }
+  } else if (kind === 'view') {
+    // An eye for first person, a little person for the over the shoulder view.
+    if (on) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 9, 5.5, 0, 0, 6.283);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(20,26,36,0.9)';
+      ctx.beginPath(); ctx.arc(cx, cy, 2.8, 0, 6.283); ctx.fill();
+    } else {
+      ctx.fillRect(cx - 3, cy - 8, 6, 5);
+      ctx.fillRect(cx - 5, cy - 2, 10, 7);
     }
   } else if (kind === 'full') {
     ctx.lineWidth = 2.2;
@@ -2838,6 +3081,7 @@ function drawHUD() {
   drawHotbar();
   drawMinimap();
 
+  drawIconButton(btn.view,  'view',  cam.first);
   drawIconButton(btn.full,  'full',  false);
   drawIconButton(btn.mute,  'mute',  muted);
   drawIconButton(btn.pause, 'pause', paused);
@@ -2985,9 +3229,9 @@ function draw() {
   // Everything from here on is drawn in world coordinates. This one transform
   // tilts the whole scene, zooms it in and centres it on the player.
   ctx.save();
+  // The projection already returns screen offsets, so this only has to put the
+  // origin in the middle of the screen.
   ctx.translate(VW / 2, VH / 2);
-  ctx.scale(ZOOM, ZOOM);
-  ctx.translate(-camOff.x, -camOff.y);
 
   drawFloor();
 
@@ -2995,16 +3239,22 @@ function draw() {
   for (const b of bits) {
     ctx.globalAlpha = Math.max(0, b.life / b.max);
     ctx.fillStyle = b.c;
-    ctx.fillRect(isoX(b.x, b.y), isoY(b.x, b.y, b.z || 0), b.s, b.s);
+    ctx.fillRect(isoX(b.x, b.y, b.z || 0), isoY(b.x, b.y, b.z || 0), b.s, b.s);
   }
   ctx.globalAlpha = 1;
 
   drawStanding();
 
   for (const s of shots) {
-    ctx.fillStyle = s.acid ? '#8ecf4a' : '#ffe08a';
-    const px = isoX(s.x, s.y), py = isoY(s.x, s.y, (s.z || 0) + 16);
+    ctx.fillStyle = s.rocket ? '#5b6270' : s.acid ? '#8ecf4a' : '#ffe08a';
+    const sz2 = (s.z || 0) + 16;
+    const px = isoX(s.x, s.y, sz2), py = isoY(s.x, s.y, sz2);
     if (s.acid) { ctx.beginPath(); ctx.arc(px, py, 4, 0, 6.283); ctx.fill(); }
+    else if (s.rocket) {
+      ctx.fillRect(px - 5, py - 2.4, 10, 4.8);
+      ctx.fillStyle = '#ffb44a';
+      ctx.fillRect(px - 8, py - 1.4, 3.5, 2.8);
+    }
     else ctx.fillRect(px - 2.5, py - 1.2, 6, 2.4);
   }
 
@@ -3014,9 +3264,15 @@ function draw() {
     ctx.globalAlpha = a * .85;
     ctx.strokeStyle = b.c;
     ctx.lineWidth = 3 + a * 5;
+    // Walked round as a ring of points on the ground, because under perspective
+    // a circle on the floor is not an ellipse on screen any more.
     ctx.beginPath();
-    ctx.ellipse(isoX(b.x, b.y), isoY(b.x, b.y, 8),
-                b.r * ISO_X * 2, b.r * ISO_Y * 2, 0, 0, 6.283);
+    for (let k = 0; k <= 20; k++) {
+      const a2 = (k / 20) * 6.283;
+      const px2 = b.x + Math.cos(a2) * b.r, py2 = b.y + Math.sin(a2) * b.r;
+      const sx2 = isoX(px2, py2, 8), sy2 = isoY(px2, py2, 8);
+      if (k === 0) ctx.moveTo(sx2, sy2); else ctx.lineTo(sx2, sy2);
+    }
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -3027,11 +3283,11 @@ function draw() {
     ctx.strokeStyle = '#bdeaff';
     ctx.lineWidth = 2.4;
     ctx.beginPath();
-    ctx.moveTo(isoX(zp.x1, zp.y1), isoY(zp.x1, zp.y1, 20));
+    ctx.moveTo(isoX(zp.x1, zp.y1, 20), isoY(zp.x1, zp.y1, 20));
     // A kink in the middle so it looks like a bolt, not a ruler.
     const mx = (zp.x1 + zp.x2) / 2, my = (zp.y1 + zp.y2) / 2;
-    ctx.lineTo(isoX(mx, my) + (zp.life * 60 % 13) - 6, isoY(mx, my, 26));
-    ctx.lineTo(isoX(zp.x2, zp.y2), isoY(zp.x2, zp.y2, 20));
+    ctx.lineTo(isoX(mx, my, 26) + (zp.life * 60 % 13) - 6, isoY(mx, my, 26));
+    ctx.lineTo(isoX(zp.x2, zp.y2, 20), isoY(zp.x2, zp.y2, 20));
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -3041,7 +3297,8 @@ function draw() {
     ctx.globalAlpha = Math.min(1, p.life / .5);
     ctx.fillStyle = p.color;
     ctx.font = '800 11px -apple-system, system-ui, sans-serif';
-    ctx.fillText(p.text, isoX(p.x, p.y), isoY(p.x, p.y, (p.z || 0) + 34));
+    const pz2 = (p.z || 0) + 34;
+    ctx.fillText(p.text, isoX(p.x, p.y, pz2), isoY(p.x, p.y, pz2));
   }
   ctx.globalAlpha = 1;
 
