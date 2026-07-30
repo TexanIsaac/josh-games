@@ -34,6 +34,21 @@ const mkCanvas = () => ({
 });
 const stubEl = { style: {}, addEventListener: noop, textContent: '', innerHTML: '' };
 
+// A stand-in DOM node. The shop is real HTML, so it needs something it can append
+// children to, set styles on and hang listeners off.
+function mkNode(tag) {
+  return {
+    tagName: (tag || 'div').toUpperCase(),
+    className: '', id: '', textContent: '', innerHTML: '',
+    style: {}, dataset: {}, children: [],
+    appendChild(c) { this.children.push(c); return c; },
+    setAttribute(k, v) { this.dataset[k.replace('data-', '')] = v; },
+    getAttribute() { return null; },
+    addEventListener: noop, removeEventListener: noop,
+    querySelectorAll: () => [],
+  };
+}
+
 // The safe-area probe reports a notch and a home indicator so the HUD layout
 // gets tested against a real modern iPad rather than a rectangle.
 const INSET_TOP = 24, INSET_BOTTOM = 34;
@@ -44,9 +59,9 @@ global.window = {
   AudioContext: undefined, onerror: null,
 };
 global.document = {
-  getElementById: () => Object.assign({}, stubEl, mkCanvas()),
+  getElementById: () => Object.assign(mkNode('div'), stubEl, mkCanvas()),
   querySelector: () => null,
-  createElement: (tag) => tag === 'canvas' ? mkCanvas() : { setAttribute: noop, style: {} },
+  createElement: (tag) => tag === 'canvas' ? mkCanvas() : mkNode(tag),
   addEventListener: noop, head: { appendChild: noop }, visibilityState: 'visible',
   querySelectorAll: () => [],
 };
@@ -102,7 +117,9 @@ eval(code + `
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
-   TP_LOOK_AT, camWant, THEMES, SKIRT, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   TP_LOOK_AT, camWant, THEMES, SKIRT,
+   SKINS, SHIRTS, PANTS, HATS, FACES, PERKS, perkCost, perkLevel, applyPerks,
+   loadSave, writeSave, addCoins, drawShop, get save(){return save}, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -1524,6 +1541,124 @@ ok('every weapon still draws without throwing', (() => {
   G.applyTheme('noobs');
   return true;
 })());
+
+group('Coins and the shop');
+G.save.coins = 0;
+G.save.perks = {};
+G.save.ownedHats = { 0: true };
+G.save.ownedFaces = { 0: true };
+G.save.look = { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0 };
+ok('coins start at nothing', G.save.coins === 0);
+ok('kills and waves both pay', G.TUNE.COINS_PER_KILL > 0 && G.TUNE.COINS_PER_WAVE > 0,
+  G.TUNE.COINS_PER_KILL + ' a kill, ' + G.TUNE.COINS_PER_WAVE + '+ a wave');
+ok('a boss pays much more than a normal kill',
+  G.TUNE.COINS_PER_BOSS > G.TUNE.COINS_PER_KILL * 10);
+ok('killing something actually pays out', (() => {
+  G.reset();
+  const before = G.save.coins;
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', false);
+  const m = G.enemies[0];
+  m.type = 'walker'; m.split = true;   // stop it splitting and confusing the count
+  G.killEnemy(m, 0);
+  return G.save.coins > before;
+})(), 'balance went up');
+ok('coins survive being saved and loaded back', (() => {
+  G.save.coins = 1234;
+  G.writeSave();
+  G.save.coins = 0;
+  G.loadSave();
+  return G.save.coins === 1234;
+})());
+ok('a corrupt save does not break the game', (() => {
+  global.localStorage.setItem('zn_save_v1', 'this is not json');
+  G.loadSave();
+  return typeof G.save.coins === 'number' && isFinite(G.save.coins);
+})(), 'falls back to a fresh save');
+ok('a save from an older version still loads', (() => {
+  // Only one field, everything else missing.
+  global.localStorage.setItem('zn_save_v1', JSON.stringify({ coins: 500 }));
+  G.loadSave();
+  return G.save.coins === 500 && G.save.look && typeof G.save.look.hat === 'number'
+    && G.save.ownedHats[0] === true;
+})(), 'missing fields get filled in');
+
+group('Buying things');
+G.save.coins = 5000;
+G.save.perks = {};
+ok('there are upgrades to buy', G.PERKS.length >= 5, G.PERKS.map(x => x.name).join(', '));
+ok('each level costs more than the last', (() => {
+  const perk = G.PERKS[0];
+  return G.perkCost(perk, 1) > G.perkCost(perk, 0)
+    && G.perkCost(perk, 2) > G.perkCost(perk, 1);
+})(), G.PERKS[0].name + ': ' + [0,1,2].map(l => G.perkCost(G.PERKS[0], l)).join(' then '));
+ok('bought upgrades reach the player', (() => {
+  G.save.perks = { tough: 3, strong: 2, quick: 1 };
+  G.reset();
+  const plain = G.freshUpgrades();
+  return G.player.up.hpAdd > plain.hpAdd && G.player.up.dmg > plain.dmg
+    && G.player.up.speed > plain.speed;
+})(), 'health, damage and speed all raised');
+ok('bought health is in the bar from the very first frame', (() => {
+  G.save.perks = { tough: 3 };
+  G.reset();
+  return G.player.maxhp === G.TUNE.PLAYER_HEALTH + 90 && G.player.hp === G.player.maxhp;
+})(), 'starts full at the higher maximum');
+ok('upgrades stack with the ones picked up during a run', (() => {
+  G.save.perks = { strong: 3 };
+  G.reset();
+  const withPerks = G.player.up.dmg;
+  G.UPGRADES.find(u => u.name === 'Stronger Hits').apply(G.player.up);
+  return G.player.up.dmg > withPerks;
+})());
+G.save.perks = {};
+
+group('Your guy');
+ok('there are colours for skin, shirt and trousers',
+  G.SKINS.length >= 6 && G.SHIRTS.length >= 6 && G.PANTS.length >= 6,
+  G.SKINS.length + ' / ' + G.SHIRTS.length + ' / ' + G.PANTS.length);
+ok('there are hats and faces', G.HATS.length >= 5 && G.FACES.length >= 4,
+  G.HATS.map(h => h.name).join(', '));
+ok('no hat and the plain smile are free', G.HATS[0].cost === 0 && G.FACES[0].cost === 0);
+ok('the rest cost something', G.HATS.slice(1).every(h => h.cost > 0)
+  && G.FACES.slice(1).every(f => f.cost > 0));
+ok('every hat knows how to draw itself', G.HATS.slice(1).every(h => !!h.kind),
+  G.HATS.slice(1).map(h => h.kind).join(', '));
+ok('every hat colour stands out from the grass', (() => {
+  const L = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  return G.HATS.slice(1).every(h => Math.min(Math.abs(L(h.color) - 164.6),
+    Math.abs(L(h.color) - 156.6)) > 14);
+})());
+ok('wearing an outfit changes nothing about how you play', (() => {
+  G.save.look = { skin: 3, shirt: 5, legs: 2, hat: 4, face: 3 };
+  G.reset();
+  const a = { hp: G.player.maxhp, dmg: G.player.up.dmg, spd: G.player.up.speed };
+  G.save.look = { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0 };
+  G.reset();
+  return G.player.maxhp === a.hp && G.player.up.dmg === a.dmg
+    && G.player.up.speed === a.spd;
+})(), 'looks are cosmetic only');
+ok('the game draws fine in every hat and face', (() => {
+  for (let h = 0; h < G.HATS.length; h++) {
+    for (let f = 0; f < G.FACES.length; f++) {
+      G.save.look = { skin: 1, shirt: 1, legs: 1, hat: h, face: f };
+      G.reset();
+      try { G.draw(); } catch (e) {
+        console.log('    hat ' + h + ' face ' + f + ': ' + e.message);
+        return false;
+      }
+    }
+  }
+  G.save.look = { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0 };
+  return true;
+})());
+ok('the shop screen builds without throwing', (() => {
+  try { G.drawShop(); return true; } catch (e) { console.log('    ' + e.message); return false; }
+})());
+ok('there is a preview of your guy', /picture of your guy/.test(src));
+ok('the shop is real HTML rather than drawn by hand',
+  /the browser already does scrolling and tapping properly/.test(src));
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));

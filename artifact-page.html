@@ -55,6 +55,57 @@
     border: 2px solid rgba(255,255,255,0.18); cursor: pointer;
   }
   .tbtn[data-on="1"] { border-color: #ffd84d; color: #ffd84d; }
+  #shop {
+    position: fixed; inset: 0; z-index: 20; display: none;
+    flex-direction: column; background: #131a24;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+             env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  #shop[data-open="1"] { display: flex; }
+  .sbar {
+    display: flex; align-items: center; gap: 0.8rem;
+    padding: 0.7rem 1rem; border-bottom: 2px solid rgba(255,255,255,0.1);
+    flex: 0 0 auto;
+  }
+  .sbar strong { font-size: 1.05rem; letter-spacing: 0.08em; }
+  #coinbal { margin-left: auto; color: #ffd84d; font-weight: 800; }
+  .stabs { display: flex; gap: 0.5rem; padding: 0.7rem 1rem 0; flex: 0 0 auto; }
+  .stab {
+    font: 700 0.9rem -apple-system, system-ui, sans-serif;
+    padding: 0.55rem 0.9rem; background: rgba(255,255,255,0.06);
+    color: rgba(238,242,248,0.7); border: 2px solid transparent; cursor: pointer;
+  }
+  .stab[data-on="1"] { color: #ffd84d; border-color: #ffd84d; }
+  #sbody { flex: 1 1 auto; overflow-y: auto; padding: 1rem; -webkit-overflow-scrolling: touch; }
+  .srow { margin-bottom: 1.4rem; }
+  .srow h3 {
+    margin: 0 0 0.5rem; font-size: 0.8rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: rgba(238,242,248,0.5);
+  }
+  .swatches { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .sw {
+    width: 46px; height: 46px; border: 3px solid rgba(255,255,255,0.16);
+    cursor: pointer; padding: 0;
+  }
+  .sw[data-on="1"] { border-color: #ffd84d; }
+  .items { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .item {
+    min-width: 8.5rem; text-align: left; padding: 0.6rem 0.7rem;
+    background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.12);
+    color: #eef2f8; cursor: pointer;
+    font: 700 0.9rem -apple-system, system-ui, sans-serif;
+  }
+  .item span { display: block; font-weight: 600; font-size: 0.78rem; opacity: 0.62; margin-top: 0.2rem; }
+  .item[data-on="1"] { border-color: #ffd84d; color: #ffd84d; }
+  .item[data-locked="1"] { opacity: 0.5; }
+  .item[data-broke="1"] { border-color: rgba(255,143,143,0.5); }
+  #preview {
+    display: flex; align-items: flex-end; gap: 1rem;
+    padding: 0.8rem; background: rgba(0,0,0,0.22); margin-bottom: 1.2rem;
+  }
+  #guy { display: flex; flex-direction: column; align-items: center; }
+  #guy div { border: 1px solid rgba(0,0,0,0.35); }
+  #ptext { font: 600 0.85rem -apple-system, system-ui, sans-serif; opacity: 0.75; line-height: 1.5; }
   #credit {
     margin-top: 1.5rem; font-size: 0.8rem; letter-spacing: 0.18em;
     text-transform: uppercase; color: rgba(238,242,248,0.45); font-weight: 700;
@@ -92,8 +143,22 @@
     <button class="tbtn" data-theme="noobs">Noobs vs Zombies</button>
     <button class="tbtn" data-theme="ww2">Allied vs Axis</button>
   </div>
+  <button id="shopopen" class="tbtn">Shop and Your Guy</button>
   <div id="credit">A game by<span>Josh Alexander</span></div>
   <div id="ver"></div>
+</div>
+
+<div id="shop">
+  <div class="sbar">
+    <strong>SHOP</strong>
+    <span id="coinbal">0 coins</span>
+    <button id="shopdone" class="tbtn">Done</button>
+  </div>
+  <div class="stabs">
+    <button class="stab" data-tab="look">Your Guy</button>
+    <button class="stab" data-tab="perk">Upgrades</button>
+  </div>
+  <div id="sbody"></div>
 </div>
 
 <canvas id="game"></canvas>
@@ -160,7 +225,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v22';
+const VERSION = 'v23';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -338,6 +403,11 @@ const TUNE = {
   BOSS_POINTS: 650,           // points needed. Deliberately a long haul.
   POINTS_PER_KILL: 10,
   POINTS_PER_BOSS: 120,
+
+  // Coins are the money the shop spends, and they last between games.
+  COINS_PER_KILL: 2,
+  COINS_PER_BOSS: 60,
+  COINS_PER_WAVE: 25,
   BOSS_MODE_TIME_DEC: 0,
   BOSS_MODE_TIME: 16,
   BOSS_MODE_SIZE: 1.85,
@@ -434,6 +504,107 @@ const MAP = `
 ############################################
 `;
 
+
+// ---------------------------------------------------------------------------
+//  YOUR GUY, AND THE SHOP
+//
+//  Coins are earned by playing and they stick around between games, which is the
+//  whole point: a run is worth something even when it ends badly. They buy two
+//  sorts of thing. Looks, which change nothing but are yours. And upgrades, which
+//  are permanent and stack on top of whatever you pick up during a run.
+//
+//  All of it lives in one saved blob so there is a single thing to load, save and
+//  reason about.
+// ---------------------------------------------------------------------------
+const SKINS  = ['#f5cd30', '#e8c9a0', '#c98a4b', '#8d5a2b', '#9ed36a', '#7ad7ff', '#ff9f43', '#e8e9ec'];
+const SHIRTS = ['#0d69ac', '#c4281c', '#f5cd30', '#6b7d42', '#a35ce0', '#12a8e8', '#2f3340', '#f2f3f5'];
+const PANTS  = ['#4e8f3a', '#2f3340', '#6b4a2c', '#57662f', '#4e535b', '#8d99ab', '#5a2b4a', '#c8c8cb'];
+
+// Hats. The first one is no hat at all and costs nothing.
+const HATS = [
+  { name: 'None',      cost: 0 },
+  { name: 'Cap',       cost: 60,  color: '#c4281c', kind: 'cap' },
+  { name: 'Helmet',    cost: 120, color: '#5e6f38', kind: 'helmet' },
+  { name: 'Top Hat',   cost: 200, color: '#20242c', kind: 'tall' },
+  { name: 'Crown',     cost: 450, color: '#f5cd30', kind: 'crown' },
+  { name: 'Headphones',cost: 260, color: '#2f3540', kind: 'phones' },
+  { name: 'Cowboy',    cost: 320, color: '#8d5a2b', kind: 'brim' },
+];
+
+// Faces.
+const FACES = [
+  { name: 'Smile',   cost: 0 },
+  { name: 'Shades',  cost: 90 },
+  { name: 'Angry',   cost: 90 },
+  { name: 'Grin',    cost: 140 },
+  { name: 'Robot',   cost: 220 },
+];
+
+// Upgrades you keep for good. Each one can be bought a few times, and the price
+// goes up each level so the last one always feels like a decision.
+const PERKS = [
+  { id: 'tough',  name: 'Tougher',      desc: '+30 max health',        levels: 3, base: 120 },
+  { id: 'strong', name: 'Stronger',     desc: '+14% damage',           levels: 3, base: 150 },
+  { id: 'quick',  name: 'Quicker',      desc: '+8% speed',             levels: 3, base: 110 },
+  { id: 'medic',  name: 'Fast Healer',  desc: 'heal 60% faster',       levels: 2, base: 100 },
+  { id: 'lucky',  name: 'Lucky',        desc: '+40% drops',            levels: 2, base: 140 },
+  { id: 'packed', name: 'Well Packed',  desc: 'start with an item',    levels: 1, base: 300 },
+  { id: 'armour', name: 'Padded',       desc: '+7% armour',            levels: 2, base: 180 },
+];
+
+function perkCost(perk, level) {
+  // Each level costs half again as much as the one before.
+  return Math.round(perk.base * Math.pow(1.5, level));
+}
+
+const SAVE_KEY = 'zn_save_v1';
+const freshSave = () => ({
+  coins: 0,
+  look: { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0 },
+  ownedHats: { 0: true },
+  ownedFaces: { 0: true },
+  perks: {},
+});
+let save = freshSave();
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const got = JSON.parse(raw);
+    // Merge rather than replace, so a save written by an older version still
+    // works instead of leaving fields undefined.
+    save = Object.assign(freshSave(), got);
+    save.look = Object.assign(freshSave().look, got.look || {});
+    save.ownedHats = Object.assign({ 0: true }, got.ownedHats || {});
+    save.ownedFaces = Object.assign({ 0: true }, got.ownedFaces || {});
+    save.perks = got.perks || {};
+    if (typeof save.coins !== 'number' || !isFinite(save.coins)) save.coins = 0;
+  } catch (err) { save = freshSave(); }
+}
+
+function writeSave() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (err) { /* fine */ }
+}
+
+function addCoins(n) {
+  save.coins += n;
+  writeSave();
+}
+
+function perkLevel(id) { return save.perks[id] || 0; }
+
+// Everything bought turns into the same shape the in-run upgrades use, so the
+// rest of the game does not need to know the shop exists.
+function applyPerks(up) {
+  up.hpAdd += 30 * perkLevel('tough');
+  up.dmg *= Math.pow(1.14, perkLevel('strong'));
+  up.speed *= Math.pow(1.08, perkLevel('quick'));
+  up.heal *= Math.pow(1.6, perkLevel('medic'));
+  up.luck *= Math.pow(1.4, perkLevel('lucky'));
+  up.armorAdd += 0.07 * perkLevel('armour');
+  return up;
+}
 
 // ---------------------------------------------------------------------------
 //  THEMES  --  the same game with a different coat of paint.
@@ -1276,6 +1447,7 @@ let spawnTimer, spawnGap, running, paused, best;
 let wave, waveState, waveToSpawn, bossPending, cards, cardRects;
 let flashText = null, flashTime = 0, slowmo = 0, hitstop = 0;
 let streak = 0, streakTimer = 0, bestStreak = 0;
+let coinsThisRun = 0, lastWaveCoins = 0;
 
 // Aimed screen shake. Random jitter reads as a glitch or a loose cable. Shoving
 // the camera along the direction of the blow, plus a sliver of rotation, reads
@@ -1298,10 +1470,11 @@ function newPlayer() {
     x: playerStart.x, y: playerStart.y, r: 13,
     side: NOOB, kills: { noob: 0, zombie: 0 },
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
+    // Filled in properly just below, once the bought upgrades are known.
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
     walk: 0, moving: false, mvx: 0, mvy: 1,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
-    up: freshUpgrades(), rageT: 0, speedT: 0,
+    up: applyPerks(freshUpgrades()), rageT: 0, speedT: 0,
     points: 0, bossT: 0, size: 1,
     form: 'normal', unlocked: { normal: true },
   };
@@ -1309,12 +1482,16 @@ function newPlayer() {
 
 function reset() {
   player = newPlayer();
+  // Bought health has to be folded in before the bar is drawn for the first time.
+  player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
+  player.hp = player.maxhp;
   enemies = []; shots = []; bits = []; popups = []; hearts = [];
   powerups = []; blasts = []; zaps = [];
   freezeT = 0; nukeFlash = 0; bag = [];
   wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
   cards = []; cardRects = [];
   streak = 0; streakTimer = 0;
+  coinsThisRun = 0; lastWaveCoins = 0;
   shake.mag = 0; shake.dx = 0; shake.dy = 0; shake.rot = 0;
   flashText = null; flashTime = 0; slowmo = 0; hitstop = 0;
   paused = false;
@@ -1380,6 +1557,10 @@ function startWave(n) {
 
 function finishWave() {
   waveState = 'picking';
+  const bonus = TUNE.COINS_PER_WAVE + wave * 5;
+  addCoins(bonus);
+  coinsThisRun += bonus;
+  lastWaveCoins = bonus;
   const pool = UPGRADES.slice();
   cards = [];
   const want = Math.min(TUNE.UPGRADE_CHOICES, pool.length);
@@ -1978,6 +2159,9 @@ function killEnemy(e, dirAngle) {
     if (Math.random() < TUNE.POWERUP_CHANCE * player.up.luck) dropPowerup(e.x, e.y);
 
     unlockFormFrom(e);
+
+    addCoins(e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL);
+    coinsThisRun += e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL;
 
     if (e.boss) {
       // Take down a boss and you become the boss. No bar to fill, no waiting.
@@ -2599,6 +2783,13 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // warm clothes fix that without making them look like noobs.
   const pal = isNoob ? TH().a : TH().b;
   let skin = pal.skin, torso = pal.torso, legs = pal.legs;
+  // Your own guy wears whatever you picked in the shop. Everyone else wears
+  // the theme colours.
+  if (isPlayer) {
+    skin = SKINS[save.look.skin] || skin;
+    torso = SHIRTS[save.look.shirt] || torso;
+    legs = PANTS[save.look.legs] || legs;
+  }
   // Runners and brutes are tinted so you can tell at a glance what is coming.
   if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#12a8e8' : '#b06a18'; }
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
@@ -2721,8 +2912,39 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const headTurn = 0;
   const headZ = torsoZ + torsoH + headBob * .5;
   drawBox(cx0 - headW / 2 + headTurn, y0, headZ, headW, dep, headH, skin);
+  // Your hat, if you are wearing one.
+  if (isPlayer) {
+    const hat = HATS[save.look.hat || 0];
+    if (hat && hat.kind) {
+      const hz = headZ + headH;
+      const hxL = cx0 - headW / 2 + headTurn;
+      if (hat.kind === 'cap') {
+        drawBox(hxL - .6, y0 - .4, hz - 1, headW + 1.2, dep + .8, 3 * s, hat.color);
+        drawBox(hxL + headW * .1, y0 + dep - .4, hz - 1, headW * .8, 4 * s, 1.4 * s, hat.color);
+      } else if (hat.kind === 'helmet') {
+        drawBox(hxL - 1, y0 - .8, hz - 3.4 * s, headW + 2, dep + 1.6, 5 * s, hat.color);
+      } else if (hat.kind === 'tall') {
+        drawBox(hxL - 1.4, y0 - 1, hz - .6, headW + 2.8, dep + 2, 1.6 * s, hat.color);
+        drawBox(hxL + 1.6, y0 + 1, hz + 1, headW - 3.2, dep - 2, 11 * s, hat.color);
+      } else if (hat.kind === 'crown') {
+        drawBox(hxL + .6, y0 + .6, hz - .4, headW - 1.2, dep - 1.2, 2.6 * s, hat.color);
+        for (let i = 0; i < 3; i++) {
+          drawBox(hxL + 1.4 + i * (headW - 4) / 2.6, y0 + 1.4, hz + 2,
+                  2.2 * s, dep - 3, 3.4 * s, hat.color);
+        }
+      } else if (hat.kind === 'phones') {
+        drawBox(hxL + .4, y0 + .6, hz - .6, headW - .8, dep - 1.2, 1.8 * s, hat.color);
+        drawBox(hxL - 1.8, y0 + 1, hz - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
+        drawBox(hxL + headW - .6, y0 + 1, hz - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
+      } else if (hat.kind === 'brim') {
+        drawBox(hxL - 3, y0 - 2.6, hz - 1, headW + 6, dep + 5.2, 1.4 * s, hat.color);
+        drawBox(hxL + 1.6, y0 + 1, hz + .4, headW - 3.2, dep - 2, 5 * s, hat.color);
+      }
+    }
+  }
+
   // A helmet, slightly wider than the head and sitting a touch proud of it.
-  if (TH().helmet && pal.helmet) {
+  if (TH().helmet && pal.helmet && !(isPlayer && HATS[save.look.hat || 0].kind)) {
     drawBox(cx0 - headW / 2 - 1 + headTurn, y0 - .8, headZ + headH - 3.4 * s,
             headW + 2, dep + 1.6, 4.6 * s, pal.helmet);
   }
@@ -2731,10 +2953,34 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const fx = isoX(g.x + headTurn, y0 + dep, headZ + headH * .55);
   const fy = isoY(g.x + headTurn, y0 + dep, headZ + headH * .55);
   const e = 2.1 * s;
+  const faceId = isPlayer ? (save.look.face || 0) : 0;
   ctx.fillStyle = '#241c14';
-  ctx.fillRect(fx - 4.4 * s, fy - e, e * 1.3, e * 1.9);
-  ctx.fillRect(fx + 1.6 * s, fy - e, e * 1.3, e * 1.9);
-  if (isNoob) {
+  if (isPlayer && faceId === 1) {
+    // Shades: one dark bar across both eyes.
+    ctx.fillRect(fx - 5.2 * s, fy - e, 10.4 * s, e * 1.7);
+  } else if (isPlayer && faceId === 4) {
+    // Robot: square eyes and a grille.
+    ctx.fillRect(fx - 5 * s, fy - e, e * 2, e * 2);
+    ctx.fillRect(fx + 1.4 * s, fy - e, e * 2, e * 2);
+  } else {
+    ctx.fillRect(fx - 4.4 * s, fy - e, e * 1.3, e * 1.9);
+    ctx.fillRect(fx + 1.6 * s, fy - e, e * 1.3, e * 1.9);
+  }
+  if (isPlayer && faceId === 2) {
+    // Angry: brows down, mouth a flat line.
+    ctx.fillRect(fx - 5 * s, fy - e * 1.7, 4 * s, 1.4 * s);
+    ctx.fillRect(fx + 1 * s, fy - e * 1.7, 4 * s, 1.4 * s);
+    ctx.fillRect(fx - 3.4 * s, fy + 2.6 * s, 6.8 * s, 1.6 * s);
+  } else if (isPlayer && faceId === 3) {
+    // Grin: a wide open mouth with teeth.
+    ctx.fillRect(fx - 4.6 * s, fy + 1.8 * s, 9.2 * s, 3.4 * s);
+    ctx.fillStyle = '#f6f7f9';
+    ctx.fillRect(fx - 3.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
+    ctx.fillRect(fx + 1.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
+  } else if (isPlayer && faceId === 4) {
+    ctx.fillRect(fx - 4.6 * s, fy + 2.2 * s, 9.2 * s, 1.2 * s);
+    ctx.fillRect(fx - 4.6 * s, fy + 4 * s, 9.2 * s, 1.2 * s);
+  } else if (isNoob) {
     ctx.strokeStyle = '#241c14';
     ctx.lineWidth = 1.6 * s;
     ctx.beginPath();
@@ -3282,8 +3528,13 @@ function drawHUD() {
   ctx.fillStyle = 'rgba(238,242,248,0.7)';
   ctx.font = '600 13px -apple-system, system-ui, sans-serif';
   ctx.fillText(k + ' kills   best ' + best, PAD.l, PAD.t + 38);
+  // Coins, so the money you are earning is visible while you earn it.
+  ctx.fillStyle = '#ffd84d';
+  ctx.font = '700 13px -apple-system, system-ui, sans-serif';
+  ctx.fillText(save.coins + ' coins  (+' + coinsThisRun + ' this run)',
+    PAD.l, PAD.t + 55);
 
-  const barY = PAD.t + 47;
+  const barY = PAD.t + 64;
   if (next) {
     const span = next.at - rk.at;
     const done = Math.max(0, Math.min(1, (k - rk.at) / span));
@@ -3441,6 +3692,10 @@ function drawCards() {
   ctx.fillStyle = 'rgba(238,242,248,0.7)';
   ctx.font = '600 15px -apple-system, system-ui, sans-serif';
   ctx.fillText('Pick one to keep forever', VW / 2, VH * .19 + 28);
+  ctx.fillStyle = '#ffd84d';
+  ctx.font = '700 14px -apple-system, system-ui, sans-serif';
+  ctx.fillText('+' + lastWaveCoins + ' coins  (' + save.coins + ' saved up)',
+    VW / 2, VH * .19 + 50);
 
   const n = cards.length;
   const gap = 14;
@@ -3644,6 +3899,194 @@ function loop(now) {
 // ---------------------------------------------------------------------------
 //  Start
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  The shop screen
+//
+//  Built as real HTML rather than drawn on the canvas. A shop is a list of things
+//  you scroll and tap, and the browser already does scrolling and tapping properly
+//  on a tablet. Hand-drawing it would have meant reinventing both, badly, and it
+//  would not have handled a long list on a small screen.
+// ---------------------------------------------------------------------------
+const shopEl = document.getElementById('shop');
+const sbody = document.getElementById('sbody');
+const coinbal = document.getElementById('coinbal');
+let shopTab = 'look';
+
+function shopOpen(on) {
+  if (!shopEl) return;
+  shopEl.setAttribute('data-open', on ? '1' : '0');
+  if (on) drawShop();
+}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+// A little picture of your guy, so choices can be seen rather than guessed at.
+function buildPreview() {
+  const wrap = el('div');
+  wrap.id = 'preview';
+  const guy = el('div');
+  guy.id = 'guy';
+  const hat = HATS[save.look.hat || 0];
+  const parts = [];
+  if (hat && hat.kind) parts.push([26, 7, hat.color]);
+  parts.push([24, 22, SKINS[save.look.skin]]);      // head
+  parts.push([30, 20, SHIRTS[save.look.shirt]]);    // torso
+  parts.push([26, 18, PANTS[save.look.legs]]);      // legs
+  for (const [w, h, c] of parts) {
+    const b = el('div');
+    b.style.width = w + 'px';
+    b.style.height = h + 'px';
+    b.style.background = c;
+    guy.appendChild(b);
+  }
+  wrap.appendChild(guy);
+  const t = el('div', null);
+  t.id = 'ptext';
+  t.textContent = 'This is your guy. Coins come from kills and from clearing waves, '
+    + 'and they stay saved between games.';
+  wrap.appendChild(t);
+  return wrap;
+}
+
+function swatchRow(title, list, key) {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, title));
+  const holder = el('div', 'swatches');
+  list.forEach((col, i) => {
+    const b = el('button', 'sw');
+    b.style.background = col;
+    b.setAttribute('data-on', save.look[key] === i ? '1' : '0');
+    b.addEventListener('click', () => {
+      save.look[key] = i;
+      writeSave();
+      drawShop();
+    });
+    holder.appendChild(b);
+  });
+  row.appendChild(holder);
+  return row;
+}
+
+// Buying a hat or a face, then wearing it.
+function cosmeticRow(title, list, ownedKey, lookKey) {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, title));
+  const holder = el('div', 'items');
+  list.forEach((thing, i) => {
+    const owned = !!save[ownedKey][i] || thing.cost === 0;
+    const worn = (save.look[lookKey] || 0) === i;
+    const b = el('button', 'item');
+    b.appendChild(el('strong', null, thing.name));
+    b.appendChild(el('span', null, owned ? (worn ? 'wearing it' : 'tap to wear')
+      : thing.cost + ' coins'));
+    b.setAttribute('data-on', worn ? '1' : '0');
+    if (!owned) b.setAttribute('data-locked', '1');
+    if (!owned && save.coins < thing.cost) b.setAttribute('data-broke', '1');
+    b.addEventListener('click', () => {
+      if (owned) {
+        save.look[lookKey] = i;
+      } else if (save.coins >= thing.cost) {
+        save.coins -= thing.cost;
+        save[ownedKey][i] = true;
+        save.look[lookKey] = i;
+        if (!muted) { audioStart(); SFX.rankup(); }
+      } else {
+        if (!muted) { audioStart(); SFX.hurt(); }
+        return;
+      }
+      writeSave();
+      drawShop();
+    });
+    holder.appendChild(b);
+  });
+  row.appendChild(holder);
+  return row;
+}
+
+function perkRow() {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, 'Upgrades you keep for good'));
+  const holder = el('div', 'items');
+  for (const perk of PERKS) {
+    const lvl = perkLevel(perk.id);
+    const maxed = lvl >= perk.levels;
+    const cost = perkCost(perk, lvl);
+    const b = el('button', 'item');
+    b.appendChild(el('strong', null, perk.name + (lvl ? '  ' + lvl + '/' + perk.levels : '')));
+    b.appendChild(el('span', null, maxed ? perk.desc + '  (full)'
+      : perk.desc + '   ' + cost + ' coins'));
+    if (maxed) b.setAttribute('data-on', '1');
+    if (!maxed && save.coins < cost) b.setAttribute('data-broke', '1');
+    b.addEventListener('click', () => {
+      if (maxed) return;
+      if (save.coins < cost) { if (!muted) { audioStart(); SFX.hurt(); } return; }
+      save.coins -= cost;
+      save.perks[perk.id] = lvl + 1;
+      writeSave();
+      if (!muted) { audioStart(); SFX.rankup(); }
+      drawShop();
+    });
+    holder.appendChild(b);
+  }
+  row.appendChild(holder);
+  return row;
+}
+
+function drawShop() {
+  if (!sbody) return;
+  if (coinbal) coinbal.textContent = save.coins + ' coins';
+  document.querySelectorAll('.stab').forEach(t =>
+    t.setAttribute('data-on', t.dataset.tab === shopTab ? '1' : '0'));
+  sbody.innerHTML = '';
+  if (shopTab === 'look') {
+    sbody.appendChild(buildPreview());
+    sbody.appendChild(swatchRow('Skin', SKINS, 'skin'));
+    sbody.appendChild(swatchRow('Shirt', SHIRTS, 'shirt'));
+    sbody.appendChild(swatchRow('Trousers', PANTS, 'legs'));
+    sbody.appendChild(cosmeticRow('Hats', HATS, 'ownedHats', 'hat'));
+    sbody.appendChild(cosmeticRow('Faces', FACES, 'ownedFaces', 'face'));
+  } else {
+    sbody.appendChild(perkRow());
+  }
+}
+
+(function wireShop() {
+  const openBtn = document.getElementById('shopopen');
+  const doneBtn = document.getElementById('shopdone');
+  if (openBtn) {
+    const go = (ev) => { ev.stopPropagation(); ev.preventDefault(); shopOpen(true); };
+    openBtn.addEventListener('pointerdown', go);
+    openBtn.addEventListener('click', go);
+  }
+  if (doneBtn) {
+    const go = (ev) => { ev.stopPropagation(); ev.preventDefault(); shopOpen(false); };
+    doneBtn.addEventListener('pointerdown', go);
+    doneBtn.addEventListener('click', go);
+  }
+  document.querySelectorAll('.stab').forEach(t => {
+    const go = (ev) => {
+      ev.stopPropagation(); ev.preventDefault();
+      shopTab = t.dataset.tab;
+      drawShop();
+    };
+    t.addEventListener('pointerdown', go);
+    t.addEventListener('click', go);
+  });
+  // Stop taps inside the shop from starting a game behind it.
+  if (shopEl) {
+    shopEl.addEventListener('pointerdown', ev => ev.stopPropagation());
+    shopEl.addEventListener('click', ev => ev.stopPropagation());
+  }
+})();
+
+loadSave();
+drawShop();
+
 const titleEl = document.getElementById('title');
 const verEl = document.getElementById('ver');
 if (verEl) verEl.textContent = 'ZOMBIE NOOBS  ' + VERSION;
