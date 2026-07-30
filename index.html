@@ -212,7 +212,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v24';
+const VERSION = 'v26';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1048,30 +1048,54 @@ function stickToWorld(sdx, sdy) {
 // the world.
 const FACE_SHADE = { n: -26, e: -14, s: -54, w: -42 };
 
+// Where the light comes from, as an angle across the ground. Faces are shaded by
+// how squarely they face it, which keeps the lighting steady when either the
+// camera or the thing being drawn turns.
+const LIGHT_ANGLE = -Math.PI * 0.25;
+
+// The old axis-aligned entry point. Everything that is not a character still uses
+// this, and it just hands over to the turnable one with no turn applied.
 function drawBox(wx, wy, wz, w, d, h, color, alpha, decal) {
-  const x0 = wx, y0 = wy, x1 = wx + w, y1 = wy + d;
+  return drawBoxRot(wx + w / 2, wy + d / 2, wz, w, d, h, color, 0, alpha, decal);
+}
+
+// A box, turned by `rot` about its own middle, and placed by its middle rather
+// than by a corner so that turning it does not also move it.
+function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal) {
   const zt = wz + h, zb = wz;
   if (alpha !== undefined) ctx.globalAlpha = alpha;
 
-  // Top corners, then the same corners down at the base.
-  const ax = isoX(x0, y0, zt), ay = isoY(x0, y0, zt);
-  const bx = isoX(x1, y0, zt), by = isoY(x1, y0, zt);
-  const cx = isoX(x1, y1, zt), cy = isoY(x1, y1, zt);
-  const dx = isoX(x0, y1, zt), dy = isoY(x0, y1, zt);
-  const axB = isoX(x0, y0, zb), ayB = isoY(x0, y0, zb);
-  const bxB = isoX(x1, y0, zb), byB = isoY(x1, y0, zb);
-  const cxB = isoX(x1, y1, zb), cyB = isoY(x1, y1, zb);
-  const dxB = isoX(x0, y1, zb), dyB = isoY(x0, y1, zb);
+  const cr = Math.cos(rot || 0), sr = Math.sin(rot || 0);
+  const hw2 = w / 2, hd2 = d / 2;
+  // The four corners on the ground, turned about the middle.
+  const corner = (sx, sy) => [
+    mx + (sx * hw2) * cr - (sy * hd2) * sr,
+    my + (sx * hw2) * sr + (sy * hd2) * cr,
+  ];
+  const cA = corner(-1, -1), cB = corner(1, -1), cC = corner(1, 1), cD = corner(-1, 1);
 
-  // The four sides, each with how far away it is so they can be drawn back first.
+  const ax = isoX(cA[0], cA[1], zt), ay = isoY(cA[0], cA[1], zt);
+  const bx = isoX(cB[0], cB[1], zt), by = isoY(cB[0], cB[1], zt);
+  const cx = isoX(cC[0], cC[1], zt), cy = isoY(cC[0], cC[1], zt);
+  const dx = isoX(cD[0], cD[1], zt), dy = isoY(cD[0], cD[1], zt);
+  const axB = isoX(cA[0], cA[1], zb), ayB = isoY(cA[0], cA[1], zb);
+  const bxB = isoX(cB[0], cB[1], zb), byB = isoY(cB[0], cB[1], zb);
+  const cxB = isoX(cC[0], cC[1], zb), cyB = isoY(cC[0], cC[1], zb);
+  const dxB = isoX(cD[0], cD[1], zb), dyB = isoY(cD[0], cD[1], zb);
+
+  const mid = (u, v) => [(u[0] + v[0]) / 2, (u[1] + v[1]) / 2];
+  const mAB = mid(cA, cB), mBC = mid(cB, cC), mCD = mid(cC, cD), mDA = mid(cD, cA);
+
+  // Each side, with how far off it is so they can be drawn back to front, and the
+  // direction it faces so it can be lit correctly however the box is turned.
   const sides = [
-    { k: 'n', d: viewDepth((x0 + x1) / 2, y0, zb),
+    { a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
       p: [ax, ay, bx, by, bxB, byB, axB, ayB] },
-    { k: 'e', d: viewDepth(x1, (y0 + y1) / 2, zb),
+    { a: rot, d: viewDepth(mBC[0], mBC[1], zb),
       p: [bx, by, cx, cy, cxB, cyB, bxB, byB] },
-    { k: 's', d: viewDepth((x0 + x1) / 2, y1, zb),
+    { a: rot + Math.PI / 2, d: viewDepth(mCD[0], mCD[1], zb),
       p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] },
-    { k: 'w', d: viewDepth(x0, (y0 + y1) / 2, zb),
+    { a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
       p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] },
   ];
   sides.sort((p1, p2) => p2.d - p1.d);
@@ -1083,7 +1107,8 @@ function drawBox(wx, wy, wz, w, d, h, color, alpha, decal) {
 
   for (const side of sides) {
     const q = side.p;
-    const tone = FACE_SHADE[side.k];
+    // Square on to the light is brightest, facing away is darkest.
+    const tone = -34 + 22 * Math.cos((side.a || 0) - LIGHT_ANGLE);
     ctx.fillStyle = shade(color, tone);
     ctx.beginPath();
     ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]);
@@ -1617,7 +1642,7 @@ function newPlayer() {
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
     // Filled in properly just below, once the bought upgrades are known.
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
-    walk: 0, moving: false, mvx: 0, mvy: 1,
+    walk: 0, moving: false, mvx: 0, mvy: 1, faceAng: Math.PI / 2,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: applyPerks(freshUpgrades()), rageT: 0, speedT: 0,
     points: 0, bossT: 0, size: 1,
@@ -1958,6 +1983,7 @@ function spawnEnemy(side, boss) {
     rank: rank, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
     squash: 0, wob: Math.random() * 6.28, z: 0, climbing: false,
     walk: Math.random() * 6.28, moving: false, mvx: 0, mvy: 1,
+    faceAng: Math.random() * 6.28,
     lastX: p.x, lastY: p.y, stuckT: 0,
     // Which way this one prefers to circle, and how long it has been charging.
     turn: Math.random() < .5 ? -1 : 1, chargeT: 0, chargeCool: 1 + Math.random() * 2,
@@ -2233,6 +2259,17 @@ function addShake(amount, dirX, dirY) {
 }
 
 // Freeze everything for a few dozen milliseconds when something connects.
+// Turn something towards a direction, the short way round and over a moment
+// rather than instantly, so a character pivots instead of flicking.
+function turnToward(e, tx, ty, dt, rate) {
+  if (tx === 0 && ty === 0) return;
+  const want = Math.atan2(ty, tx);
+  let d = want - (e.faceAng || 0);
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  e.faceAng = (e.faceAng || 0) + d * (1 - Math.exp(-(rate || 14) * dt));
+}
+
 function addHitstop(sec) { hitstop = Math.max(hitstop, sec * TUNE.HITSTOP); }
 
 function announce(text) { flashText = text; flashTime = 1.5; slowmo = .55; }
@@ -2533,6 +2570,14 @@ function update(dt) {
     player.walk += dt * 9 * player.up.speed * speedMul;
     player.mvx = mv.dx; player.mvy = mv.dy;
   }
+  // Face whatever is being aimed at when there is something in range, otherwise
+  // face the way you are walking. This is what makes a weapon point at things.
+  const near0 = nearestTarget(player, enemySide());
+  if (near0.target && near0.dist < 520) {
+    turnToward(player, near0.target.x - player.x, near0.target.y - player.y, dt, 12);
+  } else if (player.moving) {
+    turnToward(player, mv.dx, mv.dy, dt, 12);
+  }
   // Climb whatever you are pushing against, or fall if you walked off an edge.
   updateHeight(player, mv.dx, mv.dy, dt);
   unstick(player);
@@ -2726,6 +2771,7 @@ function update(dt) {
         e.moving = true;
         e.walk += dt * 9 * e.spd;
         e.mvx = sx; e.mvy = sy;
+        turnToward(e, sx, sy, dt, 9);
         // They climb with exactly the same rules you do, so they will follow you
         // up onto a wall rather than milling about at the bottom of it.
         updateHeight(e, sx, sy, dt);
@@ -2754,6 +2800,8 @@ function update(dt) {
       // Keep out of each other's way, and never stay wedged in a block.
       separate(e, dt);
       unstick(e);
+      // Standing still, face whatever is being fought, so a weapon points at it.
+      turnToward(e, tgt.x - e.x, tgt.y - e.y, dt, 7);
       tryAttack(e, false);
     } else {
       separate(e, dt);
@@ -2950,6 +2998,25 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
   const z = (g.z || 0) + bob;
 
+  // ---------------------------------------------------------------------------
+  //  The body frame
+  //
+  //  Every part is placed in the character's own frame rather than along the world
+  //  grid: lx runs across his shoulders, ly runs out in front of him, lz is up.
+  //  The frame is then turned to whichever way he is facing. Before this, parts
+  //  were axis aligned and he could only be flipped left or right, which is why
+  //  walking north you saw him from the side.
+  // ---------------------------------------------------------------------------
+  const ang = g.faceAng || 0;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const rot = ang - Math.PI / 2;
+  // Local across-and-forward to a place in the world.
+  const LX = (lx, ly) => g.x + lx * sa + ly * ca;
+  const LY = (lx, ly) => g.y - lx * ca + ly * sa;
+  // One part of the body, placed by its middle in the character's own frame.
+  const P = (lx, ly, lz, w, d, h, col, alp) =>
+    drawBoxRot(LX(lx, ly), LY(lx, ly), lz, w, d, h, col, rot, alp);
+
   // Shadow on whatever surface is underneath, so you can tell how high up
   // something is when it is standing on a wall.
   const shx = isoX(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
@@ -2959,8 +3026,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   ctx.ellipse(shx, shy, 12 * s, 6 * s, 0, 0, 6.283);
   ctx.fill();
 
-  // With a screenful of near identical characters there was no way to tell which
-  // one was you. A bright ring on the ground marks you out at a glance.
+  // A bright ring on the ground marks you out in a crowd of near identical people.
   if (isPlayer) {
     const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
     ctx.strokeStyle = ring;
@@ -2979,14 +3045,13 @@ function drawGuy(g, side, rankIdx, isPlayer) {
     || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
   if (flash) ctx.globalAlpha = .68;
 
-  // Squash and stretch on impact: the whole stack goes briefly shorter and wider.
+  // Squash and stretch on impact.
   const sq = g.squash || 0;
   const hs = 1 - sq * .35;
   const ws = 1 + sq * .25;
 
-  // Walking. The legs take turns lifting and stepping, the arms swing the
-  // opposite way to the legs the way real arms do, and the head and chest ride
-  // up and down with each stride. Standing still it settles into a slow breath.
+  // Walking. Legs take turns lifting and stepping, arms swing opposite the legs,
+  // and the head and chest ride up and down. Standing still it breathes instead.
   const ph = g.walk || 0;
   const striding = g.moving ? 1 : 0;
   const swing = Math.sin(ph) * striding;
@@ -2995,134 +3060,185 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const liftB = Math.max(0, swingB) * 3.4 * s;
   const breathe = striding ? 0 : Math.sin((g.wob || 0) * .6) * .5 * s;
   const headBob = (striding ? Math.abs(Math.sin(ph)) * 1.6 : 0) * s + breathe;
-  // Steps go along the way the character is actually travelling. Swinging along
-  // a fixed world axis made the limbs slide sideways out of the body as soon as
-  // the camera could be turned.
-  const mlen = Math.hypot(g.mvx || 0, g.mvy || 1) || 1;
-  const fwdX = (g.mvx || 0) / mlen, fwdY = (g.mvy || 1) / mlen;
 
-  const legH = 15.2 * s * hs, torsoH = 15.2 * s * hs, headH = 11.4 * s * hs;
-  const hw = 7.6 * s * ws;            // half the width of the torso
-  const dep = 7.6 * s;                // one stud deep
-  const y0 = g.y - dep / 2;
+  // Proportions.
+  //
+  // These started out as exact Roblox measurements: everything one or two studs,
+  // every limb a single slab. That is why it looked so blocky. It is now built more
+  // like a person: shoulders wider than hips, a waist that comes in, limbs split
+  // into two tapering sections rather than one, and a neck. Still made of boxes,
+  // but far more of them and none of them slabs.
+  const U = 7.6 * s;
+  const dep = U * 0.92;
+  const armW = U * 0.88 * ws;
+  const legW = U * 0.92 * ws;
+  const chestW = U * 2.1 * ws;      // across the shoulders
+  const waistW = U * 1.62 * ws;     // and in at the waist
+  const torsoW = chestW;            // what the kit and the shield still measure from
+  const legH = 16.4 * s * hs, torsoH = 15.2 * s * hs, headH = 10.6 * s * hs;
+  const thighH = legH * 0.54, shinH = legH * 0.46;
 
-  // Built to real Roblox proportions. A Roblox character is measured in studs:
-  // the torso is two wide and two tall, each arm and leg is one wide and two
-  // tall, and the head is two wide. The arms sit flush against the torso and the
-  // legs sit flush against each other, with no gaps anywhere. Getting those
-  // proportions right is most of what makes the silhouette recognisable.
-  const U = 7.6 * s;              // one stud
-  const armW = U * ws, legW = U * ws;
-  const torsoW = U * 2 * ws;
-  const cx0 = g.x;
+  // Steps go forwards and backwards along his own forward axis now, so it reads as
+  // a stride whichever way he happens to be pointing.
+  const stepA = swing * 2.4 * s, stepB = swingB * 2.4 * s;
 
-  // Legs, side by side, taking turns to lift and step along the way they are going.
-  const stepA = swing * 2.2 * s, stepB = swingB * 2.2 * s;
-  drawBox(cx0 - legW + fwdX * stepA, y0 + fwdY * stepA, z + lift, legW, dep, legH, legs);
-  drawBox(cx0 + fwdX * stepB, y0 + fwdY * stepB, z + liftB, legW, dep, legH, legs);
-  // Shoes, riding with the leg they belong to.
-  const shoe = shade(legs, -34);
-  drawBox(cx0 - legW + fwdX * stepA, y0 + fwdY * stepA - .6, z + lift,
-          legW, dep + .6, 3.2 * s, shoe);
-  drawBox(cx0 + fwdX * stepB, y0 + fwdY * stepB - .6, z + liftB,
-          legW, dep + .6, 3.2 * s, shoe);
-  // Arms, flush against the torso, swinging opposite to the legs.
-  const armZ = z + legH + headBob * .4;
-  const armA = swingB * 2.4 * s, armB = swing * 2.4 * s;
-  drawBox(cx0 - torsoW / 2 - armW + fwdX * armA, y0 + fwdY * armA, armZ,
-          armW, dep, torsoH, skin);
-  drawBox(cx0 + torsoW / 2 + fwdX * armB, y0 + fwdY * armB, armZ,
-          armW, dep, torsoH, skin);
-  // Hands on the bottom of each arm.
-  drawBox(cx0 - torsoW / 2 - armW + fwdX * armA, y0 + fwdY * armA - .4, armZ,
-          armW, dep + .4, 3 * s, shade(skin, -20));
-  drawBox(cx0 + torsoW / 2 + fwdX * armB, y0 + fwdY * armB - .4, armZ,
-          armW, dep + .4, 3 * s, shade(skin, -20));
+  // Legs. Each one is a thigh, a narrower shin and a boot rather than a single
+  // slab, which is most of what stops them reading as blocks.
+  const boot = shade(legs, -38);
+  const drawLeg = (side, step, up) => {
+    const lx = side * legW * 0.56;
+    P(lx, step, z + up + shinH, legW, dep * 0.96, thighH, legs);
+    P(lx, step * 1.15, z + up + 2.4 * s, legW * 0.84, dep * 0.86, shinH, shade(legs, -8));
+    // A knee, which breaks the straight line down the leg.
+    P(lx, step * 1.1 + dep * 0.14, z + up + shinH - 1.2 * s,
+      legW * 0.9, dep * 0.72, 2.6 * s, shade(legs, 10));
+    P(lx, step * 1.15 - .5, z + up, legW * 1.02, dep * 1.16, 3.2 * s, boot);
+    // A toe, so a boot is not a plain cube.
+    P(lx, step * 1.15 + dep * 0.62, z + up, legW * 0.86, dep * 0.34, 2.2 * s, shade(boot, -12));
+  };
+  drawLeg(-1, stepA, lift);
+  drawLeg(1, stepB, liftB);
+
   // Torso, riding the same bob as the head.
   const torsoZ = z + legH + headBob * .5;
-  drawBox(cx0 - torsoW / 2, y0, torsoZ, torsoW, dep, torsoH, torso);
-  // A belt across the bottom of the torso.
-  drawBox(cx0 - torsoW / 2, y0 - .3, torsoZ, torsoW, dep + .3, 2.6 * s, shade(torso, -18));
-  // Shoulders sitting in the shadow of the head.
-  drawBox(cx0 - torsoW / 2, y0 + .5, torsoZ + torsoH - 1.2, torsoW, dep - 1,
-          1.2 * s, shade(torso, -10));
-  // A collar where the torso meets the head.
-  drawBox(cx0 - torsoW * .3, y0 + .8, torsoZ + torsoH - 1.4, torsoW * .6, dep - 1.6,
-          2.4 * s, shade(torso, 24));
-  // Head, two studs wide like the real thing, nodding with each stride and
-  // turning a little towards whatever is being aimed at.
-  const headW = U * 2 * ws;
-  // The head used to be shifted sideways to suggest looking around, but that
-  // just pulled it off the neck. It only nods now.
-  const headTurn = 0;
-  const headZ = torsoZ + torsoH + headBob * .5;
-  drawBox(cx0 - headW / 2 + headTurn, y0, headZ, headW, dep, headH, skin);
-  // Your hat, if you are wearing one.
-  if (isPlayer) {
-    const hat = HATS[save.look.hat || 0];
-    if (hat && hat.kind) {
-      const hz = headZ + headH;
-      const hxL = cx0 - headW / 2 + headTurn;
-      if (hat.kind === 'cap') {
-        drawBox(hxL - .6, y0 - .4, hz - 1, headW + 1.2, dep + .8, 3 * s, hat.color);
-        drawBox(hxL + headW * .1, y0 + dep - .4, hz - 1, headW * .8, 4 * s, 1.4 * s, hat.color);
-      } else if (hat.kind === 'helmet') {
-        drawBox(hxL - 1, y0 - .8, hz - 3.4 * s, headW + 2, dep + 1.6, 5 * s, hat.color);
-      } else if (hat.kind === 'tall') {
-        drawBox(hxL - 1.4, y0 - 1, hz - .6, headW + 2.8, dep + 2, 1.6 * s, hat.color);
-        drawBox(hxL + 1.6, y0 + 1, hz + 1, headW - 3.2, dep - 2, 11 * s, hat.color);
-      } else if (hat.kind === 'crown') {
-        drawBox(hxL + .6, y0 + .6, hz - .4, headW - 1.2, dep - 1.2, 2.6 * s, hat.color);
-        for (let i = 0; i < 3; i++) {
-          drawBox(hxL + 1.4 + i * (headW - 4) / 2.6, y0 + 1.4, hz + 2,
-                  2.2 * s, dep - 3, 3.4 * s, hat.color);
-        }
-      } else if (hat.kind === 'phones') {
-        drawBox(hxL + .4, y0 + .6, hz - .6, headW - .8, dep - 1.2, 1.8 * s, hat.color);
-        drawBox(hxL - 1.8, y0 + 1, hz - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
-        drawBox(hxL + headW - .6, y0 + 1, hz - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
-      } else if (hat.kind === 'brim') {
-        drawBox(hxL - 3, y0 - 2.6, hz - 1, headW + 6, dep + 5.2, 1.4 * s, hat.color);
-        drawBox(hxL + 1.6, y0 + 1, hz + .4, headW - 3.2, dep - 2, 5 * s, hat.color);
-      }
-    }
+  // Chest above, waist below, so the body has a shape rather than being a slab.
+  P(0, 0, torsoZ + torsoH * 0.42, chestW, dep, torsoH * 0.58, torso);
+  P(0, 0, torsoZ, waistW, dep * 0.94, torsoH * 0.46, shade(torso, -6));
+  // The shoulders themselves, rounded off the top corners of the chest.
+  P(-chestW * 0.42, 0, torsoZ + torsoH * 0.94, chestW * 0.3, dep * 0.9, 2.6 * s, shade(torso, 8));
+  P(chestW * 0.42, 0, torsoZ + torsoH * 0.94, chestW * 0.3, dep * 0.9, 2.6 * s, shade(torso, 8));
+  // A belt with a buckle.
+  P(0, 0, torsoZ, waistW * 1.04, dep * 0.98, 2.6 * s, shade(torso, -22));
+  P(0, dep / 2, torsoZ + .2, 3.4 * s, 1.2 * s, 2.2 * s, '#c9a227');
+  // Two chest pockets.
+  P(-torsoW * .26, dep / 2, torsoZ + torsoH * .5, torsoW * .3, 1.1 * s, 4 * s, shade(torso, -12));
+  P(torsoW * .26, dep / 2, torsoZ + torsoH * .5, torsoW * .3, 1.1 * s, 4 * s, shade(torso, -12));
+  // Shoulders in the shadow of the head, and a collar.
+  P(0, 0, torsoZ + torsoH - 1.2, torsoW, dep - 1, 1.2 * s, shade(torso, -10));
+  P(0, .6, torsoZ + torsoH - 1.4, torsoW * .6, dep - 1.6, 2.4 * s, shade(torso, 24));
+
+  // ---------------------------------------------------------------------------
+  //  Arms, and how a weapon is actually held
+  //
+  //  Rather than hanging a weapon off an arm, the weapon says where the hands go
+  //  and the arms reach to those grips, which is how a real rig does it. A rifle
+  //  gets both hands on it, one forward on the barrel and one back at the trigger.
+  //  Anything one handed leaves the other arm swinging.
+  // ---------------------------------------------------------------------------
+  const swinging = g.swing > 0;
+  const lunge = swinging ? 4.5 * s : 0;
+  const shoulderZ = torsoZ + torsoH * .82;
+  const armLen = torsoH * 1.02;
+
+  // Where each hand wants to be, in his own frame. Default is by his sides.
+  let rHand = { lx: torsoW / 2 + armW / 2, ly: swingB * 2.2 * s, lz: shoulderZ - armLen };
+  let lHand = { lx: -torsoW / 2 - armW / 2, ly: swing * 2.2 * s, lz: shoulderZ - armLen };
+  let twoHanded = false;
+
+  const wKind = rk.weapon;
+  if (wKind === 'rifle') {
+    twoHanded = true;
+    rHand = { lx: torsoW * .22, ly: dep * .5 + 3 * s + lunge, lz: shoulderZ - armLen * .42 };
+    lHand = { lx: -torsoW * .1, ly: dep * .5 + 12 * s + lunge, lz: shoulderZ - armLen * .3 };
+  } else if (wKind === 'pistol') {
+    rHand = { lx: torsoW * .34, ly: dep * .5 + 5 * s + lunge, lz: shoulderZ - armLen * .38 };
+  } else if (wKind === 'knife' || wKind === 'claws') {
+    rHand = { lx: torsoW * .42, ly: dep * .5 + 3 * s + lunge, lz: shoulderZ - armLen * .55 };
+  } else if (wKind === 'riot shield') {
+    lHand = { lx: -torsoW * .28, ly: dep * .5 + 3 * s, lz: shoulderZ - armLen * .5 };
+  } else if (wKind === 'smash') {
+    rHand = { lx: torsoW * .5, ly: dep * .4 + lunge, lz: shoulderZ - armLen * .8 };
   }
 
-  // A helmet, slightly wider than the head and sitting a touch proud of it.
-  if (TH().helmet && pal.helmet && !(isPlayer && HATS[save.look.hat || 0].kind)) {
-    drawBox(cx0 - headW / 2 - 1 + headTurn, y0 - .8, headZ + headH - 3.4 * s,
-            headW + 2, dep + 1.6, 4.6 * s, pal.helmet);
+  // An arm drawn as an upper and a lower section reaching from the shoulder to
+  // wherever the hand needs to be, so it bends towards the grip.
+  function drawArm(side, hand) {
+    const shX = side * (torsoW / 2 + armW / 2);
+    const midLX = (shX + hand.lx) / 2;
+    const midLY = hand.ly * .5;
+    const midLZ = (shoulderZ + hand.lz) / 2 + 1.2 * s;
+    P(midLX * .6 + shX * .4, midLY * .5, midLZ + (shoulderZ - midLZ) * .35,
+      armW, dep * 0.82, armLen * .58, skin);
+    // The forearm is thinner than the upper arm, which is what makes a limb read
+    // as a limb rather than as a post.
+    P(hand.lx * .78 + midLX * .22, hand.ly * .82, hand.lz + armLen * .2,
+      armW * .8, dep * 0.7, armLen * .5, shade(skin, -6));
+    // An elbow between the two.
+    P((hand.lx + shX) / 2, hand.ly * .45, hand.lz + armLen * .46,
+      armW * .86, dep * 0.74, 2.4 * s, shade(skin, 8));
+    // A rolled sleeve where the arm meets the shoulder.
+    P(shX, 0, shoulderZ - armLen * .22, armW * 1.08, dep - 1, 4.4 * s, shade(torso, -6));
+    // A glove for a hand.
+    P(hand.lx, hand.ly, hand.lz, armW * .96, dep - 1.8, 3.2 * s, shade(skin, -26));
   }
+  drawArm(1, rHand);
+  drawArm(-1, lHand);
 
-  // The classic noob face, painted on the front of the head cube.
-  const fx = isoX(g.x + headTurn, y0 + dep, headZ + headH * .55);
-  const fy = isoY(g.x + headTurn, y0 + dep, headZ + headH * .55);
+  // A neck, which the old version simply did not have.
+  P(0, 0, torsoZ + torsoH - 1, U * 0.62 * ws, dep * 0.6, 3.4 * s, shade(skin, -14));
+
+  // Head, a touch narrower than the shoulders, nodding with each stride.
+  const headW = U * 1.78 * ws;
+  const headZ = torsoZ + torsoH + 2.2 * s + headBob * .5;
+  P(0, 0, headZ, headW, dep * 0.94, headH, skin);
+  // A jaw below and a rounded crown above, so the head is not a plain cube.
+  P(0, dep * 0.06, headZ - 1.2 * s, headW * 0.84, dep * 0.8, 2.8 * s, shade(skin, -10));
+  P(0, 0, headZ + headH - 1, headW * 0.86, dep * 0.78, 2.4 * s, shade(skin, 8));
+  // Ears.
+  P(-headW / 2, 0, headZ + headH * 0.42, 1.6 * s, dep * 0.36, 3.4 * s, shade(skin, -12));
+  P(headW / 2, 0, headZ + headH * 0.42, 1.6 * s, dep * 0.36, 3.4 * s, shade(skin, -12));
+
+  // ---------------------------------------------------------------------------
+  //  The face, painted on the front of the head
+  // ---------------------------------------------------------------------------
+  const fwX = LX(0, dep / 2 + .4), fwY = LY(0, dep / 2 + .4);
+  const fx = isoX(fwX, fwY, headZ + headH * .55);
+  const fy = isoY(fwX, fwY, headZ + headH * .55);
   const e = 2.1 * s;
   const faceId = isPlayer ? (save.look.face || 0) : 0;
-  ctx.fillStyle = '#241c14';
-  if (isPlayer && faceId === 1) {
-    // Shades: one dark bar across both eyes.
-    ctx.fillRect(fx - 5.2 * s, fy - e, 10.4 * s, e * 1.7);
-  } else if (isPlayer && faceId === 4) {
-    // Robot: square eyes and a grille.
-    ctx.fillRect(fx - 5 * s, fy - e, e * 2, e * 2);
-    ctx.fillRect(fx + 1.4 * s, fy - e, e * 2, e * 2);
-  } else {
-    ctx.fillRect(fx - 4.4 * s, fy - e, e * 1.3, e * 1.9);
-    ctx.fillRect(fx + 1.6 * s, fy - e, e * 1.3, e * 1.9);
+
+  // Brows, which do most of the work in giving a face an expression.
+  ctx.fillStyle = shade(skin, -46);
+  if (faceId === 2) {
+    ctx.fillRect(fx - 5.4 * s, fy - e * 2.1, 4.4 * s, 1.5 * s);
+    ctx.fillRect(fx + 1 * s, fy - e * 2.1, 4.4 * s, 1.5 * s);
+  } else if (faceId !== 4) {
+    ctx.fillRect(fx - 5 * s, fy - e * 2.3, 4 * s, 1.2 * s);
+    ctx.fillRect(fx + 1 * s, fy - e * 2.3, 4 * s, 1.2 * s);
   }
-  if (isPlayer && faceId === 2) {
-    // Angry: brows down, mouth a flat line.
-    ctx.fillRect(fx - 5 * s, fy - e * 1.7, 4 * s, 1.4 * s);
-    ctx.fillRect(fx + 1 * s, fy - e * 1.7, 4 * s, 1.4 * s);
+
+  ctx.fillStyle = '#241c14';
+  if (faceId === 1) {
+    // Shades, with a bright glint.
+    ctx.fillRect(fx - 5.6 * s, fy - e, 11.2 * s, e * 1.8);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(fx - 4.6 * s, fy - e * .7, 2.4 * s, 1.2 * s);
+  } else if (faceId === 4) {
+    // Robot: square eyes with a lit centre.
+    ctx.fillRect(fx - 5.2 * s, fy - e, e * 2.1, e * 2.1);
+    ctx.fillRect(fx + 1.2 * s, fy - e, e * 2.1, e * 2.1);
+    ctx.fillStyle = '#7ad7ff';
+    ctx.fillRect(fx - 4.4 * s, fy - e * .5, e, e);
+    ctx.fillRect(fx + 2 * s, fy - e * .5, e, e);
+  } else {
+    // Eye whites with a pupil in each, which reads far better than a plain dot.
+    ctx.fillStyle = '#f6f7f9';
+    ctx.fillRect(fx - 5 * s, fy - e, e * 1.8, e * 2);
+    ctx.fillRect(fx + 1.4 * s, fy - e, e * 1.8, e * 2);
+    ctx.fillStyle = '#241c14';
+    ctx.fillRect(fx - 4.2 * s, fy - e * .5, e * .9, e * 1.3);
+    ctx.fillRect(fx + 2.2 * s, fy - e * .5, e * .9, e * 1.3);
+  }
+
+  ctx.fillStyle = '#241c14';
+  if (faceId === 2) {
     ctx.fillRect(fx - 3.4 * s, fy + 2.6 * s, 6.8 * s, 1.6 * s);
-  } else if (isPlayer && faceId === 3) {
-    // Grin: a wide open mouth with teeth.
+  } else if (faceId === 3) {
     ctx.fillRect(fx - 4.6 * s, fy + 1.8 * s, 9.2 * s, 3.4 * s);
     ctx.fillStyle = '#f6f7f9';
     ctx.fillRect(fx - 3.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
     ctx.fillRect(fx + 1.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
-  } else if (isPlayer && faceId === 4) {
+  } else if (faceId === 4) {
     ctx.fillRect(fx - 4.6 * s, fy + 2.2 * s, 9.2 * s, 1.2 * s);
     ctx.fillRect(fx - 4.6 * s, fy + 4 * s, 9.2 * s, 1.2 * s);
   } else if (isNoob) {
@@ -3132,83 +3248,134 @@ function drawGuy(g, side, rankIdx, isPlayer) {
     ctx.arc(fx, fy + 2.4 * s, 3.4 * s, .18, Math.PI - .18);
     ctx.stroke();
   } else {
-    ctx.fillRect(fx - 4.6 * s, fy + 2.2 * s, 9.2 * s, 2.6 * s);
+    ctx.fillRect(fx - 5 * s, fy + 2.2 * s, 10 * s, 3.2 * s);
     ctx.fillStyle = shade(skin, 12);
-    ctx.fillRect(fx - 2.6 * s, fy + 2.2 * s, 1.5 * s, 2.6 * s);
-    ctx.fillRect(fx + 1.2 * s, fy + 2.2 * s, 1.5 * s, 2.6 * s);
+    ctx.fillRect(fx - 3.2 * s, fy + 2.2 * s, 1.7 * s, 3.2 * s);
+    ctx.fillRect(fx + 1.5 * s, fy + 2.2 * s, 1.7 * s, 3.2 * s);
   }
 
-  // Whatever it is holding. Each weapon is built out of several parts rather than
-  // one plain box, so a rifle reads as a rifle: stock, barrel, bolt and sights.
-  const swinging = g.swing > 0;
-  const f = g.face || 1;
-  const wx = (f > 0 ? g.x + hw + 2 : g.x - hw - 7 * s);
-  const wSwing = f > 0 ? armB : armA;
-  const wz = armZ + torsoH * .45;
-  const lunge = swinging ? 5 : 0;
-  const wy0 = y0 + 2 + wSwing;
-  const px = f > 0 ? 1 : -1;      // which way the weapon points
+  // ---------------------------------------------------------------------------
+  //  Hats, and a helmet for themes that issue one
+  // ---------------------------------------------------------------------------
+  const hatTop = headZ + headH;
+  if (isPlayer) {
+    const hat = HATS[save.look.hat || 0];
+    if (hat && hat.kind) {
+      if (hat.kind === 'cap') {
+        P(0, 0, hatTop - 1, headW + 1.2, dep + .8, 3 * s, hat.color);
+        P(0, dep * .8, hatTop - 1, headW * .8, 4 * s, 1.4 * s, shade(hat.color, -14));
+      } else if (hat.kind === 'helmet') {
+        P(0, 0, hatTop - 3.4 * s, headW + 2, dep + 1.6, 5 * s, hat.color);
+        P(0, 0, hatTop + 1.4 * s, 2.2 * s, dep + 1.6, 1.6 * s, shade(hat.color, -18));
+      } else if (hat.kind === 'tall') {
+        P(0, 0, hatTop - .6, headW + 2.8, dep + 2, 1.6 * s, hat.color);
+        P(0, 0, hatTop + 1, headW - 3.2, dep - 2, 11 * s, hat.color);
+        P(0, 0, hatTop + 8 * s, headW - 2.6, dep - 1.4, 1.8 * s, '#8c2f2f');
+      } else if (hat.kind === 'crown') {
+        P(0, 0, hatTop - .4, headW - 1.2, dep - 1.2, 2.6 * s, hat.color);
+        for (let i = -1; i <= 1; i++) {
+          P(i * headW * .3, 0, hatTop + 2, 2.2 * s, dep - 3, 3.4 * s, hat.color);
+        }
+      } else if (hat.kind === 'phones') {
+        P(0, 0, hatTop - .6, headW - .8, dep - 1.2, 1.8 * s, hat.color);
+        P(-headW / 2, 0, hatTop - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
+        P(headW / 2, 0, hatTop - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
+      } else if (hat.kind === 'brim') {
+        P(0, 0, hatTop - 1, headW + 6, dep + 5.2, 1.4 * s, hat.color);
+        P(0, 0, hatTop + .4, headW - 3.2, dep - 2, 5 * s, hat.color);
+        P(0, 0, hatTop + 4 * s, headW - 2.8, dep - 1.6, 1.4 * s, shade(hat.color, -26));
+      }
+    }
+  }
+  if (TH().helmet && pal.helmet && !(isPlayer && HATS[save.look.hat || 0].kind)) {
+    P(0, 0, hatTop - 3.4 * s, headW + 2, dep + 1.6, 4.6 * s, pal.helmet);
+    // A chin strap.
+    P(0, dep * .55, hatTop - headH * .55, headW * .9, 1.1 * s, 1.4 * s, shade(pal.helmet, -30));
+  }
 
-  if (rk.weapon === 'knife') {
-    // Handle, crossguard, then the blade.
-    drawBox(wx + f * lunge, wy0, wz, 3.4 * s, 2.6 * s, 2.6 * s, '#3b2a1c');
-    drawBox(wx + f * lunge + px * 3.2 * s, wy0 - .7, wz - .4,
-            1.4 * s, 4 * s, 3.4 * s, '#6b6f78');
-    drawBox(wx + f * lunge + px * 4.4 * s, wy0 + .3, wz + .3,
-            8 * s, 1.8 * s, 1.8 * s, '#dfe6f0');
-  } else if (rk.weapon === 'pistol') {
-    // Grip, frame, slide, and a muzzle flash when it goes off.
-    drawBox(wx, wy0 + .4, wz - 2.6 * s, 3 * s, 2.6 * s, 4.4 * s, '#2b2118');
-    drawBox(wx, wy0, wz, 8 * s, 3 * s, 2.6 * s, '#2b3038');
-    drawBox(wx + px * 1.2 * s, wy0 + .3, wz + 2.2 * s, 6.4 * s, 2.4 * s, 1.6 * s, '#3a4048');
+  // ---------------------------------------------------------------------------
+  //  Kit they carry, which is most of what makes somebody look equipped
+  // ---------------------------------------------------------------------------
+  const war = TH().decals === 'war';
+  const packZ = torsoZ + torsoH * .34;
+  if (war) {
+    // A pack, a canteen and pouches on the belt.
+    P(0, -dep * .62, packZ, torsoW * .78, 4.4 * s, torsoH * .72, shade(torso, -16));
+    P(0, -dep * .62, packZ + torsoH * .3, torsoW * .5, 5 * s, 2 * s, shade(torso, -30));
+    P(torsoW * .34, -dep * .5, torsoZ + 2.4 * s, 3.4 * s, 3 * s, 4.6 * s, '#6b7248');
+    P(-torsoW * .3, dep * .5, torsoZ + 1.6 * s, 4.2 * s, 1.6 * s, 3.4 * s, shade(torso, -26));
+    P(-torsoW * .05, dep * .5, torsoZ + 1.6 * s, 4.2 * s, 1.6 * s, 3.4 * s, shade(torso, -26));
+  } else {
+    // A scavenged backpack with a bedroll strapped on.
+    P(0, -dep * .6, packZ, torsoW * .7, 4 * s, torsoH * .66, shade(torso, -20));
+    P(0, -dep * .72, packZ + torsoH * .34, torsoW * .62, 3 * s, 3 * s, '#8d5a2b');
+    P(torsoW * .3, dep * .5, torsoZ + 1.6 * s, 3.6 * s, 1.6 * s, 3.4 * s, shade(torso, -28));
+  }
+
+  // ---------------------------------------------------------------------------
+  //  The weapon, drawn at the grips the hands are already holding
+  // ---------------------------------------------------------------------------
+  if (wKind === 'knife') {
+    P(rHand.lx, rHand.ly, rHand.lz, 2.6 * s, 3.4 * s, 2.6 * s, '#3b2a1c');
+    P(rHand.lx, rHand.ly + 3.2 * s, rHand.lz + .4, 4 * s, 1.4 * s, 3.4 * s, '#6b6f78');
+    P(rHand.lx, rHand.ly + 8 * s, rHand.lz + .6, 1.8 * s, 9 * s, 1.8 * s, '#dfe6f0');
+  } else if (wKind === 'pistol') {
+    P(rHand.lx, rHand.ly - 1.4 * s, rHand.lz - 1.6 * s, 2.6 * s, 3 * s, 4.4 * s, '#2b2118');
+    P(rHand.lx, rHand.ly + 2.4 * s, rHand.lz + 1.4 * s, 3 * s, 8 * s, 2.6 * s, '#2b3038');
+    P(rHand.lx, rHand.ly + 2.4 * s, rHand.lz + 3.4 * s, 2.4 * s, 6.4 * s, 1.6 * s, '#3a4048');
     if (swinging) {
-      drawBox(wx + px * 8 * s, wy0 + .5, wz + .4, 4.4 * s, 2 * s, 2 * s, '#ffd84d');
+      P(rHand.lx, rHand.ly + 8 * s, rHand.lz + 1.6 * s, 2 * s, 4.4 * s, 2 * s, '#ffd84d');
     }
-  } else if (rk.weapon === 'rifle') {
-    // A wooden stock behind, a long steel barrel in front, a bolt on the side and
-    // a pair of sights on top.
-    drawBox(wx - px * 5 * s, wy0 + .3, wz - .6, 7 * s, 2.8 * s, 3.4 * s, '#6b4a2c');
-    drawBox(wx - px * 6.2 * s, wy0 + .5, wz - 3 * s, 2.6 * s, 2.4 * s, 3.2 * s, '#5b3f25');
-    drawBox(wx + px * 1.6 * s, wy0 + .4, wz, 13 * s, 2.2 * s, 2.2 * s, '#4a5058');
-    drawBox(wx + px * .6 * s, wy0 + 2.6, wz + .4, 3 * s, 1.4 * s, 1.6 * s, '#6e747c');
-    drawBox(wx + px * 2.2 * s, wy0 + .7, wz + 2 * s, 1.4 * s, 1.6 * s, 1.6 * s, '#3a4048');
-    drawBox(wx + px * 12 * s, wy0 + .7, wz + 2 * s, 1.4 * s, 1.6 * s, 1.6 * s, '#3a4048');
+  } else if (wKind === 'rifle') {
+    // Stock behind the rear hand, barrel running out past the front hand.
+    const gripLX = (rHand.lx + lHand.lx) / 2;
+    P(gripLX, rHand.ly - 5 * s, rHand.lz + 1.8 * s, 3 * s, 8 * s, 3.6 * s, '#6b4a2c');
+    P(gripLX, rHand.ly - 8.6 * s, rHand.lz - 1.2 * s, 2.6 * s, 3 * s, 3.4 * s, '#5b3f25');
+    P(gripLX, (rHand.ly + lHand.ly) / 2 + 3 * s, rHand.lz + 2.4 * s, 2.2 * s, 20 * s, 2.2 * s, '#4a5058');
+    // Bolt, magazine, and sights front and back.
+    P(gripLX + 1.9 * s, rHand.ly + 1 * s, rHand.lz + 2.6 * s, 2.4 * s, 1.6 * s, 1.6 * s, '#6e747c');
+    P(gripLX, rHand.ly + 1.4 * s, rHand.lz - .6 * s, 2.2 * s, 3.4 * s, 3.4 * s, '#3a4048');
+    P(gripLX, rHand.ly + 2 * s, rHand.lz + 4.4 * s, 1.4 * s, 1.4 * s, 1.6 * s, '#3a4048');
+    P(gripLX, lHand.ly + 8 * s, rHand.lz + 4.4 * s, 1.4 * s, 1.4 * s, 1.6 * s, '#3a4048');
     if (swinging) {
-      drawBox(wx + px * 15 * s, wy0 + .5, wz + .2, 5 * s, 2.2 * s, 2.2 * s, '#ffd84d');
+      P(gripLX, lHand.ly + 12 * s, rHand.lz + 2.4 * s, 2.2 * s, 5 * s, 2.2 * s, '#ffd84d');
     }
-  } else if (rk.weapon === 'riot shield') {
-    // A frame, a face, a slit to see through and a handle behind.
+  } else if (wKind === 'riot shield') {
     ctx.globalAlpha *= .9;
-    drawBox(wx, y0 - 3, z + 2, 2.2 * s, dep + 6, legH + torsoH + 6, '#8d99ab');
-    drawBox(wx + px * .6, y0 - 1.4, z + 5, 1.4 * s, dep + 3, legH + torsoH, '#c3cedd');
-    drawBox(wx + px * 1.1, y0 + 1, z + legH + torsoH * .62,
-            1.2 * s, dep - 2, 2.6 * s, '#2f3540');
+    P(lHand.lx - 1.4 * s, dep * .5 + 2.4 * s, z + 2, 2.2 * s, torsoW * .9,
+      legH + torsoH + 6, '#8d99ab');
+    P(lHand.lx - .6 * s, dep * .5 + 2.4 * s, z + 5, 1.4 * s, torsoW * .78,
+      legH + torsoH, '#c3cedd');
+    P(lHand.lx, dep * .5 + 2.4 * s, torsoZ + torsoH * .62, 1.2 * s, torsoW * .5,
+      2.6 * s, '#2f3540');
     ctx.globalAlpha = flash ? .68 : 1;
-    drawBox(wx - px * 1.6, y0 + 2, z + legH + torsoH * .4,
-            1.8 * s, 2 * s, 2 * s, '#3b2a1c');
-  } else if (rk.weapon === 'claws') {
-    for (let i = 0; i < 3; i++) {
-      drawBox(wx + f * lunge, wy0 + i * 3 * s, wz, 7 * s, 1.6 * s, 1.6 * s, '#d8dee8');
+  } else if (wKind === 'claws') {
+    for (let i = -1; i <= 1; i++) {
+      P(rHand.lx + i * 2.4 * s, rHand.ly + 4 * s, rHand.lz, 1.6 * s, 7 * s, 1.6 * s, '#d8dee8');
     }
-  } else if (rk.weapon === 'acid') {
-    const ax2 = isoX(wx, g.y, wz), ay2 = isoY(wx, g.y, wz);
+  } else if (wKind === 'acid') {
+    const apx = LX(rHand.lx, rHand.ly + 3 * s), apy = LY(rHand.lx, rHand.ly + 3 * s);
     ctx.fillStyle = '#8ecf4a';
-    ctx.beginPath(); ctx.arc(ax2, ay2, 4.6 * s, 0, 6.283); ctx.fill();
-  } else if (rk.weapon === 'smash') {
-    drawBox(wx + f * lunge, y0, wz - 2, 9 * s, 9 * s, 9 * s, '#5b6b45');
+    ctx.beginPath();
+    ctx.arc(isoX(apx, apy, rHand.lz), isoY(apx, apy, rHand.lz), 4.6 * s, 0, 6.283);
+    ctx.fill();
+  } else if (wKind === 'smash') {
+    P(rHand.lx, rHand.ly + 4 * s, rHand.lz, 9 * s, 9 * s, 9 * s, '#5b6b45');
   } else if (swinging) {
-    const px2 = isoX(g.x + f * (hw + 6), g.y, wz), py2 = isoY(g.x + f * (hw + 6), g.y, wz);
+    const spx = LX(rHand.lx, rHand.ly + 5 * s), spy = LY(rHand.lx, rHand.ly + 5 * s);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 2.2;
-    ctx.beginPath(); ctx.arc(px2, py2, 8 * s, -.9, .9); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(isoX(spx, spy, rHand.lz), isoY(spx, spy, rHand.lz), 8 * s, -.9, .9);
+    ctx.stroke();
   }
 
   ctx.globalAlpha = 1;
 
-    if (!isPlayer && g.hp < g.maxhp) {
+  if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
     const bx = isoX(g.x, g.y, z + legH + torsoH + headH) - bw2 / 2;
-    const by = isoY(g.x, g.y, headZ + headH) - 7;
+    const by = isoY(g.x, g.y, (g.z || 0) + 46 * s) - 7;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(bx, by, bw2, bh);
     ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');

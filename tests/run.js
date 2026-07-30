@@ -120,7 +120,8 @@ eval(code + `
    TP_LOOK_AT, camWant, THEMES, SKIRT,
    SKINS, SHIRTS, PANTS, HATS, FACES, PERKS, perkCost, perkLevel, applyPerks,
    loadSave, writeSave, addCoins, drawShop, get save(){return save},
-   bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid,
+   turnToward, drawBoxRot, LIGHT_ANGLE, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -884,23 +885,111 @@ ok('the ground has grass tufts, not flat colour',
   /A few tufts of grass/.test(src));
 ok('tufts stay put instead of shimmering', /same place every time/.test(src));
 ok('crates have slats on the lid', typeof G.drawCrateLid === 'function');
-ok('characters have a belt and shaded shoulders',
-  /A belt across the bottom of the torso/.test(src)
-  && /Shoulders sitting in the shadow of the head/.test(src));
-ok('characters have shoes, hands and a collar',
-  /Shoes, riding with the leg/.test(src)
-  && /Hands on the bottom of each arm/.test(src)
-  && /collar where the torso meets the head/.test(src));
+ok('characters have a belt and real shoulders',
+  src.indexOf('A belt with a buckle') !== -1
+  && src.indexOf('rounded off the top corners of the chest') !== -1);
+ok('characters have boots, gloves and a collar',
+  src.indexOf('A toe, so a boot is not a plain cube') !== -1
+  && src.indexOf('A glove for a hand') !== -1
+  && src.indexOf('and a collar') !== -1);
 
-group('Built like a Roblox character');
-ok('proportions are measured in studs', /one stud/.test(src) && /const U = 7\.6/.test(src));
-ok('arms sit flush against the torso, no floating gaps',
-  /flush against the torso, swinging opposite/.test(src));
-ok('legs sit flush against each other', /side by side, taking turns/.test(src));
-ok('the head is two studs wide like the real thing',
-  /two studs wide like the real thing/.test(src));
-ok('the reasoning about proportions is written down',
-  /most of what makes the silhouette recognisable/.test(src));
+group('Built like a person, not a stack of slabs')
+ok('proportions are written down as a deliberate move away from slabs',
+  src.indexOf('That is why it looked so blocky') !== -1);
+ok('shoulders are wider than the waist',
+  src.indexOf('across the shoulders') !== -1 && src.indexOf('and in at the waist') !== -1);
+ok('the torso is a chest and a waist, not one box',
+  src.indexOf('Chest above, waist below') !== -1);
+ok('legs are a thigh, a shin and a boot',
+  src.indexOf('a thigh, a narrower shin and a boot') !== -1);
+ok('there are knees and toes', src.indexOf('A knee, which breaks') !== -1
+  && src.indexOf('A toe, so a boot is not a plain cube') !== -1);
+ok('forearms are thinner than upper arms',
+  src.indexOf('thinner than the upper arm') !== -1);
+ok('there are elbows', src.indexOf('An elbow between the two') !== -1);
+ok('there is a neck, which there was not before',
+  src.indexOf('which the old version simply did not have') !== -1);
+ok('the head has a jaw, a crown and ears',
+  src.indexOf('A jaw below and a rounded crown above') !== -1
+  && src.indexOf('  // Ears.') !== -1);
+
+group('Facing the way you are going')
+ok('everything that walks tracks which way it faces', 'faceAng' in G.player);
+ok('turning is eased, not snapped', src.indexOf('pivots instead of flicking') !== -1);
+ok('turning takes the short way round', (() => {
+  const e2 = { faceAng: 0.1 };
+  G.turnToward(e2, Math.cos(-0.1), Math.sin(-0.1), 1 / 60, 14);
+  return e2.faceAng < 0.1;
+})());
+ok('walking somewhere turns you to face it', (() => {
+  G.reset();
+  G.enemies.length = 0;                       // nothing to aim at, so it follows the walk
+  const before = G.player.faceAng;
+  for (let i = 0; i < 60; i++) {
+    G.stick.active = true;
+    const v = worldToStick(0, -1);            // due north in world terms
+    G.stick.dx = v.sx; G.stick.dy = v.sy;
+    G.enemies.length = 0;
+    G.update(1 / 60);
+  }
+  return G.player.faceAng !== before;
+})(), 'he turns rather than staying side-on');
+ok('a body part is placed in his own frame, not along the world grid',
+  src.indexOf('rather than along the world') !== -1);
+ok('boxes can be turned about their own middle',
+  typeof G.drawBoxRot === 'function'
+  && src.indexOf('turned by `rot` about its own middle') !== -1);
+ok('lighting follows the light, not the screen, when something turns',
+  src.indexOf('keeps the lighting steady when either the') !== -1);
+ok('a turned box still draws without throwing', (() => {
+  try {
+    for (let a2 = 0; a2 < 6.28; a2 += 0.7) {
+      G.drawBoxRot(G.player.x, G.player.y, 0, 20, 10, 30, '#c8c8cb', a2);
+    }
+    return true;
+  } catch (e) { console.log('    ' + e.message); return false; }
+})());
+
+group('How they hold a weapon')
+ok('the weapon says where the hands go, the way a real rig does',
+  src.indexOf('the weapon says where the hands go') !== -1);
+ok('a rifle is held with both hands',
+  src.indexOf('A rifle') !== -1 && src.indexOf('gets both hands on it') !== -1);
+ok('there is a grip for each hand', src.indexOf('let rHand =') !== -1
+  && src.indexOf('let lHand =') !== -1);
+ok('arms are drawn reaching to the grip',
+  src.indexOf('reaching from the shoulder to') !== -1);
+ok('every weapon still draws, in both themes and at every rank', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    for (let r = 0; r < 4; r++) {
+      G.reset();
+      G.player.rank = r;
+      try { G.draw(); } catch (e) {
+        console.log('    ' + th + ' rank ' + r + ': ' + e.message);
+        G.applyTheme('noobs');
+        return false;
+      }
+    }
+  }
+  G.applyTheme('noobs');
+  return true;
+})());
+
+group('What they carry')
+ok('there is kit on their back and belt',
+  src.indexOf('Kit they carry') !== -1);
+ok('the wartime kit is a pack, a canteen and pouches',
+  src.indexOf('A pack, a canteen and pouches on the belt') !== -1);
+ok('the wasteland kit is a scavenged pack with a bedroll',
+  src.indexOf('A scavenged backpack with a bedroll') !== -1);
+ok('clothing has sleeves, gloves, pockets and a buckle',
+  src.indexOf('A rolled sleeve') !== -1 && src.indexOf('A glove for a hand') !== -1
+  && src.indexOf('Two chest pockets') !== -1 && src.indexOf('A belt with a buckle') !== -1);
+ok('faces have brows and pupils, not just dots',
+  src.indexOf('which do most of the work in giving a face an expression') !== -1
+  && src.indexOf('reads far better than a plain dot') !== -1);
+ok('helmets get a chin strap', src.indexOf('A chin strap') !== -1);
 
 group('Bright and sunlit, the way Roblox is');
 ok('there is a sky rather than near black', /const SKY = /.test(src));
@@ -1224,17 +1313,20 @@ ok('walking advances the stride', (() => {
   return G.player.walk > was && G.player.moving === true;
 })(), 'phase advanced');
 ok('the legs step in opposite time to each other',
-  /const stepA = swing \* 2\.2/.test(src) && /swingB/.test(src));
+  src.indexOf('Legs take turns lifting and stepping') !== -1
+  && src.indexOf('const stepA = swing') !== -1
+  && src.indexOf('stepB = swingB') !== -1);
 ok('the arms swing opposite to the legs',
-  /swinging opposite to the legs/.test(src)
-  && /const armA = swingB/.test(src));
+  src.indexOf('arms swing opposite the legs') !== -1);
 ok('the head and chest ride up and down with each stride',
-  /const headBob =/.test(src) && /riding the same bob as the head/.test(src));
-ok('the head turns towards what you are aiming at', /const headTurn =/.test(src));
-ok('standing still it breathes instead of freezing solid', /settles into a slow breath/.test(src));
-ok('the face, the weapon and the health bar all follow the head',
-  /isoX\(g\.x \+ headTurn/.test(src) && /const wz = armZ/.test(src)
-  && /headZ \+ headH\) - 7/.test(src));
+  src.indexOf('const headBob =') !== -1
+  && src.indexOf('riding the same bob as the head') !== -1);
+ok('the whole body turns towards what you are aiming at',
+  src.indexOf('This is what makes a weapon point at things') !== -1);
+ok('standing still it breathes instead of freezing solid',
+  src.indexOf('Standing still it breathes instead') !== -1);
+ok('the face is painted on the front of the head wherever it is looking',
+  src.indexOf('The face, painted on the front of the head') !== -1);
 ok('nothing goes NaN once the legs are moving', (() => {
   G.reset();
   for (let i = 0; i < 600; i++) {
@@ -1303,10 +1395,10 @@ ok('the camera sits closer in than it used to, so the player is not tiny',
   G.FOCAL / G.cam.dist > 2, 'scale ' + (G.FOCAL / G.cam.dist).toFixed(2) + 'x');
 
 group('Limbs swing along the way you are going');
-ok('the swing uses the travel direction, not a fixed world axis',
-  /const mlen = Math\.hypot/.test(src) && /fwdX \* stepA/.test(src));
-ok('the reason is written down', /slide sideways out of the body/.test(src));
-ok('the head no longer slides off the neck', /just pulled it off the neck/.test(src));
+ok('steps go along his own forward axis, not a fixed world one',
+  src.indexOf('along his own forward axis') !== -1);
+ok('the reason the old way looked wrong is written down',
+  src.indexOf('he could only be flipped left or right') !== -1);
 ok('travel direction is recorded as you move', (() => {
   G.reset();
   aimStickAt(G.player.x + 200, G.player.y);
@@ -1515,21 +1607,21 @@ G.applyTheme('noobs');
 ok('switching back restores Josh names', G.NOOB_RANKS[3].name === 'Noob Rioter');
 
 group('Weapons are built out of parts');
-ok('a knife has a handle, a guard and a blade',
-  /Handle, crossguard, then the blade/.test(src));
-ok('a pistol has a grip, frame and slide',
-  /Grip, frame, slide/.test(src));
-ok('a rifle has a stock, barrel, bolt and sights',
-  /A wooden stock behind, a long steel barrel in front/.test(src));
-ok('a shield has a frame, a face, a viewing slit and a handle',
-  /A frame, a face, a slit to see through and a handle/.test(src));
-ok('each weapon is several boxes, not one', (() => {
-  // Count the drawBox calls inside the weapon section.
-  const a = src.indexOf('Whatever it is holding');
+ok('a knife is a handle, a guard and a blade in separate pieces',
+  src.indexOf("wKind === 'knife'") !== -1 && src.indexOf("'#dfe6f0'") !== -1);
+ok('a pistol is a grip, a frame and a slide',
+  src.indexOf("wKind === 'pistol'") !== -1 && src.indexOf("'#2b2118'") !== -1);
+ok('a rifle has a stock, a barrel, a bolt, a magazine and sights',
+  src.indexOf('Stock behind the rear hand, barrel running out past the front hand') !== -1
+  && src.indexOf('Bolt, magazine, and sights front and back') !== -1);
+ok('a shield is a frame, a face and a viewing slit',
+  src.indexOf("wKind === 'riot shield'") !== -1 && src.indexOf("'#c3cedd'") !== -1);
+ok('each weapon is several parts, not one box', (() => {
+  const a = src.indexOf('The weapon, drawn at the grips');
   const b = src.indexOf('if (!isPlayer && g.hp < g.maxhp)');
   const chunk = src.slice(a, b);
-  return (chunk.match(/drawBox\(/g) || []).length >= 12;
-})(), 'plenty of parts');
+  return (chunk.match(/P\(/g) || []).length >= 14;
+})(), 'plenty of parts'); 
 ok('every weapon still draws without throwing', (() => {
   for (const th of ['noobs', 'ww2']) {
     G.applyTheme(th);
