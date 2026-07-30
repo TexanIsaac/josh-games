@@ -277,7 +277,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v38';
+const VERSION = 'v39';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -979,12 +979,15 @@ const HATS = [
 ];
 
 // Faces.
+// Each of these now has a kind that the painter knows how to draw. They used to be
+// a name and a price with nothing behind them, so buying one changed nothing at all,
+// which is exactly what Josh reported.
 const FACES = [
-  { name: 'Smile',   cost: 0 },
-  { name: 'Shades',  cost: 90 },
-  { name: 'Angry',   cost: 90 },
-  { name: 'Grin',    cost: 140 },
-  { name: 'Robot',   cost: 220 },
+  { name: 'Smile',   cost: 0,   kind: 'smile' },
+  { name: 'Shades',  cost: 90,  kind: 'shades' },
+  { name: 'Angry',   cost: 90,  kind: 'angry' },
+  { name: 'Grin',    cost: 140, kind: 'grin' },
+  { name: 'Robot',   cost: 220, kind: 'robot' },
 ];
 
 // Upgrades you keep for good. Each one can be bought a few times, and the price
@@ -4133,411 +4136,106 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const table = isNoob ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[rankIdx];
 
-  // The zombie colours used to sit almost on top of the green baseplate, so their
-  // bodies disappeared into the ground and only the head read. Brighter skin and
-  // warm clothes fix that without making them look like noobs.
+  // Colours. Your own guy wears whatever was picked in the shop; everyone else wears
+  // the theme colours, with runners and brutes tinted so you can tell at a glance
+  // what is coming at you.
   const pal = isNoob ? TH().a : TH().b;
   let skin = pal.skin, torso = pal.torso, legs = pal.legs;
-  // Your own guy wears whatever you picked in the shop. Everyone else wears
-  // the theme colours.
   if (isPlayer) {
     skin = SKINS[save.look.skin] || skin;
     torso = SHIRTS[save.look.shirt] || torso;
     legs = PANTS[save.look.legs] || legs;
   }
-  // Runners and brutes are tinted so you can tell at a glance what is coming.
-  if (!isPlayer && g.type === 'runner') { torso = isNoob ? '#7ad7ff' : '#f0a63c'; }
-  if (!isPlayer && g.type === 'brute')  { torso = '#b878f0'; }
+  if (!isPlayer && g.type === 'runner') torso = isNoob ? '#7ad7ff' : '#f0a63c';
+  if (!isPlayer && g.type === 'brute') torso = '#c98af5';
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
-  // You, while boss mode is running.
   if (isPlayer && player.form !== 'normal') {
     const f2 = formByKey(player.form);
     if (f2.key === 'boss') { skin = '#ffb340'; torso = '#a8332f'; legs = '#6b2424'; }
     else torso = f2.color;
   }
 
-  const s = g.size || 1;
+  const s2 = g.size || 1;
   const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
   const z = (g.z || 0) + bob;
 
-  // ---------------------------------------------------------------------------
-  //  The body frame
-  //
-  //  Every part is placed in the character's own frame rather than along the world
-  //  grid: lx runs across his shoulders, ly runs out in front of him, lz is up.
-  //  The frame is then turned to whichever way he is facing. Before this, parts
-  //  were axis aligned and he could only be flipped left or right, which is why
-  //  walking north you saw him from the side.
-  // ---------------------------------------------------------------------------
-  const ang = g.faceAng || 0;
-  const ca = Math.cos(ang), sa = Math.sin(ang);
-  const rot = ang - Math.PI / 2;
-  // Local across-and-forward to a place in the world.
-  const LX = (lx, ly) => g.x + lx * sa + ly * ca;
-  const LY = (lx, ly) => g.y - lx * ca + ly * sa;
-  // One part of the body, placed by its middle in the character's own frame.
-  const P = (lx, ly, lz, w, d, h, col, alp) =>
-    drawBoxRot(LX(lx, ly), LY(lx, ly), lz, w, d, h, col, rot, alp);
-
-  // Shadow on whatever surface is underneath, so you can tell how high up
-  // something is when it is standing on a wall.
+  // Shadow, on whatever surface is underneath rather than always on the floor, so you
+  // can tell how high up someone standing on a wall actually is.
   const shx = isoX(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   const shy = isoY(g.x, g.y, topUnder(g.x, g.y, g.r * .5));
   ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.beginPath();
-  ctx.ellipse(shx, shy, 12 * s, 6 * s, 0, 0, 6.283);
+  ctx.ellipse(shx, shy, 12 * s2, 6 * s2, 0, 0, 6.283);
   ctx.fill();
 
-  // A bright ring on the ground marks you out in a crowd of near identical people.
+  // Where the figure goes, and how big. Both come from the projection, so a character
+  // shrinks with distance and sits correctly on the ground exactly as the old boxes
+  // did. BODY is how tall a character is in world units.
+  const BODY_H = 42 * s2;
+  const footY = isoY(g.x, g.y, z);
+  const headYpx = isoY(g.x, g.y, z + BODY_H);
+  const H = Math.max(14, footY - headYpx);
+  const cx = isoX(g.x, g.y, z + BODY_H * .5);
+
+  // Which way is he facing, worked out on screen rather than in the world, so it is
+  // right whichever way the camera has been dragged. A point a little way in front of
+  // him is projected: if it comes out lower on screen he is walking towards us.
+  const ang = g.faceAng || 0;
+  const ax2 = g.x + Math.cos(ang) * 14, ay2 = g.y + Math.sin(ang) * 14;
+  const dx = isoX(ax2, ay2, z) - isoX(g.x, g.y, z);
+  const dy = isoY(ax2, ay2, z) - isoY(g.x, g.y, z);
+  let view = 'side';
+  if (Math.abs(dy) > Math.abs(dx) * 1.25) view = (dy > 0) ? 'front' : 'back';
+  const flip = (view === 'side') ? (dx < 0) : false;
+
+  // What he is holding. Your own guy carries whatever was bought in the shop, which is
+  // the whole point of buying it; everyone else carries what their rank gives them.
+  let weapon = null;
   if (isPlayer) {
-    const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
-    ctx.strokeStyle = ring;
-    ctx.lineWidth = 2.2;
-    ctx.globalAlpha = .9;
-    ctx.beginPath();
-    ctx.ellipse(shx, shy, 15 * s, 7.5 * s, 0, 0, 6.283);
-    ctx.stroke();
-    ctx.globalAlpha = .28;
-    ctx.fillStyle = ring;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  const flash = (g.hurtFlash > 0)
-    || (isPlayer && player.invuln > 0 && Math.floor(performance.now() / 90) % 2 === 0);
-  if (flash) ctx.globalAlpha = .68;
-
-  // Squash and stretch on impact.
-  const sq = g.squash || 0;
-  const hs = 1 - sq * .35;
-  const ws = 1 + sq * .25;
-
-  // Walking. Legs take turns lifting and stepping, arms swing opposite the legs,
-  // and the head and chest ride up and down. Standing still it breathes instead.
-  const ph = g.walk || 0;
-  const striding = g.moving ? 1 : 0;
-  const swing = Math.sin(ph) * striding;
-  const swingB = Math.sin(ph + Math.PI) * striding;
-  const lift = Math.max(0, swing) * 3.4 * s;
-  const liftB = Math.max(0, swingB) * 3.4 * s;
-  const breathe = striding ? 0 : Math.sin((g.wob || 0) * .6) * .5 * s;
-  const headBob = (striding ? Math.abs(Math.sin(ph)) * 1.6 : 0) * s + breathe;
-
-  // Proportions.
-  //
-  // These started out as exact Roblox measurements: everything one or two studs,
-  // every limb a single slab. That is why it looked so blocky. It is now built more
-  // like a person: shoulders wider than hips, a waist that comes in, limbs split
-  // into two tapering sections rather than one, and a neck. Still made of boxes,
-  // but far more of them and none of them slabs.
-  const U = 7.6 * s;
-  const dep = U * 0.92;
-  const armW = U * 0.88 * ws;
-  const legW = U * 0.92 * ws;
-  const chestW = U * 2.1 * ws;      // across the shoulders
-  const waistW = U * 1.62 * ws;     // and in at the waist
-  const torsoW = chestW;            // what the kit and the shield still measure from
-  const legH = 16.4 * s * hs, torsoH = 15.2 * s * hs, headH = 10.6 * s * hs;
-  const thighH = legH * 0.54, shinH = legH * 0.46;
-
-  // Steps go forwards and backwards along his own forward axis now, so it reads as
-  // a stride whichever way he happens to be pointing.
-  const stepA = swing * 2.4 * s, stepB = swingB * 2.4 * s;
-
-  // Legs. Each one is a thigh, a narrower shin and a boot rather than a single
-  // slab, which is most of what stops them reading as blocks.
-  const boot = shade(legs, -38);
-  const drawLeg = (side, step, up) => {
-    const lx = side * legW * 0.56;
-    P(lx, step, z + up + shinH, legW, dep * 0.96, thighH, legs);
-    P(lx, step * 1.15, z + up + 2.4 * s, legW * 0.84, dep * 0.86, shinH, shade(legs, -8));
-    // A knee, which breaks the straight line down the leg.
-    P(lx, step * 1.1 + dep * 0.14, z + up + shinH - 1.2 * s,
-      legW * 0.9, dep * 0.72, 2.6 * s, shade(legs, 10));
-    P(lx, step * 1.15 - .5, z + up, legW * 1.02, dep * 1.16, 3.2 * s, boot);
-    // A toe, so a boot is not a plain cube.
-    P(lx, step * 1.15 + dep * 0.62, z + up, legW * 0.86, dep * 0.34, 2.2 * s, shade(boot, -12));
-  };
-  drawLeg(-1, stepA, lift);
-  drawLeg(1, stepB, liftB);
-
-  // Torso, riding the same bob as the head.
-  const torsoZ = z + legH + headBob * .5;
-  // Chest above, waist below, so the body has a shape rather than being a slab.
-  P(0, 0, torsoZ + torsoH * 0.42, chestW, dep, torsoH * 0.58, torso);
-  P(0, 0, torsoZ, waistW, dep * 0.94, torsoH * 0.46, shade(torso, -6));
-  // The shoulders themselves, rounded off the top corners of the chest.
-  P(-chestW * 0.42, 0, torsoZ + torsoH * 0.94, chestW * 0.3, dep * 0.9, 2.6 * s, shade(torso, 8));
-  P(chestW * 0.42, 0, torsoZ + torsoH * 0.94, chestW * 0.3, dep * 0.9, 2.6 * s, shade(torso, 8));
-  // A belt with a buckle.
-  P(0, 0, torsoZ, waistW * 1.04, dep * 0.98, 2.6 * s, shade(torso, -22));
-  P(0, dep / 2, torsoZ + .2, 3.4 * s, 1.2 * s, 2.2 * s, '#c9a227');
-  // Two chest pockets.
-  P(-torsoW * .26, dep / 2, torsoZ + torsoH * .5, torsoW * .3, 1.1 * s, 4 * s, shade(torso, -12));
-  P(torsoW * .26, dep / 2, torsoZ + torsoH * .5, torsoW * .3, 1.1 * s, 4 * s, shade(torso, -12));
-  // Shoulders in the shadow of the head, and a collar.
-  P(0, 0, torsoZ + torsoH - 1.2, torsoW, dep - 1, 1.2 * s, shade(torso, -10));
-  P(0, .6, torsoZ + torsoH - 1.4, torsoW * .6, dep - 1.6, 2.4 * s, shade(torso, 24));
-
-  // ---------------------------------------------------------------------------
-  //  Arms, and how a weapon is actually held
-  //
-  //  Rather than hanging a weapon off an arm, the weapon says where the hands go
-  //  and the arms reach to those grips, which is how a real rig does it. A rifle
-  //  gets both hands on it, one forward on the barrel and one back at the trigger.
-  //  Anything one handed leaves the other arm swinging.
-  // ---------------------------------------------------------------------------
-  const swinging = g.swing > 0;
-  const lunge = swinging ? 4.5 * s : 0;
-  const shoulderZ = torsoZ + torsoH * .82;
-  const armLen = torsoH * 1.02;
-
-  // Where each hand wants to be, in his own frame. Default is by his sides.
-  let rHand = { lx: torsoW / 2 + armW / 2, ly: swingB * 2.2 * s, lz: shoulderZ - armLen };
-  let lHand = { lx: -torsoW / 2 - armW / 2, ly: swing * 2.2 * s, lz: shoulderZ - armLen };
-  let twoHanded = false;
-
-  const wKind = rk.weapon;
-  if (wKind === 'rifle') {
-    twoHanded = true;
-    rHand = { lx: torsoW * .22, ly: dep * .5 + 3 * s + lunge, lz: shoulderZ - armLen * .42 };
-    lHand = { lx: -torsoW * .1, ly: dep * .5 + 12 * s + lunge, lz: shoulderZ - armLen * .3 };
-  } else if (wKind === 'pistol') {
-    rHand = { lx: torsoW * .34, ly: dep * .5 + 5 * s + lunge, lz: shoulderZ - armLen * .38 };
-  } else if (wKind === 'knife' || wKind === 'claws') {
-    rHand = { lx: torsoW * .42, ly: dep * .5 + 3 * s + lunge, lz: shoulderZ - armLen * .55 };
-  } else if (wKind === 'riot shield') {
-    lHand = { lx: -torsoW * .28, ly: dep * .5 + 3 * s, lz: shoulderZ - armLen * .5 };
-  } else if (wKind === 'smash') {
-    rHand = { lx: torsoW * .5, ly: dep * .4 + lunge, lz: shoulderZ - armLen * .8 };
-  }
-
-  // An arm drawn as an upper and a lower section reaching from the shoulder to
-  // wherever the hand needs to be, so it bends towards the grip.
-  function drawArm(side, hand) {
-    const shX = side * (torsoW / 2 + armW / 2);
-    const midLX = (shX + hand.lx) / 2;
-    const midLY = hand.ly * .5;
-    const midLZ = (shoulderZ + hand.lz) / 2 + 1.2 * s;
-    P(midLX * .6 + shX * .4, midLY * .5, midLZ + (shoulderZ - midLZ) * .35,
-      armW, dep * 0.82, armLen * .58, skin);
-    // The forearm is thinner than the upper arm, which is what makes a limb read
-    // as a limb rather than as a post.
-    P(hand.lx * .78 + midLX * .22, hand.ly * .82, hand.lz + armLen * .2,
-      armW * .8, dep * 0.7, armLen * .5, shade(skin, -6));
-    // An elbow between the two.
-    P((hand.lx + shX) / 2, hand.ly * .45, hand.lz + armLen * .46,
-      armW * .86, dep * 0.74, 2.4 * s, shade(skin, 8));
-    // A rolled sleeve where the arm meets the shoulder.
-    P(shX, 0, shoulderZ - armLen * .22, armW * 1.08, dep - 1, 4.4 * s, shade(torso, -6));
-    // A glove for a hand.
-    P(hand.lx, hand.ly, hand.lz, armW * .96, dep - 1.8, 3.2 * s, shade(skin, -26));
-  }
-  drawArm(1, rHand);
-  drawArm(-1, lHand);
-
-  // A neck, which the old version simply did not have.
-  P(0, 0, torsoZ + torsoH - 1, U * 0.62 * ws, dep * 0.6, 3.4 * s, shade(skin, -14));
-
-  // Head, a touch narrower than the shoulders, nodding with each stride.
-  const headW = U * 1.78 * ws;
-  const headZ = torsoZ + torsoH + 2.2 * s + headBob * .5;
-  P(0, 0, headZ, headW, dep * 0.94, headH, skin);
-  // A jaw below and a rounded crown above, so the head is not a plain cube.
-  P(0, dep * 0.06, headZ - 1.2 * s, headW * 0.84, dep * 0.8, 2.8 * s, shade(skin, -10));
-  P(0, 0, headZ + headH - 1, headW * 0.86, dep * 0.78, 2.4 * s, shade(skin, 8));
-  // Ears.
-  P(-headW / 2, 0, headZ + headH * 0.42, 1.6 * s, dep * 0.36, 3.4 * s, shade(skin, -12));
-  P(headW / 2, 0, headZ + headH * 0.42, 1.6 * s, dep * 0.36, 3.4 * s, shade(skin, -12));
-
-  // ---------------------------------------------------------------------------
-  //  The face, painted on the front of the head
-  // ---------------------------------------------------------------------------
-  const fwX = LX(0, dep / 2 + .4), fwY = LY(0, dep / 2 + .4);
-  const fx = isoX(fwX, fwY, headZ + headH * .55);
-  const fy = isoY(fwX, fwY, headZ + headH * .55);
-  const e = 2.1 * s;
-  const faceId = isPlayer ? (save.look.face || 0) : 0;
-
-  // Brows, which do most of the work in giving a face an expression.
-  ctx.fillStyle = shade(skin, -46);
-  if (faceId === 2) {
-    ctx.fillRect(fx - 5.4 * s, fy - e * 2.1, 4.4 * s, 1.5 * s);
-    ctx.fillRect(fx + 1 * s, fy - e * 2.1, 4.4 * s, 1.5 * s);
-  } else if (faceId !== 4) {
-    ctx.fillRect(fx - 5 * s, fy - e * 2.3, 4 * s, 1.2 * s);
-    ctx.fillRect(fx + 1 * s, fy - e * 2.3, 4 * s, 1.2 * s);
-  }
-
-  ctx.fillStyle = '#241c14';
-  if (faceId === 1) {
-    // Shades, with a bright glint.
-    ctx.fillRect(fx - 5.6 * s, fy - e, 11.2 * s, e * 1.8);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.fillRect(fx - 4.6 * s, fy - e * .7, 2.4 * s, 1.2 * s);
-  } else if (faceId === 4) {
-    // Robot: square eyes with a lit centre.
-    ctx.fillRect(fx - 5.2 * s, fy - e, e * 2.1, e * 2.1);
-    ctx.fillRect(fx + 1.2 * s, fy - e, e * 2.1, e * 2.1);
-    ctx.fillStyle = '#7ad7ff';
-    ctx.fillRect(fx - 4.4 * s, fy - e * .5, e, e);
-    ctx.fillRect(fx + 2 * s, fy - e * .5, e, e);
+    weapon = WEAPONS[save.look.weapon || 0];
   } else {
-    // Eye whites with a pupil in each, which reads far better than a plain dot.
-    ctx.fillStyle = '#f6f7f9';
-    ctx.fillRect(fx - 5 * s, fy - e, e * 1.8, e * 2);
-    ctx.fillRect(fx + 1.4 * s, fy - e, e * 1.8, e * 2);
-    ctx.fillStyle = '#241c14';
-    ctx.fillRect(fx - 4.2 * s, fy - e * .5, e * .9, e * 1.3);
-    ctx.fillRect(fx + 2.2 * s, fy - e * .5, e * .9, e * 1.3);
+    const w = rk.weapon;
+    const kind = (w === 'knife') ? 'knife'
+      : (w === 'rifle' || w === 'pistol') ? 'rifle'
+      : (w === 'riot shield') ? 'shield'
+      : null;
+    weapon = kind ? { kind: kind } : null;
   }
 
-  ctx.fillStyle = '#241c14';
-  if (faceId === 2) {
-    ctx.fillRect(fx - 3.4 * s, fy + 2.6 * s, 6.8 * s, 1.6 * s);
-  } else if (faceId === 3) {
-    ctx.fillRect(fx - 4.6 * s, fy + 1.8 * s, 9.2 * s, 3.4 * s);
-    ctx.fillStyle = '#f6f7f9';
-    ctx.fillRect(fx - 3.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
-    ctx.fillRect(fx + 1.4 * s, fy + 1.8 * s, 2 * s, 1.6 * s);
-  } else if (faceId === 4) {
-    ctx.fillRect(fx - 4.6 * s, fy + 2.2 * s, 9.2 * s, 1.2 * s);
-    ctx.fillRect(fx - 4.6 * s, fy + 4 * s, 9.2 * s, 1.2 * s);
-  } else if (isNoob) {
-    ctx.strokeStyle = '#241c14';
-    ctx.lineWidth = 1.6 * s;
-    ctx.beginPath();
-    ctx.arc(fx, fy + 2.4 * s, 3.4 * s, .18, Math.PI - .18);
-    ctx.stroke();
-  } else {
-    ctx.fillRect(fx - 5 * s, fy + 2.2 * s, 10 * s, 3.2 * s);
-    ctx.fillStyle = shade(skin, 12);
-    ctx.fillRect(fx - 3.2 * s, fy + 2.2 * s, 1.7 * s, 3.2 * s);
-    ctx.fillRect(fx + 1.5 * s, fy + 2.2 * s, 1.7 * s, 3.2 * s);
-  }
-
-  // ---------------------------------------------------------------------------
-  //  Hats, and a helmet for themes that issue one
-  // ---------------------------------------------------------------------------
-  const hatTop = headZ + headH;
+  // Headgear and face. The shop choices are yours alone. In the WW2 theme everybody
+  // wears a helmet, and zombies scowl.
+  let hatKind = null, hatCol = '#8a9c50', faceKind = 'smile';
   if (isPlayer) {
-    const hat = HATS[save.look.hat || 0];
-    if (hat && hat.kind) {
-      if (hat.kind === 'cap') {
-        P(0, 0, hatTop - 1, headW + 1.2, dep + .8, 3 * s, hat.color);
-        P(0, dep * .8, hatTop - 1, headW * .8, 4 * s, 1.4 * s, shade(hat.color, -14));
-      } else if (hat.kind === 'helmet') {
-        P(0, 0, hatTop - 3.4 * s, headW + 2, dep + 1.6, 5 * s, hat.color);
-        P(0, 0, hatTop + 1.4 * s, 2.2 * s, dep + 1.6, 1.6 * s, shade(hat.color, -18));
-      } else if (hat.kind === 'tall') {
-        P(0, 0, hatTop - .6, headW + 2.8, dep + 2, 1.6 * s, hat.color);
-        P(0, 0, hatTop + 1, headW - 3.2, dep - 2, 11 * s, hat.color);
-        P(0, 0, hatTop + 8 * s, headW - 2.6, dep - 1.4, 1.8 * s, '#8c2f2f');
-      } else if (hat.kind === 'crown') {
-        P(0, 0, hatTop - .4, headW - 1.2, dep - 1.2, 2.6 * s, hat.color);
-        for (let i = -1; i <= 1; i++) {
-          P(i * headW * .3, 0, hatTop + 2, 2.2 * s, dep - 3, 3.4 * s, hat.color);
-        }
-      } else if (hat.kind === 'phones') {
-        P(0, 0, hatTop - .6, headW - .8, dep - 1.2, 1.8 * s, hat.color);
-        P(-headW / 2, 0, hatTop - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
-        P(headW / 2, 0, hatTop - headH * .5, 2.4 * s, dep - 2, 5 * s, hat.color);
-      } else if (hat.kind === 'brim') {
-        P(0, 0, hatTop - 1, headW + 6, dep + 5.2, 1.4 * s, hat.color);
-        P(0, 0, hatTop + .4, headW - 3.2, dep - 2, 5 * s, hat.color);
-        P(0, 0, hatTop + 4 * s, headW - 2.8, dep - 1.6, 1.4 * s, shade(hat.color, -26));
-      }
-    }
-  }
-  if (TH().helmet && pal.helmet && !(isPlayer && HATS[save.look.hat || 0].kind)) {
-    P(0, 0, hatTop - 3.4 * s, headW + 2, dep + 1.6, 4.6 * s, pal.helmet);
-    // A chin strap.
-    P(0, dep * .55, hatTop - headH * .55, headW * .9, 1.1 * s, 1.4 * s, shade(pal.helmet, -30));
-  }
-
-  // ---------------------------------------------------------------------------
-  //  Kit they carry, which is most of what makes somebody look equipped
-  // ---------------------------------------------------------------------------
-  const war = TH().decals === 'war';
-  const packZ = torsoZ + torsoH * .34;
-  if (war) {
-    // A pack, a canteen and pouches on the belt.
-    P(0, -dep * .62, packZ, torsoW * .78, 4.4 * s, torsoH * .72, shade(torso, -16));
-    P(0, -dep * .62, packZ + torsoH * .3, torsoW * .5, 5 * s, 2 * s, shade(torso, -30));
-    P(torsoW * .34, -dep * .5, torsoZ + 2.4 * s, 3.4 * s, 3 * s, 4.6 * s, '#6b7248');
-    P(-torsoW * .3, dep * .5, torsoZ + 1.6 * s, 4.2 * s, 1.6 * s, 3.4 * s, shade(torso, -26));
-    P(-torsoW * .05, dep * .5, torsoZ + 1.6 * s, 4.2 * s, 1.6 * s, 3.4 * s, shade(torso, -26));
+    const hat = HATS[save.look.hat || 0] || HATS[0];
+    const face = FACES[save.look.face || 0] || FACES[0];
+    if (hat && hat.kind) { hatKind = hat.kind; hatCol = hat.color; }
+    faceKind = face ? face.kind : 'smile';
   } else {
-    // A scavenged backpack with a bedroll strapped on.
-    P(0, -dep * .6, packZ, torsoW * .7, 4 * s, torsoH * .66, shade(torso, -20));
-    P(0, -dep * .72, packZ + torsoH * .34, torsoW * .62, 3 * s, 3 * s, '#a86c33');
-    P(torsoW * .3, dep * .5, torsoZ + 1.6 * s, 3.6 * s, 1.6 * s, 3.4 * s, shade(torso, -28));
+    if (TH().helmet) { hatKind = 'helmet'; hatCol = pal.helmet || '#8a9c50'; }
+    faceKind = isNoob ? 'smile' : 'angry';
   }
+  if (g.boss) faceKind = 'angry';
 
-  // ---------------------------------------------------------------------------
-  //  The weapon, drawn at the grips the hands are already holding
-  // ---------------------------------------------------------------------------
-  if (wKind === 'knife') {
-    P(rHand.lx, rHand.ly, rHand.lz, 2.6 * s, 3.4 * s, 2.6 * s, '#3b2a1c');
-    P(rHand.lx, rHand.ly + 3.2 * s, rHand.lz + .4, 4 * s, 1.4 * s, 3.4 * s, '#6b6f78');
-    P(rHand.lx, rHand.ly + 8 * s, rHand.lz + .6, 1.8 * s, 9 * s, 1.8 * s, '#dfe6f0');
-  } else if (wKind === 'pistol') {
-    P(rHand.lx, rHand.ly - 1.4 * s, rHand.lz - 1.6 * s, 2.6 * s, 3 * s, 4.4 * s, '#2b2118');
-    P(rHand.lx, rHand.ly + 2.4 * s, rHand.lz + 1.4 * s, 3 * s, 8 * s, 2.6 * s, '#2b3038');
-    P(rHand.lx, rHand.ly + 2.4 * s, rHand.lz + 3.4 * s, 2.4 * s, 6.4 * s, 1.6 * s, '#3a4048');
-    if (swinging) {
-      P(rHand.lx, rHand.ly + 8 * s, rHand.lz + 1.6 * s, 2 * s, 4.4 * s, 2 * s, '#ffd84d');
-    }
-  } else if (wKind === 'rifle') {
-    // Stock behind the rear hand, barrel running out past the front hand.
-    const gripLX = (rHand.lx + lHand.lx) / 2;
-    P(gripLX, rHand.ly - 5 * s, rHand.lz + 1.8 * s, 3 * s, 8 * s, 3.6 * s, '#6b4a2c');
-    P(gripLX, rHand.ly - 8.6 * s, rHand.lz - 1.2 * s, 2.6 * s, 3 * s, 3.4 * s, '#5b3f25');
-    P(gripLX, (rHand.ly + lHand.ly) / 2 + 3 * s, rHand.lz + 2.4 * s, 2.2 * s, 20 * s, 2.2 * s, '#4a5058');
-    // Bolt, magazine, and sights front and back.
-    P(gripLX + 1.9 * s, rHand.ly + 1 * s, rHand.lz + 2.6 * s, 2.4 * s, 1.6 * s, 1.6 * s, '#6e747c');
-    P(gripLX, rHand.ly + 1.4 * s, rHand.lz - .6 * s, 2.2 * s, 3.4 * s, 3.4 * s, '#3a4048');
-    P(gripLX, rHand.ly + 2 * s, rHand.lz + 4.4 * s, 1.4 * s, 1.4 * s, 1.6 * s, '#3a4048');
-    P(gripLX, lHand.ly + 8 * s, rHand.lz + 4.4 * s, 1.4 * s, 1.4 * s, 1.6 * s, '#3a4048');
-    if (swinging) {
-      P(gripLX, lHand.ly + 12 * s, rHand.lz + 2.4 * s, 2.2 * s, 5 * s, 2.2 * s, '#ffd84d');
-    }
-  } else if (wKind === 'riot shield') {
-    ctx.globalAlpha *= .9;
-    P(lHand.lx - 1.4 * s, dep * .5 + 2.4 * s, z + 2, 2.2 * s, torsoW * .9,
-      legH + torsoH + 6, '#8d99ab');
-    P(lHand.lx - .6 * s, dep * .5 + 2.4 * s, z + 5, 1.4 * s, torsoW * .78,
-      legH + torsoH, '#c3cedd');
-    P(lHand.lx, dep * .5 + 2.4 * s, torsoZ + torsoH * .62, 1.2 * s, torsoW * .5,
-      2.6 * s, '#2f3540');
-    ctx.globalAlpha = flash ? .68 : 1;
-  } else if (wKind === 'claws') {
-    for (let i = -1; i <= 1; i++) {
-      P(rHand.lx + i * 2.4 * s, rHand.ly + 4 * s, rHand.lz, 1.6 * s, 7 * s, 1.6 * s, '#d8dee8');
-    }
-  } else if (wKind === 'acid') {
-    const apx = LX(rHand.lx, rHand.ly + 3 * s), apy = LY(rHand.lx, rHand.ly + 3 * s);
-    ctx.fillStyle = '#8ecf4a';
-    ctx.beginPath();
-    ctx.arc(isoX(apx, apy, rHand.lz), isoY(apx, apy, rHand.lz), 4.6 * s, 0, 6.283);
-    ctx.fill();
-  } else if (wKind === 'smash') {
-    P(rHand.lx, rHand.ly + 4 * s, rHand.lz, 9 * s, 9 * s, 9 * s, '#5b6b45');
-  } else if (swinging) {
-    const spx = LX(rHand.lx, rHand.ly + 5 * s), spy = LY(rHand.lx, rHand.ly + 5 * s);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.arc(isoX(spx, spy, rHand.lz), isoY(spx, spy, rHand.lz), 8 * s, -.9, .9);
-    ctx.stroke();
-  }
+  // Blink while you cannot be hurt, so the moment after turning sides is obvious.
+  let alpha;
+  if (isPlayer && player.invuln > 0 && Math.floor(player.invuln * 10) % 2 === 0) alpha = .45;
 
-  ctx.globalAlpha = 1;
+  paintFigure(ctx, cx, footY, H, {
+    skin: skin, shirt: torso, legs: legs,
+    hatKind: hatKind, hatCol: hatCol, faceKind: faceKind, weapon: weapon,
+  }, {
+    view: view,
+    flip: flip,
+    phase: g.walk || 0,
+    moving: !!g.moving,
+    alpha: alpha,
+  });
 
+  // How much fight is left in an enemy, over its head.
   if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
-    const bx = isoX(g.x, g.y, z + legH + torsoH + headH) - bw2 / 2;
-    const by = isoY(g.x, g.y, (g.z || 0) + 46 * s) - 7;
+    const bx = cx - bw2 / 2;
+    const by = footY - H - 8;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(bx, by, bw2, bh);
     ctx.fillStyle = g.boss ? '#ff9f43' : (isNoob ? '#4da3ff' : '#8ecf4a');
@@ -4545,9 +4243,6 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   }
 }
 
-// The baseplate. Each square of ground is a tilted diamond with one stud on it,
-// which is what a Roblox baseplate looks like. The studs live here and nowhere
-// else: putting them on the walls as well is what made it look like Lego.
 function drawFloor() {
   // A plain skirt of ground beyond the walls first, so looking over the boundary
   // shows more ground instead of open sky.
@@ -4749,72 +4444,103 @@ function ringPath(pts) {
   ctx.closePath();
 }
 
+// The near half of a ring: the points that are on the side of it facing the camera.
+// A hoop drawn all the way round a barrel comes out as a complete ellipse floating
+// clear of the body, which is what made the first attempt look like a coiled spring
+// rather than a drum with bands on it. Only the near half is ever visible.
+function nearHalf(pts, cxs, cys) {
+  const near = [];
+  for (const q of pts) if (q[1] >= cys) near.push(q);
+  // Left to right, so the band is drawn as one clean sweep.
+  near.sort((a, b) => a[0] - b[0]);
+  return near;
+}
+
+function strokeNearBand(cx, cy, r, z, col, width) {
+  const ring = ringAt(cx, cy, r, z);
+  const cxs = isoX(cx, cy, z), cys = isoY(cx, cy, z);
+  const near = nearHalf(ring, cxs, cys);
+  if (near.length < 2) return;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(near[0][0], near[0][1]);
+  for (let i = 1; i < near.length; i++) ctx.lineTo(near[i][0], near[i][1]);
+  ctx.stroke();
+}
+
 function drawBarrel(wx, wy, h, col, fade) {
   if (fade !== undefined) ctx.globalAlpha = fade;
   const cx = wx + TILE / 2, cy = wy + TILE / 2;
-  const r = TILE * 0.29;
+  const r = TILE * 0.28;
+
   const bot = ringAt(cx, cy, r, 0);
   const top = ringAt(cx, cy, r, h);
-  // A drum bulges very slightly in the middle, which is most of why it reads as a
-  // drum and not a tin can.
-  const midR = ringAt(cx, cy, r * 1.05, h * 0.5);
 
-  // Shadow on the ground.
-  ctx.fillStyle = 'rgba(0,0,0,0.26)';
-  ringPath(ringAt(cx, cy, r * 1.05, 0));
+  // Shadow.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ringPath(ringAt(cx, cy, r * 1.06, 0));
   ctx.fill();
 
-  // The body: down one side of the top ring, round the bottom, and back.
+  // The body. Built from the outline of the two rings rather than by walking one and
+  // then the other, which self intersected and gave it a pinched, stacked-plates look.
+  // Height only moves things up the screen, so the silhouette is the two rings joined
+  // down their leftmost and rightmost points.
+  let li = 0, ri = 0;
+  for (let i = 1; i < bot.length; i++) {
+    if (bot[i][0] < bot[li][0]) li = i;
+    if (bot[i][0] > bot[ri][0]) ri = i;
+  }
+  ctx.beginPath();
+  // Across the top ring the long way round from left to right, keeping the far side,
+  // then down the right, back along the bottom ring's near side, and up the left.
+  ctx.moveTo(top[li][0], top[li][1]);
+  for (let k = 1; k <= bot.length; k++) {
+    const i = (li + k) % bot.length;
+    ctx.lineTo(top[i][0], top[i][1]);
+    if (i === ri) break;
+  }
+  ctx.lineTo(bot[ri][0], bot[ri][1]);
+  for (let k = 1; k <= bot.length; k++) {
+    const i = (ri + k) % bot.length;
+    ctx.lineTo(bot[i][0], bot[i][1]);
+    if (i === li) break;
+  }
+  ctx.closePath();
+
   let minX = Infinity, maxX = -Infinity;
   for (const q of bot) { if (q[0] < minX) minX = q[0]; if (q[0] > maxX) maxX = q[0]; }
-  ctx.beginPath();
-  ctx.moveTo(top[0][0], top[0][1]);
-  for (let i = 1; i < top.length; i++) ctx.lineTo(top[i][0], top[i][1]);
-  for (let i = bot.length - 1; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
-  ctx.closePath();
   const g = ctx.createLinearGradient(minX, 0, maxX, 0);
-  g.addColorStop(0, shade(col, -40));
-  g.addColorStop(.3, shade(col, 22));
-  g.addColorStop(.55, col);
-  g.addColorStop(1, shade(col, -46));
+  g.addColorStop(0, shade(col, -44));
+  g.addColorStop(.28, shade(col, 20));
+  g.addColorStop(.5, col);
+  g.addColorStop(1, shade(col, -48));
   ctx.fillStyle = g;
   ctx.fill();
-
-  // Two raised hoops and the bulge line, drawn as rings so they wrap round it.
-  ctx.lineWidth = 2.4;
-  ctx.strokeStyle = shade(col, -34);
-  for (const f of [0.28, 0.72]) {
-    const ring = ringAt(cx, cy, r * 1.04, h * f);
-    ringPath(ring);
-    ctx.stroke();
-  }
+  ctx.strokeStyle = shade(col, -52);
   ctx.lineWidth = 1;
-  ctx.strokeStyle = shade(col, 16);
-  ringPath(midR);
   ctx.stroke();
 
-  // The lid, with a rim and a bung.
+  // Two rolling hoops, only across the near side so they wrap the drum.
+  strokeNearBand(cx, cy, r * 1.015, h * 0.26, shade(col, -34), 2.6);
+  strokeNearBand(cx, cy, r * 1.015, h * 0.74, shade(col, -34), 2.6);
+  // A hazard band between them, which is what marks it out as the one to shoot.
+  strokeNearBand(cx, cy, r * 1.01, h * 0.5, 'rgba(255,216,77,0.92)', 4);
+
+  // The lid, the same width as the body, with a rim and a bung.
   ringPath(top);
-  ctx.fillStyle = shade(col, 30);
+  ctx.fillStyle = shade(col, 26);
   ctx.fill();
-  ctx.strokeStyle = shade(col, -30);
-  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = shade(col, -34);
+  ctx.lineWidth = 1.4;
   ctx.stroke();
-  const bung = ringAt(cx + r * .38, cy - r * .25, r * .17, h);
-  ringPath(bung);
-  ctx.fillStyle = shade(col, -22);
+  ringPath(ringAt(cx, cy, r * 0.72, h));
+  ctx.strokeStyle = shade(col, -18);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ringPath(ringAt(cx + r * .4, cy - r * .22, r * .16, h));
+  ctx.fillStyle = shade(col, -30);
   ctx.fill();
-
-  // A hazard band, so it is obvious this is the one worth shooting.
-  ctx.strokeStyle = 'rgba(255,216,77,0.9)';
-  ctx.lineWidth = 3.4;
-  const band = ringAt(cx, cy, r * 1.02, h * 0.5);
-  // Only the front half, so it looks painted on rather than being another hoop.
-  ctx.beginPath();
-  const half = Math.floor(band.length / 2);
-  ctx.moveTo(band[0][0], band[0][1]);
-  for (let i = 1; i <= half; i++) ctx.lineTo(band[i][0], band[i][1]);
-  ctx.stroke();
 
   ctx.globalAlpha = 1;
 }
@@ -6046,6 +5772,327 @@ function el(tag, cls, text) {
 
 // A little picture of your guy, so choices can be seen rather than guessed at.
 // ---------------------------------------------------------------------------
+//  ONE FIGURE PAINTER, FOR THE SHOP AND FOR THE GAME
+//
+//  Why this exists at all. The characters in the game used to be built from about
+//  twenty small boxes, each one positioned in 3D, turned to face where the character
+//  was going, and then painted as its own rounded shape with its own gradient. On an
+//  iPad a character is roughly ninety pixels tall, so each of those boxes ends up ten
+//  to twenty pixels across. Twenty independently shaded, independently rounded blobs
+//  at that size do not read as a person; they read as a pile of pebbles. That is why
+//  no amount of extra detail, better colours or smoother corners ever fixed it, and
+//  Josh was right every single time he said so.
+//
+//  Meanwhile the shop portrait looked fine, and it is the same character. The
+//  difference is that the portrait is a small number of large, deliberately
+//  proportioned shapes with a clear outline, all lit the same way. So the game now
+//  uses that, and this is the one painter both of them call: what you see on the
+//  shop card is literally what runs about on the field.
+//
+//  The figure is drawn flat, facing the camera, rather than being a rotating pile of
+//  boxes. Which way a character is facing is shown by picking one of three views and
+//  flipping it, which is how nearly every readable 2D-in-3D game has ever done it.
+//  Readability wins over technically-correct geometry nobody can make out.
+//
+//    c      canvas to draw on
+//    cx     middle of the figure, across
+//    footY  where the feet are
+//    H      how tall the whole figure is, in pixels
+//    look   colours and kit: skin, shirt, legs, hatKind, hatCol, faceKind, weapon
+//    o      view: 'front' | 'side' | 'back', flip, phase, moving, alpha
+// ---------------------------------------------------------------------------
+function paintFigure(c, cx, footY, H, look, o) {
+  const opt = o || {};
+  const view = opt.view || 'front';
+  const u = H / 100;
+  const top = footY - H * 0.945;
+  const Y = t => top + t * u;          // a height in figure units to a real position
+  const skin = look.skin, shirt = look.shirt, pants = look.legs;
+
+  if (opt.alpha !== undefined) c.globalAlpha = opt.alpha;
+
+  c.save();
+  // Facing left is the same figure mirrored, which keeps one set of drawing code.
+  if (opt.flip) { c.translate(cx * 2, 0); c.scale(-1, 1); }
+
+  // The walk. Legs swing and the body lifts a little on each step. In a side view the
+  // legs swing forward and back; face on, they lift and part instead, because a leg
+  // swinging towards the camera is not visible and just looks like a twitch.
+  const ph = opt.phase || 0;
+  const walking = !!opt.moving;
+  const sw = walking ? Math.sin(ph) : 0;
+  const sw2 = walking ? Math.sin(ph + Math.PI) : 0;
+  const lift = walking ? Math.abs(Math.cos(ph)) * 1.6 : 0;
+
+  const side = (view === 'side');
+  const back = (view === 'back');
+  // A body seen from the side is narrower than one seen face on.
+  const bodyW = side ? 20 * u : 30 * u;
+  const headW = side ? 17 * u : 21 * u;
+  const headH = 22 * u, headTop = 11 - lift * .4;
+
+  // ---- shadow is drawn by the caller, since it belongs on the ground ----
+
+  // ---- legs ----
+  const legTop = 60 - lift * .5;
+  const legW = side ? 10 * u : 9.2 * u;
+  const legs2 = side
+    ? [{ x: sw * 5 * u, dark: false }, { x: sw2 * 5 * u, dark: true }]
+    : [{ x: -5.2 * u + sw * 1.2 * u, dark: false }, { x: 5.2 * u + sw2 * 1.2 * u, dark: true }];
+  for (const L of legs2) {
+    const col = L.dark ? shade(pants, -16) : pants;
+    const lx = cx + L.x - legW / 2;
+    limbOn(c, lx, Y(legTop), legW, 22 * u, col, 3 * u);
+    limbOn(c, lx + .5 * u, Y(80), legW - 1 * u, 6 * u, shade(col, -26), 2 * u);
+    limbOn(c, lx - .7 * u, Y(86), legW + 1.4 * u, 8 * u, '#3f444c', 3 * u);
+    limbOn(c, lx - .7 * u, Y(91), legW + 1.4 * u, 3.4 * u, '#54595f', 1.6 * u);
+  }
+
+  // ---- torso ----
+  limbOn(c, cx - bodyW / 2, Y(36 - lift * .5), bodyW, 26 * u, shirt, 5 * u);
+  if (!side) {
+    c.fillStyle = shade(shirt, -22);
+    for (const sx of [-1, 1]) {
+      rr(c, cx + sx * 8.4 * u - 4.4 * u, Y(43 - lift * .5), 8.8 * u, 7 * u, 1.4 * u);
+      c.fill();
+    }
+  }
+  if (!back && !side) {
+    // Collar.
+    c.fillStyle = shade(shirt, 20);
+    c.beginPath();
+    c.moveTo(cx - 8 * u, Y(36 - lift * .5));
+    c.lineTo(cx, Y(43 - lift * .5));
+    c.lineTo(cx + 8 * u, Y(36 - lift * .5));
+    c.closePath();
+    c.fill();
+  }
+  if (back) {
+    // A pack on the back, which is what tells you at a glance he is facing away.
+    limbOn(c, cx - 9 * u, Y(39), 18 * u, 17 * u, shade(pants, -8), 3.4 * u);
+    c.strokeStyle = 'rgba(30,26,20,0.4)';
+    c.lineWidth = Math.max(1, 1.2 * u);
+    c.beginPath();
+    c.moveTo(cx - 5 * u, Y(39)); c.lineTo(cx - 5 * u, Y(56));
+    c.moveTo(cx + 5 * u, Y(39)); c.lineTo(cx + 5 * u, Y(56));
+    c.stroke();
+  }
+  // Belt.
+  limbOn(c, cx - bodyW / 2 + 1 * u, Y(59 - lift * .5), bodyW - 2 * u, 4.4 * u, '#3f444c', 1.4 * u);
+  if (!back) {
+    c.fillStyle = '#c9a227';
+    rr(c, cx - 2.6 * u, Y(59.4 - lift * .5), 5.2 * u, 3.6 * u, 1 * u);
+    c.fill();
+  }
+
+  // ---- arms ----
+  // Face on there are two at the sides. From the side there is one in front and one
+  // behind, and the one behind is darker so they do not merge into each other.
+  const armW = 8.4 * u;
+  const arms = side
+    ? [{ x: 2 * u, sw: sw2, back: true }, { x: -1 * u, sw: sw, back: false }]
+    : [{ x: -17 * u, sw: sw, back: false }, { x: 17 * u, sw: sw2, back: false }];
+  for (const A of arms) {
+    const col = A.back ? shade(shirt, -26) : shirt;
+    const sk = A.back ? shade(skin, -22) : skin;
+    const ax = cx + A.x - armW / 2 + (side ? A.sw * 4 * u : 0);
+    const drop = side ? 0 : Math.abs(A.sw) * 1.2 * u;
+    limbOn(c, ax, Y(38 - lift * .5) + drop, armW, 15 * u, col, 3 * u);
+    limbOn(c, ax + .4 * u, Y(51 - lift * .5) + drop, armW - .8 * u, 13 * u, sk, 2.6 * u);
+    limbOn(c, ax + .2 * u, Y(62 - lift * .5) + drop, armW - .4 * u, 6 * u, shade(sk, -34), 2.4 * u);
+  }
+
+  // ---- head ----
+  limbOn(c, cx - 4.6 * u, Y(31 - lift * .5), 9.2 * u, 7 * u, shade(skin, -18), 2 * u);
+  limbOn(c, cx - headW / 2, Y(headTop), headW, headH, skin, 6.5 * u);
+  if (!side) {
+    for (const sx of [-1, 1]) {
+      limbOn(c, cx + sx * (headW / 2) - 1.6 * u, Y(headTop + 9), 3.4 * u, 6 * u,
+             shade(skin, -14), 1.6 * u);
+    }
+  } else {
+    // One ear, and a nose, which is all a profile needs to read as a profile.
+    limbOn(c, cx - headW * .34, Y(headTop + 9), 3.4 * u, 6 * u, shade(skin, -14), 1.6 * u);
+    limbOn(c, cx + headW * .46, Y(headTop + 10), 3.2 * u, 3.4 * u, skin, 1.2 * u);
+  }
+
+  // The face, but only when it can actually be seen.
+  if (!back) paintFace(c, cx, Y(headTop + 9), u, look.faceKind, skin, side);
+
+  if (look.hatKind) paintHat(c, cx, Y(headTop), headW, u, look.hatKind, look.hatCol, view);
+
+  // ---- what he is carrying ----
+  if (look.weapon && look.weapon.kind !== 'fists') {
+    const hx = side ? cx + 7 * u : cx + 15 * u;
+    const hy = Y(52 - lift * .5) + (side ? sw * 2 * u : 0);
+    paintWeapon(c, look.weapon, hx, hy, u * 1.05, true);
+  }
+
+  c.restore();
+  c.globalAlpha = 1;
+}
+
+// A part with light from the upper left. Same as the shop's limb(), but it takes the
+// context so the game and the shop can both use it.
+function limbOn(c, x, y, w, h, col, r) {
+  const g = c.createLinearGradient(x, y, x + w, y + h);
+  g.addColorStop(0, shade(col, 26));
+  g.addColorStop(.55, col);
+  g.addColorStop(1, shade(col, -30));
+  c.fillStyle = g;
+  rr(c, x, y, w, h, r === undefined ? Math.min(w, h) * .34 : r);
+  c.fill();
+  // A thin darker edge so parts next to each other stay separate. Faint on purpose.
+  c.strokeStyle = shade(col, -46);
+  c.globalAlpha = (c.globalAlpha === 1 ? 0.28 : c.globalAlpha * 0.28);
+  c.lineWidth = 1;
+  c.stroke();
+  c.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------------------
+//  Faces. These used to be a list of names and prices with no drawing behind them
+//  at all, so buying one changed nothing whatsoever. Each one is drawn properly now.
+// ---------------------------------------------------------------------------
+function paintFace(c, cx, eyeY, u, kind, skin, profile) {
+  const k = kind || 'smile';
+  const eyes = profile ? [0.4] : [-1, 1];
+  const brow = shade(skin, -52);
+
+  if (k === 'shades') {
+    // One dark band across, with a bridge. Reads instantly even very small.
+    c.fillStyle = '#23282f';
+    rr(c, cx - (profile ? 3 : 7.6) * u, eyeY - 2.6 * u,
+       (profile ? 8 : 15.2) * u, 5.2 * u, 1.6 * u);
+    c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.28)';
+    rr(c, cx - (profile ? 2.4 : 6.4) * u, eyeY - 1.8 * u, 3.4 * u, 1.6 * u, .6 * u);
+    c.fill();
+  } else if (k === 'robot') {
+    // A visor with a glowing bar, and a grille for a mouth.
+    c.fillStyle = '#2b3340';
+    rr(c, cx - (profile ? 3 : 7.6) * u, eyeY - 3 * u,
+       (profile ? 8 : 15.2) * u, 6 * u, 1.2 * u);
+    c.fill();
+    c.fillStyle = '#7ad7ff';
+    rr(c, cx - (profile ? 2.4 : 6.6) * u, eyeY - .9 * u,
+       (profile ? 6.6 : 13.2) * u, 1.8 * u, .8 * u);
+    c.fill();
+    c.strokeStyle = shade(skin, -50);
+    c.lineWidth = Math.max(1, .9 * u);
+    for (let i = -1; i <= 1; i++) {
+      c.beginPath();
+      c.moveTo(cx + i * 2.4 * u, eyeY + 6 * u);
+      c.lineTo(cx + i * 2.4 * u, eyeY + 9.5 * u);
+      c.stroke();
+    }
+    return;
+  } else {
+    for (const sx of eyes) {
+      const ex = cx + sx * 4.6 * u;
+      c.fillStyle = '#f6f8fb';
+      c.beginPath(); c.ellipse(ex, eyeY, 2.9 * u, 2.3 * u, 0, 0, 6.283); c.fill();
+      c.fillStyle = '#23282f';
+      c.beginPath();
+      c.ellipse(ex + sx * .3 * u, eyeY + .3 * u, 1.5 * u, 1.6 * u, 0, 0, 6.283);
+      c.fill();
+      // Angry brows come down towards the nose. That single line is the whole face.
+      c.strokeStyle = brow;
+      c.lineWidth = Math.max(1, 1.5 * u);
+      c.beginPath();
+      const tilt = (k === 'angry') ? sx * 1.8 * u : 0;
+      c.moveTo(ex - 3.2 * u, eyeY - 4.2 * u + tilt);
+      c.lineTo(ex + 3.2 * u, eyeY - 4.4 * u - tilt);
+      c.stroke();
+    }
+  }
+
+  // Nose, then a mouth that matches the face that was chosen.
+  c.fillStyle = shade(skin, -26);
+  rr(c, cx - 1.1 * u, eyeY + 2.6 * u, 2.2 * u, 3.6 * u, .8 * u);
+  c.fill();
+
+  if (k === 'grin') {
+    // Teeth, which is what makes a grin a grin rather than a big smile.
+    c.fillStyle = '#f6f8fb';
+    rr(c, cx - 4.4 * u, eyeY + 7 * u, 8.8 * u, 4 * u, 1 * u);
+    c.fill();
+    c.strokeStyle = shade(skin, -56);
+    c.lineWidth = Math.max(1, .8 * u);
+    c.beginPath();
+    c.moveTo(cx, eyeY + 7 * u); c.lineTo(cx, eyeY + 11 * u);
+    c.stroke();
+  } else {
+    c.strokeStyle = shade(skin, -56);
+    c.lineWidth = Math.max(1, 1.4 * u);
+    c.beginPath();
+    if (k === 'angry') c.arc(cx, eyeY + 11.5 * u, 4 * u, Math.PI * 1.15, Math.PI * 1.85);
+    else c.arc(cx, eyeY + 7 * u, 4 * u, Math.PI * .15, Math.PI * .85);
+    c.stroke();
+  }
+}
+
+// Hats, each its own shape rather than a recoloured block.
+function paintHat(c, cx, hy, hw, u, kind, col, view) {
+  const back = (view === 'back');
+  if (kind === 'helmet') {
+    c.fillStyle = col;
+    c.beginPath();
+    c.ellipse(cx, hy + 4 * u, hw * .62, 8.5 * u, 0, Math.PI, 0);
+    c.fill();
+    limbOn(c, cx - hw * .68, hy + 3 * u, hw * 1.36, 3.4 * u, shade(col, -18), 1.6 * u);
+    if (!back) {
+      c.strokeStyle = 'rgba(40,44,34,0.7)';
+      c.lineWidth = Math.max(1, 1.2 * u);
+      c.beginPath();
+      c.moveTo(cx - hw * .48, hy + 8 * u); c.lineTo(cx - hw * .3, hy + 20 * u);
+      c.stroke();
+    }
+  } else if (kind === 'brim') {
+    limbOn(c, cx - hw * .95, hy + 3 * u, hw * 1.9, 3.6 * u, col, 1.8 * u);
+    limbOn(c, cx - 7 * u, hy - 5 * u, 14 * u, 9 * u, shade(col, 10), 3 * u);
+  } else if (kind === 'cap') {
+    limbOn(c, cx - hw * .54, hy - 1 * u, hw * 1.08, 7 * u, col, 3 * u);
+    // The peak goes to the front, or is hidden behind the head from behind.
+    if (!back) limbOn(c, cx + hw * .1, hy + 4.6 * u, hw * .85, 2.8 * u, shade(col, -16), 1.4 * u);
+  } else if (kind === 'tall') {
+    limbOn(c, cx - hw * .8, hy + 2 * u, hw * 1.6, 3 * u, shade(col, -14), 1.4 * u);
+    limbOn(c, cx - 7 * u, hy - 14 * u, 14 * u, 17 * u, col, 2 * u);
+    limbOn(c, cx - 7 * u, hy - 4 * u, 14 * u, 3 * u, shade(col, -30), 1 * u);
+  } else if (kind === 'crown') {
+    // Points, and a jewel in the middle.
+    c.fillStyle = col;
+    c.beginPath();
+    const w2 = hw * .6;
+    c.moveTo(cx - w2, hy + 5 * u);
+    for (let i = 0; i < 4; i++) {
+      const x0 = cx - w2 + (i / 4) * w2 * 2;
+      const x1 = cx - w2 + ((i + .5) / 4) * w2 * 2;
+      c.lineTo(x0, hy + 5 * u);
+      c.lineTo(x1, hy - 5 * u);
+    }
+    c.lineTo(cx + w2, hy + 5 * u);
+    c.closePath();
+    c.fill();
+    limbOn(c, cx - w2, hy + 3 * u, w2 * 2, 4 * u, shade(col, -16), 1.2 * u);
+    if (!back) {
+      c.fillStyle = '#ff6b8a';
+      c.beginPath(); c.arc(cx, hy + 5 * u, 1.8 * u, 0, 6.283); c.fill();
+    }
+  } else if (kind === 'phones') {
+    limbOn(c, cx - hw * .62, hy + 1 * u, hw * 1.24, 3 * u, shade(col, -10), 1.2 * u);
+    for (const sx of [-1, 1]) {
+      limbOn(c, cx + sx * hw * .52 - 2.6 * u, hy + 6 * u, 5.2 * u, 8 * u, col, 2 * u);
+    }
+  } else {
+    c.fillStyle = col;
+    c.beginPath();
+    c.ellipse(cx, hy + 3 * u, hw * .56, 7 * u, 0, Math.PI, 0);
+    c.fill();
+  }
+}
+
+// ---------------------------------------------------------------------------
 //  THE SHOP DOLL
 //
 //  A big front-on portrait of your guy, painted straight onto its own canvas rather
@@ -6083,131 +6130,41 @@ function limb(c, x, y, w, h, col, r) {
   c.fill();
 }
 
+// The shop portrait: the same painter as the game, face on and much larger, with a
+// slow idle sway so it does not look like a dead thing on a slab.
 function paintDoll(c, look, W, H) {
   c.clearRect(0, 0, W, H);
-  const u = H / 100;                 // everything below is in hundredths of the height
   const cx = W / 2;
-  const skin = SKINS[look.skin || 0];
-  const shirt = SHIRTS[look.shirt || 0];
-  const pants = PANTS[look.legs || 0];
-  const hat = HATS[look.hat || 0];
-  const face = FACES[look.face || 0];
-  const wep = WEAPONS[look.weapon || 0];
+  const u = H / 100;
 
-  // A soft pool of shadow, so he is standing on something.
+  // Ground shadow.
   const sg = c.createRadialGradient(cx, 95 * u, 0, cx, 95 * u, 26 * u);
   sg.addColorStop(0, 'rgba(0,0,0,0.34)');
   sg.addColorStop(1, 'rgba(0,0,0,0)');
   c.fillStyle = sg;
   c.fillRect(cx - 30 * u, 86 * u, 60 * u, 18 * u);
 
-  // Legs, with a knee break and a boot.
-  for (const sx of [-1, 1]) {
-    const lx = cx + sx * 5.2 * u - 4.6 * u;
-    limb(c, lx, 60 * u, 9.2 * u, 22 * u, pants, 3 * u);         // thigh to shin
-    limb(c, lx + .5 * u, 80 * u, 8.2 * u, 6 * u, shade(pants, -26), 2 * u);  // knee pad
-    limb(c, lx - .7 * u, 86 * u, 10.6 * u, 8 * u, '#3f444c', 3 * u);         // boot
-    // A toe cap, which is the detail that stops a boot looking like a block.
-    limb(c, lx - .7 * u, 91 * u, 10.6 * u, 3.4 * u, '#54595f', 1.6 * u);
-  }
+  paintFigure(c, cx, H * 0.945, H * 0.97, lookFor(look), {
+    view: 'front',
+    phase: 0,
+    moving: false,
+  });
+}
 
-  // Torso: shoulders wider than the waist, with a collar, pockets and a belt.
-  const tw = 30 * u;
-  limb(c, cx - tw / 2, 36 * u, tw, 26 * u, shirt, 5 * u);
-  // Chest pockets.
-  c.fillStyle = shade(shirt, -22);
-  for (const sx of [-1, 1]) {
-    rr(c, cx + sx * 8.4 * u - 4.4 * u, 43 * u, 8.8 * u, 7 * u, 1.4 * u);
-    c.fill();
-  }
-  // Collar.
-  c.fillStyle = shade(shirt, 20);
-  c.beginPath();
-  c.moveTo(cx - 8 * u, 36 * u);
-  c.lineTo(cx, 43 * u);
-  c.lineTo(cx + 8 * u, 36 * u);
-  c.closePath();
-  c.fill();
-  // Belt and buckle.
-  limb(c, cx - tw / 2 + 1 * u, 59 * u, tw - 2 * u, 4.4 * u, '#3f444c', 1.4 * u);
-  c.fillStyle = '#c9a227';
-  rr(c, cx - 2.6 * u, 59.4 * u, 5.2 * u, 3.6 * u, 1 * u);
-  c.fill();
-
-  // Arms, hanging slightly away from the body, with a rolled sleeve and a glove.
-  for (const sx of [-1, 1]) {
-    const ax = cx + sx * 17 * u - 4.2 * u;
-    limb(c, ax, 38 * u, 8.4 * u, 15 * u, shirt, 3 * u);                     // upper arm
-    limb(c, ax + .4 * u, 51 * u, 7.6 * u, 13 * u, skin, 2.6 * u);           // forearm
-    limb(c, ax + .2 * u, 62 * u, 8 * u, 6 * u, shade(skin, -34), 2.4 * u);  // glove
-  }
-
-  // Neck, then the head.
-  limb(c, cx - 4.6 * u, 31 * u, 9.2 * u, 7 * u, shade(skin, -18), 2 * u);
-  const hw = 21 * u, hh = 22 * u, hy = 11 * u;
-  limb(c, cx - hw / 2, hy, hw, hh, skin, 6.5 * u);
-  // Ears.
-  for (const sx of [-1, 1]) limb(c, cx + sx * (hw / 2) - 1.6 * u, hy + 9 * u, 3.4 * u, 6 * u, shade(skin, -14), 1.6 * u);
-
-  // The face. Brows do most of the work in giving it an expression, and a pupil
-  // inside a white reads far better than a plain dot.
-  const eyY = hy + 9 * u;
-  for (const sx of [-1, 1]) {
-    const ex = cx + sx * 4.6 * u;
-    c.fillStyle = '#f6f8fb';
-    c.beginPath(); c.ellipse(ex, eyY, 2.9 * u, 2.3 * u, 0, 0, 6.283); c.fill();
-    c.fillStyle = '#23282f';
-    c.beginPath(); c.ellipse(ex + sx * .3 * u, eyY + .3 * u, 1.5 * u, 1.6 * u, 0, 0, 6.283); c.fill();
-    // Brow, angled according to which face was chosen.
-    c.strokeStyle = shade(skin, -52);
-    c.lineWidth = 1.5 * u;
-    c.beginPath();
-    const tilt = (face && face.angry) ? sx * 1.5 * u : 0;
-    c.moveTo(ex - 3.2 * u, eyY - 4.2 * u + tilt);
-    c.lineTo(ex + 3.2 * u, eyY - 4.4 * u - tilt);
-    c.stroke();
-  }
-  // Nose and mouth.
-  c.fillStyle = shade(skin, -26);
-  rr(c, cx - 1.1 * u, eyY + 2.6 * u, 2.2 * u, 3.6 * u, .8 * u); c.fill();
-  c.strokeStyle = shade(skin, -56);
-  c.lineWidth = 1.4 * u;
-  c.beginPath();
-  if (face && face.frown) c.arc(cx, eyY + 11 * u, 4 * u, Math.PI * 1.15, Math.PI * 1.85);
-  else c.arc(cx, eyY + 7 * u, 4 * u, Math.PI * .15, Math.PI * .85);
-  c.stroke();
-
-  // A hat, if one is being worn. Each kind is a different shape rather than a
-  // recoloured version of the same block.
-  if (hat && hat.kind) {
-    const col = hat.color;
-    if (hat.kind === 'helmet') {
-      c.fillStyle = col;
-      c.beginPath();
-      c.ellipse(cx, hy + 4 * u, hw * .62, 8.5 * u, 0, Math.PI, 0);
-      c.fill();
-      limb(c, cx - hw * .68, hy + 3 * u, hw * 1.36, 3.4 * u, shade(col, -18), 1.6 * u);
-      // Chin strap.
-      c.strokeStyle = 'rgba(40,44,34,0.7)';
-      c.lineWidth = 1.2 * u;
-      c.beginPath(); c.moveTo(cx - hw * .48, hy + 8 * u); c.lineTo(cx - hw * .3, hy + 20 * u); c.stroke();
-    } else if (hat.kind === 'cowboy') {
-      limb(c, cx - hw * .95, hy + 3 * u, hw * 1.9, 3.6 * u, col, 1.8 * u);
-      limb(c, cx - 7 * u, hy - 5 * u, 14 * u, 9 * u, shade(col, 10), 3 * u);
-    } else if (hat.kind === 'cap') {
-      limb(c, cx - hw * .54, hy - 1 * u, hw * 1.08, 7 * u, col, 3 * u);
-      limb(c, cx - hw * .2, hy + 4.6 * u, hw * .95, 2.8 * u, shade(col, -16), 1.4 * u);
-    } else {
-      // A crown, a beanie, anything else: a simple dome that still reads as worn.
-      c.fillStyle = col;
-      c.beginPath();
-      c.ellipse(cx, hy + 3 * u, hw * .56, 7 * u, 0, Math.PI, 0);
-      c.fill();
-    }
-  }
-
-  // And whatever he is holding, drawn into the right hand.
-  if (wep && wep.kind !== 'fists') paintWeapon(c, wep, cx + 15 * u, 52 * u, u * 1.05, true);
+// Turning a saved set of choices into the colours and kit the painter wants. One
+// place, so the shop and the game can never disagree about what you are wearing.
+function lookFor(look) {
+  const hat = HATS[look.hat || 0] || HATS[0];
+  const face = FACES[look.face || 0] || FACES[0];
+  return {
+    skin: SKINS[look.skin || 0],
+    shirt: SHIRTS[look.shirt || 0],
+    legs: PANTS[look.legs || 0],
+    hatKind: hat && hat.kind ? hat.kind : null,
+    hatCol: hat ? hat.color : '#888',
+    faceKind: face ? face.kind : 'smile',
+    weapon: WEAPONS[look.weapon || 0],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -6315,6 +6272,66 @@ function paintWeapon(c, w, x, y, u, held) {
     c.lineWidth = .9 * u;
     rr(c, x - 9 * u, y - 14 * u, 18 * u, 28 * u, 4 * u);
     c.stroke();
+  } else if (k === 'knuckles') {
+    // Brass over the knuckles: a bar with four studs and a grip bar behind.
+    limbOn(c, x - 5 * u, y - 2 * u, 10 * u, 4.4 * u, '#d8a63c', 1.6 * u);
+    for (let i = 0; i < 4; i++) {
+      limbOn(c, x - 4.4 * u + i * 2.5 * u, y - 4.4 * u, 2 * u, 2.6 * u, '#e8bd52', .8 * u);
+    }
+    limbOn(c, x - 3 * u, y + 2.4 * u, 6 * u, 2.2 * u, '#a87c26', .8 * u);
+  } else if (k === 'shotgun') {
+    // Two barrels side by side, a pump under them and a thick wooden stock.
+    for (const sx of [-1, 1]) {
+      limbOn(c, x + sx * 1.5 * u - 1.2 * u, y - 17 * u, 2.4 * u, 21 * u, dark, .5 * u);
+    }
+    limbOn(c, x - 3 * u, y - 7 * u, 6 * u, 5 * u, shade(wood, -14), 1.4 * u);  // pump
+    limbOn(c, x - 2.6 * u, y + 4 * u, 5.2 * u, 15 * u, wood, 1.6 * u);        // stock
+    limbOn(c, x - 3.8 * u, y + 2 * u, 7.6 * u, 3.6 * u, shade(wood, -20), 1 * u);
+    limbOn(c, x - 1 * u, y + 5 * u, 2 * u, 4 * u, dark, .6 * u);              // trigger
+  } else if (k === 'flamer') {
+    // A tank on the back, a hose over the shoulder, and a lit nozzle.
+    limbOn(c, x - 5 * u, y - 2 * u, 8 * u, 16 * u, '#5d6b3a', 2.6 * u);       // tank
+    limbOn(c, x - 4 * u, y - 4 * u, 6 * u, 3 * u, '#8f959e', 1 * u);          // valve
+    limbOn(c, x + 1 * u, y - 13 * u, 2.4 * u, 14 * u, dark, .8 * u);          // barrel
+    limbOn(c, x + .6 * u, y - 17 * u, 3.2 * u, 4 * u, '#6b6f78', 1 * u);      // nozzle
+    // The pilot flame, which is what makes it obviously a flamethrower.
+    c.fillStyle = '#ffb44a';
+    c.beginPath();
+    c.ellipse(x + 2.2 * u, y - 19 * u, 1.8 * u, 3 * u, 0, 0, 6.283);
+    c.fill();
+    c.fillStyle = '#ffe08a';
+    c.beginPath();
+    c.ellipse(x + 2.2 * u, y - 19.4 * u, .9 * u, 1.6 * u, 0, 0, 6.283);
+    c.fill();
+  } else if (k === 'sniper') {
+    // Very long barrel, a big scope on top and a bipod at the front.
+    limbOn(c, x - 1.2 * u, y - 26 * u, 2.4 * u, 32 * u, dark, .5 * u);
+    limbOn(c, x - 2.6 * u, y + 5 * u, 5.2 * u, 17 * u, shade(wood, -18), 1.4 * u);
+    limbOn(c, x - 4 * u, y + 3 * u, 8 * u, 4 * u, shade(wood, -24), 1 * u);
+    // Scope, with a glint on the lens.
+    limbOn(c, x - 1.6 * u, y - 12 * u, 8 * u, 3.4 * u, '#3a3f4a', 1.2 * u);
+    limbOn(c, x + 5.4 * u, y - 12.4 * u, 2.2 * u, 4.2 * u, '#6b6f78', .8 * u);
+    c.fillStyle = 'rgba(160,220,255,0.75)';
+    c.beginPath();
+    c.ellipse(x + 6.4 * u, y - 10.4 * u, .9 * u, 1.4 * u, 0, 0, 6.283);
+    c.fill();
+    // Bipod legs.
+    c.strokeStyle = '#5b6270';
+    c.lineWidth = Math.max(1, 1.2 * u);
+    c.beginPath();
+    c.moveTo(x, y - 20 * u); c.lineTo(x - 3.4 * u, y - 14 * u);
+    c.moveTo(x, y - 20 * u); c.lineTo(x + 3.4 * u, y - 14 * u);
+    c.stroke();
+  } else if (k === 'minigun') {
+    // A drum of ammunition and a rotating cluster of barrels.
+    limbOn(c, x - 6 * u, y + 1 * u, 7 * u, 9 * u, '#4a5058', 2.4 * u);        // drum
+    limbOn(c, x - 3 * u, y - 6 * u, 8 * u, 7 * u, '#5b6270', 2 * u);          // body
+    for (let i = -2; i <= 2; i++) {
+      limbOn(c, x + 1 * u + i * 1.5 * u, y - 20 * u, 1.5 * u, 15 * u,
+             i === 0 ? '#8f959e' : dark, .5 * u);
+    }
+    limbOn(c, x + .4 * u, y - 21 * u, 7.6 * u, 2.6 * u, '#3a3f4a', .8 * u);   // muzzle ring
+    limbOn(c, x - 2 * u, y + 6 * u, 4 * u, 5 * u, wood, 1.2 * u);             // grip
   } else if (k === 'panzer') {
     limb(c, x - 2.2 * u, y - 16 * u, 4.4 * u, 26 * u, dark, 1 * u);     // tube
     // The warhead on the front, which is the whole point of the thing.
@@ -6632,7 +6649,11 @@ levelBtns.forEach(b => {
 });
 paintLevelButtons();
 
-const themeBtns = document.querySelectorAll('.tbtn');
+// Only the buttons that actually carry a theme. The difficulty buttons share the
+// .tbtn look, and selecting everything with that class meant the theme handler grabbed
+// them too: tapping a difficulty set the theme to undefined and the theme repaint then
+// cleared the difficulty highlight again, so it looked like the buttons did nothing.
+const themeBtns = document.querySelectorAll('.tbtn[data-theme]');
 function paintThemeButtons() {
   themeBtns.forEach(b => b.setAttribute('data-on', b.dataset.theme === theme ? '1' : '0'));
 }
