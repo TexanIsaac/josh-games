@@ -370,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v45';
+const VERSION = 'v46';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1574,7 +1574,7 @@ function shadeRaw(hex, amt) {
 //  Studs live on the baseplate and nowhere else. Studs on every brick is what
 //  made an earlier version look like Lego instead of Roblox.
 // ---------------------------------------------------------------------------
-const WALL_H = 58, CRATE_H = 26;
+// (declared earlier, with the obstacle table)
 // Every wall is the same height, inside and out. The boundary used to be much
 // taller to stop you seeing over the edge into the sky, but a wall of a different
 // height round the outside looked wrong. Instead the ground carries on past the
@@ -2048,6 +2048,8 @@ function resize() {
 // ---------------------------------------------------------------------------
 const TILE = 40;
 const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5, DOOR = 6;
+// How tall the scenery is. Up here because the obstacle table below needs them.
+const WALL_H = 58, CRATE_H = 26;
 
 // Everything that can stand in your way, in one table. Add a line to add an obstacle.
 //   h            how tall it is. Walls work theirs out per tile, so theirs is null.
@@ -2056,11 +2058,11 @@ const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5, DOOR = 6;
 //   soft         drawn with rounded edges instead of flat panels.
 const TILE_KIND = {
   1: { name: 'wall',     h: null,     hp: 320,  color: null },
-  2: { name: 'crate',    h: 26,       hp: 90,   color: null },
+  2: { name: 'crate',    h: CRATE_H,  hp: 90,   color: null },
   3: { name: 'barrel',   h: 34,       hp: 40,   color: '#b4552f', explodes: true, soft: true },
   4: { name: 'sandbag',  h: 15,       hp: 130,  color: '#c2ad72', soft: true },
   5: { name: 'hedgehog', h: 25,       hp: null, color: '#8f959e' },
-  6: { name: 'door',     h: 52,       hp: 200,  color: '#8a5a2b', door: true },
+  6: { name: 'door',     h: WALL_H,   hp: 200,  color: '#8a5a2b', door: true },
 };
 function tileKind(t) { return TILE_KIND[t] || null; }
 
@@ -4970,14 +4972,19 @@ function drawDoor(gx, gy, wx, wy, h, col, fade) {
   const alongX = isWall(gx - 1, gy) || isWall(gx + 1, gy);
 
   const swing = openAmt * (Math.PI / 2) * 0.94;
-  const leafLen = TILE * 0.47;
-  const leafThick = TILE * 0.12;
-  const doorH = h - 5;
+  // Two leaves, each half the tile, so together they exactly fill the opening. They
+  // are also as thick as the thin wall bar they sit between: at a tenth of a tile they
+  // were far thinner than the wall and you could see past them on both sides, which is
+  // what Josh meant by them not filling the opening.
+  const leafLen = TILE * 0.5;
+  const leafThick = TILE * (1 - WALL_THIN * 2) * 0.92;
+  const doorH = h - 4;
 
   // A lintel across the top, so the opening still reads as a doorway when it is open.
-  const lw = alongX ? TILE : TILE * 0.2;
-  const ld = alongX ? TILE * 0.2 : TILE;
-  drawBox(cx - lw / 2, cy - ld / 2, doorH, lw, ld, 5, '#5b6270', fade);
+  const barThick = TILE * (1 - WALL_THIN * 2);
+  const lw = alongX ? TILE : barThick;
+  const ld = alongX ? barThick : TILE;
+  drawBox(cx - lw / 2, cy - ld / 2, doorH, lw, ld, h - doorH, '#5b6270', fade);
 
   // Two leaves, each hinged on the wall at its own end and swinging to the same side.
   const leaves = alongX

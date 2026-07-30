@@ -145,7 +145,7 @@ eval(code + `
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
    DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
    shadeRaw, partGradient,
-   wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint,
+   wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint, WALL_H, TILE,
    setFirstPerson, get camWant(){return camWant}, get cam(){return cam},
    startSideFor, NOOB, ZOMB, update,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
@@ -2822,6 +2822,20 @@ ok('every door is a real doorway, in a wall with floor either side', (() => {
   return bad.length === 0;
 })(), 'so walking through one goes somewhere');
 
+ok('a door is exactly as tall as the wall it sits in', (() => {
+  // At 52 against a wall of 58 you could see straight over the top of it.
+  return G.TILE_KIND[G.DOOR].h === G.WALL_H;
+})(), 'door ' + G.TILE_KIND[G.DOOR].h + ', wall ' + G.WALL_H);
+ok('two leaves exactly span the opening',
+  src.indexOf('const leafLen = TILE * 0.5;') !== -1,
+  'half a tile each, hinged at the two edges');
+ok('a leaf is as thick as the wall bar it sits between', (() => {
+  // A tenth of a tile was far thinner than the wall, so you saw past it on both sides.
+  const barThick = 1 - G.WALL_THIN * 2;
+  return src.indexOf('TILE * (1 - WALL_THIN * 2) * 0.92') !== -1 && barThick > 0.2;
+})(), 'the wall bar is ' + ((1 - G.WALL_THIN * 2).toFixed(2)) + ' of a tile deep');
+ok('an open door is still drawn at full height, not flattened',
+  src.indexOf('collapse flat onto the ground') !== -1);
 ok('a door starts shut and is solid', (() => {
   G.loadMap();
   let d = null;
