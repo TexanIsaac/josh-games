@@ -135,7 +135,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v11';
+const VERSION = 'v14';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -310,9 +310,10 @@ const TUNE = {
 
   // Rack up enough points and you turn into the boss for a while: much bigger,
   // much tougher, and you hit far harder.
-  BOSS_POINTS: 240,           // points needed
+  BOSS_POINTS: 650,           // points needed. Deliberately a long haul.
   POINTS_PER_KILL: 10,
   POINTS_PER_BOSS: 120,
+  BOSS_MODE_TIME_DEC: 0,
   BOSS_MODE_TIME: 16,
   BOSS_MODE_SIZE: 1.85,
   BOSS_MODE_DMG: 2.6,
@@ -347,8 +348,12 @@ const TUNE = {
   BRUTE_CHARGE_SPEED: 2.7,    // how fast a brute lunges
   BRUTE_CHARGE_TIME: 0.55,    // and for how long
 
-  // How see-through a wall goes while it is hiding somebody behind it.
-  WALL_FADE: 0.34,
+  // Walls going see-through when somebody is behind them was tried and looked
+  // bad: whole areas turned into a mush of overlapping ghost boxes. Walls stay
+  // solid, and instead the marker over your head is drawn on top of everything
+  // so you can always find yourself. Flip this to true to try it again.
+  WALL_SEE_THROUGH: false,
+  WALL_FADE: 0.42,
 
   // Feel. Turn these up for more chaos.
   SCREEN_SHAKE: 1.0,
@@ -475,6 +480,24 @@ function rollPowerup() {
   return POWERUPS[0];
 }
 
+// ---------------------------------------------------------------------------
+//  FORMS  --  what you can turn yourself into.
+//  You unlock a form by killing one of that kind, so the way to become a brute is
+//  to take a brute down first. Tap a form in the row above your items to morph.
+//  Boss form runs on a timer; the rest stay until you change again.
+// ---------------------------------------------------------------------------
+const FORMS = [
+  { key: 'normal', name: 'NORMAL', size: 1,    spd: 1,    hp: 1,   dmg: 1,   color: '#0d69ac' },
+  { key: 'runner', name: 'RUNNER', size: .92,  spd: 1.55, hp: .8,  dmg: .85, color: '#12a8e8' },
+  { key: 'brute',  name: 'BRUTE',  size: 1.62, spd: .74,  hp: 2.2, dmg: 1.8, color: '#8a5ad8' },
+  { key: 'boss',   name: 'BOSS',   size: 1.85, spd: .92,  hp: 2.5, dmg: 2.6, color: '#ff9f43',
+    timed: true, armor: 0.4 },
+];
+function formByKey(k) {
+  for (const f of FORMS) { if (f.key === k) return f; }
+  return FORMS[0];
+}
+
 function freshUpgrades() {
   return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0,
            biteRes: 1, heal: 1, luck: 1, lifesteal: 0 };
@@ -510,6 +533,7 @@ const PAD = { l: 14, t: 14, r: 14, b: 14 };
 const btn = {};
 let miniRect = { x: 0, y: 0, w: 0, h: 0 };
 let bagRects = [];
+let formRects = [];
 
 function readInsets() {
   if (!probe) return { t: 0, r: 0, b: 0, l: 0 };
@@ -558,6 +582,15 @@ function layout() {
   for (let i = 0; i < TUNE.BAG_SLOTS; i++) {
     bagRects.push({ x: bx + i * (sz + gap), y: by, w: sz, h: sz });
   }
+
+  // The morph row sits just above the items. Same left edge so the two read as
+  // one block of controls.
+  const fw = Math.max(52, Math.min(84, sz * 1.5));
+  const fh = 30;
+  formRects = [];
+  for (let i = 0; i < FORMS.length; i++) {
+    formRects.push({ x: bx + i * (fw + gap), y: by - fh - 10, w: fw, h: fh });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -603,11 +636,18 @@ const WALL_H = 58, CRATE_H = 26;
 // mostly white and stone grey with the odd bright block, so walls now pick a
 // colour from the tile they sit on. Same tile always gets the same colour, so
 // the place looks built rather than randomly repainted every frame.
-const BRICKS = ['#f2f3f5', '#c8c8cb', '#f2f3f5', '#c8c8cb', '#c4281c', '#0d69ac', '#f5cd30'];
+// Mostly white and stone grey with the occasional bright block, which is how a
+// real Roblox build looks. Weighted so neutrals win two thirds of the time.
+const BRICKS = ['#f2f3f5', '#c8c8cb', '#f2f3f5', '#c8c8cb', '#e8e9ec', '#d8d9dc',
+                '#c4281c', '#0d69ac', '#f5cd30'];
 const WALL_COLOR = '#c8c8cb', CRATE_COLOR = '#b07a3c';
+// Colour by AREA rather than by tile. Colouring each tile on its own turned the
+// map into confetti and made it hard to read where anything was. A whole
+// neighbourhood of the map sharing one colour reads as a built structure.
+const BRICK_REGION = 6;
 function brickAt(gx, gy) {
-  // A cheap repeatable hash, so a given tile keeps its colour.
-  const h = (gx * 73856093) ^ (gy * 19349663);
+  const rx = Math.floor(gx / BRICK_REGION), ry = Math.floor(gy / BRICK_REGION);
+  const h = (rx * 73856093) ^ (ry * 19349663);
   return BRICKS[Math.abs(h) % BRICKS.length];
 }
 
@@ -693,12 +733,47 @@ function drawBox(wx, wy, wz, w, d, h, color, alpha) {
   ctx.lineTo(cxT, cyT); ctx.lineTo(dxT, dyT);
   ctx.closePath(); ctx.fill();
 
+  // Seams across both side faces, so a tall wall reads as separate parts stacked
+  // up rather than one flat slab. Roblox walls are built out of stacked bricks and
+  // the joins are part of what you recognise.
+  if (h > TILE * 0.7) {
+    const seams = h > TILE * 1.2 ? [0.34, 0.67] : [0.5];
+    ctx.lineWidth = 1;
+    for (const f of seams) {
+      ctx.strokeStyle = shade(color, -66);
+      ctx.beginPath();
+      ctx.moveTo(dxT, mix(dyT, dyB, f)); ctx.lineTo(cxT, mix(cyT, cyB, f));
+      ctx.lineTo(bxT, mix(byT, byB, f));
+      ctx.stroke();
+      // A thin lit line just under each seam, like the top edge of the brick below.
+      ctx.strokeStyle = shade(color, -6);
+      ctx.beginPath();
+      ctx.moveTo(dxT, mix(dyT, dyB, f) + 1.3); ctx.lineTo(cxT, mix(cyT, cyB, f) + 1.3);
+      ctx.lineTo(bxT, mix(byT, byB, f) + 1.3);
+      ctx.stroke();
+    }
+  }
+
   // A bright bevel along the two top edges nearest the light, which is what
   // makes an edge look like an edge rather than a change of colour.
   ctx.strokeStyle = shade(color, 46);
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.moveTo(dxT, dyT); ctx.lineTo(axT, ayT); ctx.lineTo(bxT, byT);
+  ctx.stroke();
+
+  // An inset line just inside the top face, which reads as the moulded lip you
+  // get on a plastic part.
+  const inx = (axT + cxT) / 2, iny = (ayT + cyT) / 2;
+  const lip = 0.86;
+  ctx.strokeStyle = shade(color, 34);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(mix(inx, axT, lip), mix(iny, ayT, lip));
+  ctx.lineTo(mix(inx, bxT, lip), mix(iny, byT, lip));
+  ctx.lineTo(mix(inx, cxT, lip), mix(iny, cyT, lip));
+  ctx.lineTo(mix(inx, dxT, lip), mix(iny, dyT, lip));
+  ctx.closePath();
   ctx.stroke();
 
   // And a dark seam down the corner facing you, so the two sides read as
@@ -1024,6 +1099,7 @@ function newPlayer() {
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: freshUpgrades(), rageT: 0, speedT: 0,
     points: 0, bossT: 0, size: 1,
+    form: 'normal', unlocked: { normal: true },
   };
 }
 
@@ -1221,11 +1297,52 @@ function dropPowerup(x, y) {
 
 // You have earned it: turn into the boss. Bigger, tougher, hits like a truck,
 // and it wears off after a while so it stays a treat rather than the new normal.
+// Turn into one of the forms you have unlocked. The collision size deliberately
+// does NOT change: a wider body is what used to wedge things in corridors, so a
+// brute-shaped player is only bigger to look at and to hit with.
+function morphTo(key) {
+  const f = formByKey(key);
+  if (!player.unlocked[f.key]) return false;
+  // Boss form has to be paid for every single time. Unlocking it once must not
+  // mean a boss on demand, or being the boss stops being an achievement.
+  if (f.timed && player.form !== 'boss') {
+    if (player.points < TUNE.BOSS_POINTS) return false;
+    player.points -= TUNE.BOSS_POINTS;
+  }
+  const wasBoss = player.form === 'boss';
+  player.form = f.key;
+  player.size = f.size;
+  player.maxhp = (TUNE.PLAYER_HEALTH + player.up.hpAdd) * f.hp;
+  player.hp = Math.min(player.maxhp, Math.max(player.hp, player.maxhp * .6));
+  if (f.timed) {
+    player.bossT = TUNE.BOSS_MODE_TIME;
+  } else if (wasBoss) {
+    player.bossT = 0;
+  }
+  popup(player.x, player.y - 34, f.name, f.color);
+  SFX.turn();
+  addShake(6);
+  spray(player.x, player.y, f.color, 22);
+  return true;
+}
+
+// Killing something teaches you how to become it.
+function unlockFormFrom(e) {
+  const key = e.boss ? 'boss' : (e.type === 'walker' ? 'normal' : e.type);
+  if (!formByKey(key) || player.unlocked[key]) return;
+  if (!FORMS.some(f => f.key === key)) return;
+  player.unlocked[key] = true;
+  popup(player.x, player.y - 48, 'CAN MORPH: ' + formByKey(key).name, formByKey(key).color);
+  SFX.rankup();
+}
+
 // Two ways in. Filling the points bar spends the points. Killing a boss makes you
 // one outright and leaves your points alone, since you did not pay for it.
 function becomeBoss(spendPoints) {
   const already = player.bossT > 0;
   if (spendPoints !== false) player.points = 0;
+  player.unlocked.boss = true;
+  player.form = 'boss';
   player.bossT = TUNE.BOSS_MODE_TIME;
   player.size = TUNE.BOSS_MODE_SIZE;
   player.maxhp = (TUNE.PLAYER_HEALTH + player.up.hpAdd) * TUNE.BOSS_MODE_HP;
@@ -1241,6 +1358,7 @@ function becomeBoss(spendPoints) {
 // Back to normal size once it runs out.
 function endBossMode() {
   player.bossT = 0;
+  player.form = 'normal';
   player.size = 1;
   player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
   player.hp = Math.min(player.hp, player.maxhp);
@@ -1413,6 +1531,15 @@ function onDown(e) {
 
   if (paused) { togglePause(); return; }
 
+  // A form in the morph row.
+  for (let i = 0; i < formRects.length; i++) {
+    if (hit(formRects[i], e.clientX, e.clientY)) {
+      const f = FORMS[i];
+      if (!morphTo(f.key)) SFX.hurt();
+      return;
+    }
+  }
+
   // An item slot. Checked before anything else so a tap on the row never gets
   // taken for steering or swinging.
   for (let i = 0; i < bagRects.length; i++) {
@@ -1580,6 +1707,8 @@ function killEnemy(e, dirAngle) {
     if (Math.random() < TUNE.HEART_CHANCE * player.up.luck) dropHeart(e.x, e.y);
     if (Math.random() < TUNE.POWERUP_CHANCE * player.up.luck) dropPowerup(e.x, e.y);
 
+    unlockFormFrom(e);
+
     if (e.boss) {
       // Take down a boss and you become the boss. No bar to fill, no waiting.
       becomeBoss(false);
@@ -1630,7 +1759,7 @@ function infectEnemy(e) {
 function hurtPlayer(dmg, biteAmount) {
   if (player.invuln > 0) return;
   const armor = Math.min(.85, myRanks()[player.rank].armor + player.up.armorAdd
-    + (player.bossT > 0 ? TUNE.BOSS_MODE_ARMOR : 0));
+    + (formByKey(player.form).armor || 0));
   player.hp -= dmg * (1 - armor);
   player.hurtTimer = TUNE.HEAL_DELAY;
   player.squash = .16;
@@ -1688,8 +1817,8 @@ function tryAttack(who, isPlayer) {
   const up = isPlayer ? player.up : NO_UP;
   const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
   const rageMul = (isPlayer && player.rageT > 0) ? TUNE.RAGE_MULT : 1;
-  const bossMul = (isPlayer && player.bossT > 0) ? TUNE.BOSS_MODE_DMG : 1;
-  const dmg = rk.dmg * up.dmg * streakMul * rageMul * bossMul;
+  const formMul = isPlayer ? formByKey(player.form).dmg : 1;
+  const dmg = rk.dmg * up.dmg * streakMul * rageMul * formMul;
   const reach = rk.reach * up.reach;
   const rate = rk.rate * up.rate;
 
@@ -1774,7 +1903,8 @@ function update(dt) {
   // direction across the tilted world.
   const raw = inputVector();
   const mv = stickToWorld(raw.dx, raw.dy);
-  const speedMul = player.speedT > 0 ? TUNE.SPEED_MULT : 1;
+  const form = formByKey(player.form);
+  const speedMul = (player.speedT > 0 ? TUNE.SPEED_MULT : 1) * form.spd;
   const sp = TUNE.PLAYER_SPEED * player.up.speed * speedMul * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
   // Climb whatever you are pushing against, or fall if you walked off an edge.
@@ -2069,7 +2199,11 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   if (!isPlayer && g.type === 'brute')  { torso = isNoob ? '#8a5ad8' : '#a35ce0'; }
   if (g.boss) { skin = '#ff9f43'; torso = '#8c2f2f'; legs = '#5c2020'; }
   // You, while boss mode is running.
-  if (isPlayer && player.bossT > 0) { skin = '#ffb340'; torso = '#a8332f'; legs = '#6b2424'; }
+  if (isPlayer && player.form !== 'normal') {
+    const f2 = formByKey(player.form);
+    if (f2.key === 'boss') { skin = '#ffb340'; torso = '#a8332f'; legs = '#6b2424'; }
+    else torso = f2.color;
+  }
 
   const s = g.size || 1;
   const bob = Math.sin((g.wob || 0) + (isPlayer ? performance.now() / 130 : 0)) * 1.1;
@@ -2140,6 +2274,11 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   drawBox(cx0 + torsoW / 2, y0 - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
   // Torso.
   drawBox(cx0 - torsoW / 2, y0, z + legH, torsoW, dep, torsoH, torso);
+  // A belt across the bottom of the torso.
+  drawBox(cx0 - torsoW / 2, y0 - .3, z + legH, torsoW, dep + .3, 2.6 * s, shade(torso, -34));
+  // Shoulders sitting in the shadow of the head.
+  drawBox(cx0 - torsoW / 2, y0 + .5, z + legH + torsoH - 1.2, torsoW, dep - 1,
+          1.2 * s, shade(torso, -22));
   // A collar where the torso meets the head.
   drawBox(cx0 - torsoW * .3, y0 + .8, z + legH + torsoH - 1.4, torsoW * .6, dep - 1.6,
           2.4 * s, shade(torso, 24));
@@ -2201,22 +2340,7 @@ function drawGuy(g, side, rankIdx, isPlayer) {
 
   ctx.globalAlpha = 1;
 
-  // An arrow bobbing over your head, so you can find yourself even behind a wall.
-  if (isPlayer) {
-    const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
-    const ax = isoX(g.x, g.y);
-    const ay = isoY(g.x, g.y, z + legH + torsoH + headH)
-             - 11 - Math.abs(Math.sin(performance.now() / 260)) * 3;
-    ctx.fillStyle = ring;
-    ctx.beginPath();
-    ctx.moveTo(ax, ay + 7);
-    ctx.lineTo(ax - 5.5, ay);
-    ctx.lineTo(ax + 5.5, ay);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  if (!isPlayer && g.hp < g.maxhp) {
+    if (!isPlayer && g.hp < g.maxhp) {
     const bw2 = g.boss ? 34 : 20, bh = g.boss ? 4 : 2.8;
     const bx = isoX(g.x, g.y) - bw2 / 2;
     const by = isoY(g.x, g.y, z + legH + torsoH + headH) - 7;
@@ -2264,6 +2388,22 @@ function drawFloor() {
       ctx.beginPath();
       ctx.ellipse(cx, cy - 1.5, w * .34, h * .34, 0, 0, 6.283);
       ctx.fill();
+
+      // A few tufts of grass, in the same place every time so the ground does
+      // not shimmer. Close up, plain flat colour is what looks cheapest.
+      const tuft = (gx * 374761393) ^ (gy * 668265263);
+      const t1 = (Math.abs(tuft) % 100) / 100, t2 = (Math.abs(tuft >> 7) % 100) / 100;
+      ctx.fillStyle = 'rgba(40,62,26,0.20)';
+      ctx.beginPath();
+      ctx.ellipse(cx + (t1 - .5) * w * 1.1, cy + (t2 - .5) * h * 1.1, 2.4, 1.3, 0, 0, 6.283);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx + (t2 - .5) * w * 1.2, cy + (t1 - .5) * h * .9, 1.9, 1.1, 0, 0, 6.283);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(190,225,140,0.16)';
+      ctx.beginPath();
+      ctx.ellipse(cx - (t1 - .5) * w, cy - (t2 - .5) * h, 2.1, 1.1, 0, 0, 6.283);
+      ctx.fill();
     }
   }
 }
@@ -2303,6 +2443,44 @@ function drawPowerupAt(p) {
   ctx.fillText(p.name.charAt(0), tx, ty);
 }
 
+// Slats across the lid of a crate, so it reads as a wooden box rather than a
+// plain brown cube.
+function drawCrateLid(wx, wy, h) {
+  const z = h;
+  ctx.strokeStyle = 'rgba(90,58,24,0.55)';
+  ctx.lineWidth = 1.2;
+  for (const f of [0.33, 0.66]) {
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx + TILE * f, wy), isoY(wx + TILE * f, wy, z));
+    ctx.lineTo(isoX(wx + TILE * f, wy + TILE), isoY(wx + TILE * f, wy + TILE, z));
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx, wy + TILE * f), isoY(wx, wy + TILE * f, z));
+    ctx.lineTo(isoX(wx + TILE, wy + TILE * f), isoY(wx + TILE, wy + TILE * f, z));
+    ctx.stroke();
+  }
+}
+
+// The marker over your head, drawn after everything else so no wall can hide it.
+// This is what replaced making walls see-through: you can always find yourself,
+// and the world stays solid.
+function drawPlayerMarker() {
+  const ring = player.side === NOOB ? '#ffd84d' : '#8ecf4a';
+  const s2 = player.size || 1;
+  const top = (player.z || 0) + (15.2 + 15.2 + 11.4) * s2;
+  const ax = isoX(player.x, player.y);
+  const ay = isoY(player.x, player.y, top) - 12
+           - Math.abs(Math.sin(performance.now() / 260)) * 3.5;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(ax, ay + 9.5); ctx.lineTo(ax - 7, ay + 1); ctx.lineTo(ax + 7, ay + 1);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = ring;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay + 8); ctx.lineTo(ax - 6, ay); ctx.lineTo(ax + 6, ay);
+  ctx.closePath(); ctx.fill();
+}
+
 function drawOne(o) {
   if (o.__pow) drawPowerupAt(o);
   else if (o.__heart) drawHeartAt(o);
@@ -2328,9 +2506,9 @@ function buildOccludees() {
       pad: pad,
     });
   };
-  add(player, 30);
-  for (const e of enemies) { if (e.hp > 0) add(e, 26 * (e.size || 1)); }
-  for (const p of powerups) add(p, 16);
+  add(player, 12);
+  for (const e of enemies) { if (e.hp > 0) add(e, 11 * (e.size || 1)); }
+  for (const p of powerups) add(p, 7);
 }
 
 // Would this block be covering somebody standing behind it? Blocks are opaque by
@@ -2345,8 +2523,12 @@ function hidesSomeone(wx, wy, h) {
   for (const o of _occludees) {
     // Only things BEHIND the block can be hidden by it.
     if (o.d >= blockD) continue;
+    // And only blocks standing close by. Without this, a block far across the
+    // map that merely happens to line up on screen also faded, which turned
+    // whole areas into a mush of overlapping see-through boxes.
+    if (Math.abs((o.d) - blockD) > TILE * 3) continue;
     if (o.sx < left - o.pad || o.sx > right + o.pad) continue;
-    if (o.sy < top - o.pad * 1.6 || o.sy > bottom + o.pad * .4) continue;
+    if (o.sy < top - o.pad || o.sy > bottom + o.pad * .3) continue;
     return true;
   }
   return false;
@@ -2378,12 +2560,48 @@ function drawStanding() {
       const wx = gx * TILE, wy = gy * TILE;
       if (!onScreen(wx + TILE / 2, wy + TILE / 2)) continue;
       const h = t === WALL ? WALL_H : CRATE_H;
-      const fade = hidesSomeone(wx, wy, h) ? TUNE.WALL_FADE : undefined;
+      const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
+        ? TUNE.WALL_FADE : undefined;
       const col = t === WALL ? brickAt(gx, gy) : CRATE_COLOR;
       drawBox(wx, wy, 0, TILE, TILE, h, col, fade);
+      if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
     }
   }
   while (si < _standing.length) drawOne(_standing[si++]);
+  drawPlayerMarker();
+}
+
+// The morph row. Forms you have not unlocked yet are shown but greyed out, so it
+// is obvious there is something to work towards rather than just being absent.
+function drawMorphRow() {
+  for (let i = 0; i < formRects.length; i++) {
+    const r = formRects[i];
+    const f = FORMS[i];
+    const have = !!player.unlocked[f.key];
+    const isNow = player.form === f.key;
+    const affordable = !f.timed || isNow || player.points >= TUNE.BOSS_POINTS;
+    const usable = have && affordable;
+
+    ctx.fillStyle = isNow ? 'rgba(255,216,77,0.22)'
+      : usable ? 'rgba(24,30,42,0.8)' : 'rgba(16,20,28,0.38)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = isNow ? '#ffd84d' : usable ? f.color : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = isNow ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = usable ? (isNow ? '#ffd84d' : f.color) : 'rgba(238,242,248,0.3)';
+    ctx.font = '800 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText(f.name, r.x + r.w / 2, r.y + 13);
+
+    ctx.font = '700 9px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(238,242,248,0.4)';
+    if (!have) ctx.fillText('kill one', r.x + r.w / 2, r.y + 24);
+    else if (f.timed && isNow) ctx.fillText(player.bossT.toFixed(1) + 's', r.x + r.w / 2, r.y + 24);
+    else if (f.timed) ctx.fillText(TUNE.BOSS_POINTS + ' pts', r.x + r.w / 2, r.y + 24);
+    else if (isNow) ctx.fillText('active', r.x + r.w / 2, r.y + 24);
+  }
+  ctx.textAlign = 'left';
 }
 
 // The item row. Empty slots stay visible so it is obvious there is somewhere for
@@ -2616,6 +2834,7 @@ function drawHUD() {
     ctx.fillText(streak + ' STREAK', VW / 2, PAD.t + 51);
   }
 
+  drawMorphRow();
   drawHotbar();
   drawMinimap();
 
