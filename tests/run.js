@@ -572,7 +572,8 @@ let blockedPair = null;
 for (let gy = 2; gy < G.GH - 2 && !blockedPair; gy++) {
   for (let gx = 2; gx < G.GW - 2 && !blockedPair; gx++) {
     if (G.grid[gy][gx] !== 0) continue;
-    if (G.grid[gy][gx + 1] === 0) continue;
+    // Must be a wall, not a door: a door is meant to be see-through when open.
+    if (G.grid[gy][gx + 1] !== 1) continue;
     if (G.grid[gy][gx + 2] !== 0) continue;
     blockedPair = [(gx + 0.5) * G.TILE, (gy + 0.5) * G.TILE,
                    (gx + 2.5) * G.TILE, (gy + 0.5) * G.TILE];
@@ -2097,7 +2098,7 @@ ok('a part never reaches the outline or the flat faces at all', (() => {
   // Stronger than skipping the stroke: a part branches off before any of the box
   // drawing, so there is no outline and no flat face to darken it.
   const i = src.indexOf('drawRoundPart([[ax, ay]');
-  const j = src.indexOf('const sides = [];');
+  const j = src.indexOf('Every side is drawn, always.');
   const k = src.indexOf('ctx.strokeStyle = shade(color, -44)');
   return i !== -1 && j !== -1 && k !== -1 && i < j && i < k;
 })(), 'it returns before any of it');
@@ -2743,7 +2744,35 @@ ok('starting over offers both sides', (() => {
   return hasRestart;
 })());
 ok('the two side buttons use the theme names, not hardcoded ones',
-  src.indexOf("label: 'As a ' + TH().aName") !== -1);
+  src.indexOf("label: 'Start as ' + TH().aName") !== -1);
+ok('starting over also picks which war it is', (() => {
+  // The theme could only be chosen on the title screen, so from inside a game the only
+  // sides on offer were whichever pair the current theme happened to be using.
+  G.applyTheme('noobs');
+  G.reset();
+  G.drawPause();
+  const before = G.pauseRects.length;
+  // Reveal the choices the way tapping Start over does.
+  const restart = G.pauseRects.filter(r => r.key === 'restart').length;
+  return restart === 1 && before > 0
+    && src.indexOf("key: 'thWw2'") !== -1 && src.indexOf("key: 'thNoobs'") !== -1;
+})());
+ok('switching the war relabels the sides instead of starting a game', (() => {
+  G.applyTheme('noobs');
+  const a1 = G.TH().aName, b1 = G.TH().bName;
+  G.applyTheme('ww2');
+  const a2 = G.TH().aName, b2 = G.TH().bName;
+  G.applyTheme('noobs');
+  return a1 !== a2 && b1 !== b2;
+})(), 'Noob and Zombie become Allied and Axis');
+ok('picking the war does not itself end the run', (() => {
+  // Its branch returns before it ever reaches reset(), so only a side button can
+  // start a game.
+  const i2 = src.indexOf("if (r.key === 'thNoobs' || r.key === 'thWw2') {");
+  if (i2 === -1) return false;
+  const branch = src.slice(i2, src.indexOf("if (r.key === 'asA'", i2));
+  return branch.indexOf('reset()') === -1 && branch.indexOf('return;') !== -1;
+})(), 'you still have to pick a side');
 ok('a fresh game can be started on either side', (() => {
   G.startSideFor(1);          // the zombie side
   G.reset();

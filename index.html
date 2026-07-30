@@ -370,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v43';
+const VERSION = 'v45';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1919,16 +1919,29 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
 
   // Each side, with how far off it is so they can be drawn back to front, and the
   // direction it faces so it can be lit correctly however the box is turned.
+  // Every side is drawn, always.
+  //
+  // Sides used to be skipped when a wall stood against them, on the reasoning that a
+  // buried face cannot be seen. That held while every wall filled its whole square.
+  // Once inner walls became thin bars it stopped holding: a thin bar meeting the
+  // full-thickness boundary leaves a step, and the boundary's face at that step was
+  // being skipped because it had a wall against it, so you could see straight through
+  // the join to the grass outside. A buried face costs one fill and is invisible; a
+  // missing one is a hole in the world.
+  //
+  // `open` is still used, but only for deciding which edges get an outline, which is
+  // the thing that actually made a run of wall read as a row of separate cubes.
   const op = (open === undefined) ? OPEN_ALL : open;
-  const sides = [];
-  if (op & 1) sides.push({ a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
-    p: [ax, ay, bx, by, bxB, byB, axB, ayB] });
-  if (op & 2) sides.push({ a: rot, d: viewDepth(mBC[0], mBC[1], zb),
-    p: [bx, by, cx, cy, cxB, cyB, bxB, byB] });
-  if (op & 4) sides.push({ a: rot + Math.PI / 2, d: viewDepth(mCD[0], mCD[1], zb),
-    p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] });
-  if (op & 8) sides.push({ a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
-    p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] });
+  const sides = [
+    { a: rot - Math.PI / 2, d: viewDepth(mAB[0], mAB[1], zb),
+      p: [ax, ay, bx, by, bxB, byB, axB, ayB] },
+    { a: rot, d: viewDepth(mBC[0], mBC[1], zb),
+      p: [bx, by, cx, cy, cxB, cyB, bxB, byB] },
+    { a: rot + Math.PI / 2, d: viewDepth(mCD[0], mCD[1], zb),
+      p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] },
+    { a: rot + Math.PI, d: viewDepth(mDA[0], mDA[1], zb),
+      p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] },
+  ];
   sides.sort((p1, p2) => p2.d - p1.d);
 
   const mix = (ta, tb, k) => ta + (tb - ta) * k;
@@ -1946,11 +1959,18 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
     ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
     ctx.closePath(); ctx.fill();
 
-    // Darker towards the ground, so a face reads as light falling across it
-    // rather than a flat panel of colour.
+    // Darker towards the ground, so a face reads as light falling across it rather
+    // than a flat panel of colour.
+    //
+    // Both coordinates have to be interpolated down the edge, not just the height.
+    // Taking the x from the top corner and only sliding the y down was fine looking
+    // straight on, where a vertical edge is vertical on screen. Under perspective it
+    // is not, so the band came out skewed and every wall looked as though it slanted
+    // outwards halfway down, and the skew left slivers of nothing behind it.
     ctx.fillStyle = shade(color, tone - 12);
     ctx.beginPath();
-    ctx.moveTo(q[0], mix(q[1], q[7], band)); ctx.lineTo(q[2], mix(q[3], q[5], band));
+    ctx.moveTo(mix(q[0], q[6], band), mix(q[1], q[7], band));
+    ctx.lineTo(mix(q[2], q[4], band), mix(q[3], q[5], band));
     ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
     ctx.closePath(); ctx.fill();
 
@@ -1962,7 +1982,9 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
       for (const f of seams) {
         ctx.strokeStyle = shade(color, tone - 26);
         ctx.beginPath();
-        ctx.moveTo(q[0], mix(q[1], q[7], f)); ctx.lineTo(q[2], mix(q[3], q[5], f));
+        // Same correction as the band above: slide along both edges, not just down.
+        ctx.moveTo(mix(q[0], q[6], f), mix(q[1], q[7], f));
+        ctx.lineTo(mix(q[2], q[4], f), mix(q[3], q[5], f));
         ctx.stroke();
       }
     }
@@ -3380,6 +3402,14 @@ function onDown(e) {
         SFX.ui();
         return;
       }
+      if (r.key === 'thNoobs' || r.key === 'thWw2') {
+        // Switching the war relabels the side buttons underneath, and does not start
+        // anything: you still have to pick a side.
+        applyTheme(r.key === 'thWw2' ? 'ww2' : 'noobs');
+        paintThemeButtons();
+        SFX.ui();
+        return;
+      }
       if (r.key === 'asA' || r.key === 'asB') {
         startSide = (r.key === 'asA') ? NOOB : ZOMB;
         confirmRestart = false;
@@ -4495,6 +4525,8 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
     flip: flip,
     phase: g.walk || 0,
     moving: !!g.moving,
+    // swing counts down from a fraction of a second, so it is turned into nought to one.
+    swing: Math.max(0, Math.min(1, (g.swing || 0) / 0.16)),
     alpha: alpha,
   });
 
@@ -5347,7 +5379,7 @@ function drawStanding() {
       const t = grid[gy][gx];
       if (t === 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = topHeightAt(gx, gy);
+      const h = (t === DOOR) ? tileKind(DOOR).h : topHeightAt(gx, gy);
       if (!boxOnScreen(wx, wy, h)) continue;
       slot(viewDepth(wx + TILE / 2, wy + TILE / 2, 0), 0, gx, gy, t);
     }
@@ -5366,7 +5398,11 @@ function drawStanding() {
     if (o.k === 0) {
       const gx = o.a, gy = o.b, t = o.c;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = topHeightAt(gx, gy);
+      // How tall to DRAW this tile, which for a door is not the same as how tall it is
+      // to walk into. An open door is zero high so walking through needs no special
+      // case anywhere, but it still has to be drawn at full height or the leaves
+      // collapse flat onto the ground the moment it opens, which is what they did.
+      const h = (t === DOOR) ? tileKind(DOOR).h : topHeightAt(gx, gy);
       const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
         ? TUNE.WALL_FADE : undefined;
       const kind = tileKind(t);
@@ -5940,29 +5976,54 @@ function drawPause() {
   // Starting over offers the two sides. Picking one is the confirmation, so it
   // cannot happen by accident and you get to choose who you are at the same time.
   if (confirmRestart) {
-    const sides = [
-      { key: 'asA', label: 'As a ' + TH().aName, tint: '#7fc7ff' },
-      { key: 'asB', label: 'As a ' + TH().bName, tint: '#8ecf4a' },
+    // Two rows. The first picks which war it is, because the theme could only be
+    // chosen on the title screen before, so from in here the only sides on offer were
+    // whichever pair the current theme happened to be using. The second picks your
+    // side, and its labels follow whatever the first row is set to.
+    const themeRow = [
+      { key: 'thNoobs', label: 'Noobs vs Zombies', on: theme === 'noobs' },
+      { key: 'thWw2',   label: 'Allied vs Axis',   on: theme === 'ww2' },
     ];
-    const sy = menuY + 42;
-    const sw2 = Math.min(170, (VW - 60) / 2);
-    const stot = sides.length * sw2 + bgap2;
+    const sy = menuY + 40;
+    const sw2 = Math.min(178, (VW - 60) / 2);
+    const stot = 2 * sw2 + bgap2;
+
+    themeRow.forEach((th, i) => {
+      const x = VW / 2 - stot / 2 + i * (sw2 + bgap2);
+      ctx.fillStyle = th.on ? 'rgba(255,216,77,0.16)' : 'rgba(24,30,42,0.94)';
+      ctx.fillRect(x, sy, sw2, 30);
+      ctx.strokeStyle = th.on ? '#ffd84d' : 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = th.on ? 2 : 1;
+      ctx.strokeRect(x, sy, sw2, 30);
+      ctx.fillStyle = th.on ? '#ffd84d' : 'rgba(238,242,248,0.7)';
+      ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(th.label, x + sw2 / 2, sy + 20);
+      pauseRects.push({ x: x, y: sy, w: sw2, h: 30, key: th.key });
+    });
+
+    const sides = [
+      { key: 'asA', label: 'Start as ' + TH().aName, tint: '#7fc7ff' },
+      { key: 'asB', label: 'Start as ' + TH().bName, tint: '#8ecf4a' },
+    ];
+    const sy2 = sy + 38;
     sides.forEach((sd, i) => {
       const x = VW / 2 - stot / 2 + i * (sw2 + bgap2);
       ctx.fillStyle = 'rgba(24,30,42,0.94)';
-      ctx.fillRect(x, sy, sw2, 32);
+      ctx.fillRect(x, sy2, sw2, 32);
       ctx.strokeStyle = sd.tint;
       ctx.lineWidth = 1.4;
-      ctx.strokeRect(x, sy, sw2, 32);
+      ctx.strokeRect(x, sy2, sw2, 32);
       ctx.fillStyle = sd.tint;
       ctx.font = '800 13px -apple-system, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(sd.label, x + sw2 / 2, sy + 21);
-      pauseRects.push({ x: x, y: sy, w: sw2, h: 32, key: sd.key });
+      ctx.fillText(sd.label, x + sw2 / 2, sy2 + 21);
+      pauseRects.push({ x: x, y: sy2, w: sw2, h: 32, key: sd.key });
     });
+
     ctx.fillStyle = 'rgba(238,242,248,0.42)';
     ctx.font = '700 11px -apple-system, system-ui, sans-serif';
-    ctx.fillText('this ends the run you are in', VW / 2, sy + 48);
+    ctx.fillText('picking a side ends the run you are in', VW / 2, sy2 + 48);
   } else {
     ctx.fillStyle = 'rgba(238,242,248,0.42)';
     ctx.font = '700 12px -apple-system, system-ui, sans-serif';
@@ -6204,6 +6265,10 @@ function paintFigure(c, cx, footY, H, look, o) {
   // swinging towards the camera is not visible and just looks like a twitch.
   const ph = opt.phase || 0;
   const walking = !!opt.moving;
+  // How far through a swing or a shot he is, from one down to nothing. The arm and the
+  // weapon both move with it, so using something looks like using it rather than the
+  // weapon just sitting in his hand while the world takes damage.
+  const act = Math.max(0, Math.min(1, opt.swing || 0));
   const sw = walking ? Math.sin(ph) : 0;
   const sw2 = walking ? Math.sin(ph + Math.PI) : 0;
   const lift = walking ? Math.abs(Math.cos(ph)) * 1.6 : 0;
@@ -6305,11 +6370,27 @@ function paintFigure(c, cx, footY, H, look, o) {
 
   if (look.hatKind) paintHat(c, cx, Y(headTop), headW, u, look.hatKind, look.hatCol, view);
 
-  // ---- what he is carrying ----
+  // ---- what he is carrying, and what he is doing with it ----
   if (look.weapon && look.weapon.kind !== 'fists') {
-    const hx = side ? cx + 7 * u : cx + 15 * u;
-    const hy = Y(52 - lift * .5) + (side ? sw * 2 * u : 0);
-    paintWeapon(c, look.weapon, hx, hy, u * 1.05, true);
+    // A swing throws the arm forward and up, and tips the weapon over with it. A
+    // thrown thing leaves the hand entirely, which the caller says by passing throwing.
+    const reach = act * 9 * u;
+    const hx = (side ? cx + 7 * u : cx + 15 * u) + reach;
+    const hy = Y(52 - lift * .5) + (side ? sw * 2 * u : 0) - act * 7 * u;
+    c.save();
+    c.translate(hx, hy);
+    c.rotate(-act * 0.9);
+    paintWeapon(c, look.weapon, 0, 0, u * 1.05, true);
+    c.restore();
+  }
+
+  // The punching arm, when there is nothing in his hands. Without this a bare fisted
+  // character had no attack at all to look at.
+  if ((!look.weapon || look.weapon.kind === 'fists') && act > 0.02) {
+    const fx = (side ? cx + 8 * u : cx + 15 * u) + act * 11 * u;
+    const fy = Y(54 - lift * .5) - act * 5 * u;
+    limbOn(c, fx - 4 * u, fy, 8 * u, 11 * u, skin, 2.6 * u);
+    limbOn(c, fx - 4.4 * u, fy + 8 * u, 8.8 * u, 7 * u, shade(skin, -34), 2.8 * u);
   }
 
   c.restore();

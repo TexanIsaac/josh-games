@@ -6,7 +6,7 @@
 //
 // Bump CACHE when the game changes. The old cache is thrown away on activate, so a
 // new version never gets served stale files from an old one.
-const CACHE = 'zombie-noobs-v43';
+const CACHE = 'zombie-noobs-v45';
 
 const FILES = [
   './',
