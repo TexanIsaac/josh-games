@@ -148,7 +148,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v19';
+const VERSION = 'v20';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -361,6 +361,13 @@ const TUNE = {
   RANGED_FAR: 310,            // and closes in if you are further than this
   BRUTE_CHARGE_SPEED: 2.7,    // how fast a brute lunges
   BRUTE_CHARGE_TIME: 0.55,    // and for how long
+
+  // A brute is not just a big slow one any more. When it lands a hit it slams the
+  // ground, so standing anywhere near it hurts, and when it finally goes down it
+  // splits into two runners, so killing one makes you an immediate new problem.
+  BRUTE_SLAM_RADIUS: 96,
+  BRUTE_SLAM_DMG: 26,
+  BRUTE_SPLIT: 2,
 
   // Walls going see-through when somebody is behind them was tried and looked
   // bad: whole areas turned into a mush of overlapping ghost boxes. Walls stay
@@ -787,109 +794,112 @@ function stickToWorld(sdx, sdy) {
   return { dx: dx / len, dy: dy / len };
 }
 
-// One box, drawn as three faces: the two sides facing the camera, then the top.
-// Sides first and top last means the box always looks solid.
+// One box.
 //
-// Each side is shaded twice, lighter at the top and darker towards the ground,
-// which reads as light falling across a surface instead of a flat panel of
-// colour. Flat single-tone faces are most of what makes blocks look cheap.
+// This used to draw two hardcoded side faces, chosen back when the camera could
+// only ever look from one direction. Once the camera could be turned, those two
+// were often the BACK of the box, so you were looking straight through the front
+// of it: walls turned into hollow shells with open ends and characters came apart
+// into floating plates. All four sides are drawn now, furthest first, so a box is
+// solid from every angle.
+//
+// The shading is fixed to compass directions rather than to the screen, so the
+// light stays where it is when the camera swings round instead of sliding across
+// the world.
+const FACE_SHADE = { n: -26, e: -14, s: -54, w: -42 };
+
 function drawBox(wx, wy, wz, w, d, h, color, alpha) {
   const x0 = wx, y0 = wy, x1 = wx + w, y1 = wy + d;
   const zt = wz + h, zb = wz;
   if (alpha !== undefined) ctx.globalAlpha = alpha;
 
-  const axT = isoX(x0, y0, zt), ayT = isoY(x0, y0, zt);
-  const bxT = isoX(x1, y0, zt), byT = isoY(x1, y0, zt);
-  const cxT = isoX(x1, y1, zt), cyT = isoY(x1, y1, zt);
-  const dxT = isoX(x0, y1, zt), dyT = isoY(x0, y1, zt);
-  const bxB = bxT, byB = isoY(x1, y0, zb);
-  const cxB = cxT, cyB = isoY(x1, y1, zb);
-  const dxB = dxT, dyB = isoY(x0, y1, zb);
+  // Top corners, then the same corners down at the base.
+  const ax = isoX(x0, y0, zt), ay = isoY(x0, y0, zt);
+  const bx = isoX(x1, y0, zt), by = isoY(x1, y0, zt);
+  const cx = isoX(x1, y1, zt), cy = isoY(x1, y1, zt);
+  const dx = isoX(x0, y1, zt), dy = isoY(x0, y1, zt);
+  const axB = isoX(x0, y0, zb), ayB = isoY(x0, y0, zb);
+  const bxB = isoX(x1, y0, zb), byB = isoY(x1, y0, zb);
+  const cxB = isoX(x1, y1, zb), cyB = isoY(x1, y1, zb);
+  const dxB = isoX(x0, y1, zb), dyB = isoY(x0, y1, zb);
 
-  // How far down the face the light gives out.
+  // The four sides, each with how far away it is so they can be drawn back first.
+  const sides = [
+    { k: 'n', d: viewDepth((x0 + x1) / 2, y0, zb),
+      p: [ax, ay, bx, by, bxB, byB, axB, ayB] },
+    { k: 'e', d: viewDepth(x1, (y0 + y1) / 2, zb),
+      p: [bx, by, cx, cy, cxB, cyB, bxB, byB] },
+    { k: 's', d: viewDepth((x0 + x1) / 2, y1, zb),
+      p: [cx, cy, dx, dy, dxB, dyB, cxB, cyB] },
+    { k: 'w', d: viewDepth(x0, (y0 + y1) / 2, zb),
+      p: [dx, dy, ax, ay, axB, ayB, dxB, dyB] },
+  ];
+  sides.sort((p1, p2) => p2.d - p1.d);
+
   const mix = (ta, tb, k) => ta + (tb - ta) * k;
   const band = 0.55;
+  const tall = h > TILE * 0.7;
+  const seams = h > TILE * 1.2 ? [0.34, 0.67] : [0.5];
 
-  // Left side, the one in most shadow, lighter at the top than the bottom.
-  ctx.fillStyle = shade(color, -44);
-  ctx.beginPath();
-  ctx.moveTo(dxT, dyT); ctx.lineTo(cxT, cyT);
-  ctx.lineTo(cxB, cyB); ctx.lineTo(dxB, dyB);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = shade(color, -62);
-  ctx.beginPath();
-  ctx.moveTo(dxT, mix(dyT, dyB, band)); ctx.lineTo(cxT, mix(cyT, cyB, band));
-  ctx.lineTo(cxB, cyB); ctx.lineTo(dxB, dyB);
-  ctx.closePath(); ctx.fill();
+  for (const side of sides) {
+    const q = side.p;
+    const tone = FACE_SHADE[side.k];
+    ctx.fillStyle = shade(color, tone);
+    ctx.beginPath();
+    ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]);
+    ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
+    ctx.closePath(); ctx.fill();
 
-  // Right side, catching more light.
-  ctx.fillStyle = shade(color, -18);
-  ctx.beginPath();
-  ctx.moveTo(bxT, byT); ctx.lineTo(cxT, cyT);
-  ctx.lineTo(cxB, cyB); ctx.lineTo(bxB, byB);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = shade(color, -38);
-  ctx.beginPath();
-  ctx.moveTo(bxT, mix(byT, byB, band)); ctx.lineTo(cxT, mix(cyT, cyB, band));
-  ctx.lineTo(cxB, cyB); ctx.lineTo(bxB, byB);
-  ctx.closePath(); ctx.fill();
+    // Darker towards the ground, so a face reads as light falling across it
+    // rather than a flat panel of colour.
+    ctx.fillStyle = shade(color, tone - 18);
+    ctx.beginPath();
+    ctx.moveTo(q[0], mix(q[1], q[7], band)); ctx.lineTo(q[2], mix(q[3], q[5], band));
+    ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
+    ctx.closePath(); ctx.fill();
 
-  // Top face, fully lit.
-  ctx.fillStyle = shade(color, 16);
-  ctx.beginPath();
-  ctx.moveTo(axT, ayT); ctx.lineTo(bxT, byT);
-  ctx.lineTo(cxT, cyT); ctx.lineTo(dxT, dyT);
-  ctx.closePath(); ctx.fill();
-
-  // Seams across both side faces, so a tall wall reads as separate parts stacked
-  // up rather than one flat slab. Roblox walls are built out of stacked bricks and
-  // the joins are part of what you recognise.
-  if (h > TILE * 0.7) {
-    const seams = h > TILE * 1.2 ? [0.34, 0.67] : [0.5];
-    ctx.lineWidth = 1;
-    for (const f of seams) {
-      ctx.strokeStyle = shade(color, -66);
-      ctx.beginPath();
-      ctx.moveTo(dxT, mix(dyT, dyB, f)); ctx.lineTo(cxT, mix(cyT, cyB, f));
-      ctx.lineTo(bxT, mix(byT, byB, f));
-      ctx.stroke();
-      // A thin lit line just under each seam, like the top edge of the brick below.
-      ctx.strokeStyle = shade(color, -6);
-      ctx.beginPath();
-      ctx.moveTo(dxT, mix(dyT, dyB, f) + 1.3); ctx.lineTo(cxT, mix(cyT, cyB, f) + 1.3);
-      ctx.lineTo(bxT, mix(byT, byB, f) + 1.3);
-      ctx.stroke();
+    // Seams, so a tall wall reads as separate parts stacked up rather than one
+    // slab. Roblox walls are built of stacked bricks and the joins are part of
+    // what you recognise.
+    if (tall) {
+      ctx.lineWidth = 1;
+      for (const f of seams) {
+        ctx.strokeStyle = shade(color, tone - 26);
+        ctx.beginPath();
+        ctx.moveTo(q[0], mix(q[1], q[7], f)); ctx.lineTo(q[2], mix(q[3], q[5], f));
+        ctx.stroke();
+      }
     }
   }
 
-  // A bright bevel along the two top edges nearest the light, which is what
-  // makes an edge look like an edge rather than a change of colour.
-  ctx.strokeStyle = shade(color, 46);
-  ctx.lineWidth = 1.4;
+  // Top face last, so it always sits on top of the sides.
+  ctx.fillStyle = shade(color, 16);
   ctx.beginPath();
-  ctx.moveTo(dxT, dyT); ctx.lineTo(axT, ayT); ctx.lineTo(bxT, byT);
-  ctx.stroke();
+  ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  ctx.lineTo(cx, cy); ctx.lineTo(dx, dy);
+  ctx.closePath(); ctx.fill();
 
-  // An inset line just inside the top face, which reads as the moulded lip you
-  // get on a plastic part.
-  const inx = (axT + cxT) / 2, iny = (ayT + cyT) / 2;
+  // A moulded lip just inside the top, which is what a plastic part has.
+  const inx = (ax + cx) / 2, iny = (ay + cy) / 2;
   const lip = 0.86;
-  ctx.strokeStyle = shade(color, 34);
+  ctx.strokeStyle = shade(color, 36);
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(mix(inx, axT, lip), mix(iny, ayT, lip));
-  ctx.lineTo(mix(inx, bxT, lip), mix(iny, byT, lip));
-  ctx.lineTo(mix(inx, cxT, lip), mix(iny, cyT, lip));
-  ctx.lineTo(mix(inx, dxT, lip), mix(iny, dyT, lip));
+  ctx.moveTo(mix(inx, ax, lip), mix(iny, ay, lip));
+  ctx.lineTo(mix(inx, bx, lip), mix(iny, by, lip));
+  ctx.lineTo(mix(inx, cx, lip), mix(iny, cy, lip));
+  ctx.lineTo(mix(inx, dx, lip), mix(iny, dy, lip));
   ctx.closePath();
   ctx.stroke();
 
-  // And a dark seam down the corner facing you, so the two sides read as
-  // separate planes instead of blending together.
-  ctx.strokeStyle = shade(color, -70);
+  // And a dark outline right round the top, so blocks read as separate pieces
+  // butted together instead of merging into one mass.
+  ctx.strokeStyle = shade(color, -62);
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(cxT, cyT); ctx.lineTo(cxB, cyB);
+  ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  ctx.lineTo(cx, cy); ctx.lineTo(dx, dy);
+  ctx.closePath();
   ctx.stroke();
 
   if (alpha !== undefined) ctx.globalAlpha = 1;
@@ -1007,6 +1017,22 @@ const CLIMB_SPEED = 62;     // how fast you haul yourself up
 const FALL_SPEED = 260;     // and how fast you come down
 const STEP_UP = 2;          // height difference small enough to just walk over
 
+// Is this point on the wall that runs round the outside of the map?
+function borderAt(px, py) {
+  const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
+  if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true;
+  return isBorder(gx, gy);
+}
+
+// The same question for a whole body rather than a single point. The height check
+// looks at a box, so the boundary check has to look at the same box, otherwise a
+// corner of the body can reach the boundary while its middle has not and things
+// creep a little way up the outside wall.
+function borderNear(px, py, r) {
+  return borderAt(px - r, py - r) || borderAt(px + r, py - r)
+      || borderAt(px - r, py + r) || borderAt(px + r, py + r);
+}
+
 // How high the solid stuff is at a point. Off the edge of the map counts as an
 // unclimbably tall wall so nothing can get out.
 function tileTopAt(px, py) {
@@ -1090,6 +1116,10 @@ function updateHeight(e, pushX, pushY, dt) {
     const len = Math.hypot(pushX, pushY) || 1;
     const ax = e.x + (pushX / len) * (e.r + 4);
     const ay = e.y + (pushY / len) * (e.r + 4);
+    // The wall round the outside cannot be climbed. Without this, anything could
+    // haul itself up onto the boundary and walk along the top of it, which looked
+    // like people wandering off into the sky.
+    if (borderNear(ax, ay, e.r * 0.5)) { e.climbing = false; return; }
     const ahead = topUnder(ax, ay, e.r * 0.5);
     if (ahead > e.z + STEP_UP) {
       // Hauling yourself up the face of it.
@@ -1839,6 +1869,24 @@ function hurtEnemy(e, dmg, fromX, fromY, shoveMul) {
 
 function killEnemy(e, dirAngle) {
   e.hp = 0;
+
+  // A brute splits into two runners when it dies, so putting one down hands you a
+  // fresh pair of fast ones instead of a moment of peace.
+  if (e.type === 'brute' && !e.boss && !e.split && enemies.length < TUNE.ENEMY_MAX_ON_SCREEN + 4) {
+    for (let i = 0; i < TUNE.BRUTE_SPLIT; i++) {
+      spawnEnemy(e.side, false);
+      const kid = enemies[enemies.length - 1];
+      kid.x = e.x + (i === 0 ? -12 : 12);
+      kid.y = e.y + (i === 0 ? -8 : 8);
+      kid.z = e.z || 0;
+      kid.type = 'runner';
+      kid.size = .84; kid.spd = 1.75; kid.r = 11;
+      kid.hp = kid.maxhp = Math.max(18, Math.round(e.maxhp * .22));
+      kid.split = true;
+      spray(kid.x, kid.y, '#a35ce0', 10);
+    }
+    popup(e.x, e.y - 30, 'IT SPLIT', '#a35ce0');
+  }
   spray(e.x, e.y, e.side === ZOMB ? '#4e7a2e' : '#c0392b', e.boss ? 46 : 18, dirAngle);
   SFX.die();
   addHitstop(e.boss ? .13 : .075);
@@ -2020,6 +2068,20 @@ function tryAttack(who, isPlayer) {
   // one hit sells it far better than only the target flinching.
   who.squash = .12;
   moveEntity(who, -ax / dist * 4, -ay / dist * 4);
+
+  // A brute slams the ground when it connects, so being merely close to one is
+  // dangerous rather than only being in reach of it.
+  if (!isPlayer && (who.type === 'brute') && !who.boss) {
+    blasts.push({ x: who.x, y: who.y, r: 6, max: TUNE.BRUTE_SLAM_RADIUS,
+                  life: .3, maxLife: .3, c: '#a35ce0' });
+    spray(who.x, who.y, '#a35ce0', 14);
+    addShake(4);
+    const pd = Math.hypot(player.x - who.x, player.y - who.y);
+    if (player.side !== who.side && pd < TUNE.BRUTE_SLAM_RADIUS) {
+      hurtPlayer(TUNE.BRUTE_SLAM_DMG, who.side === ZOMB ? TUNE.BITE_PER_HIT * .5 : 0);
+    }
+    SFX.smash();
+  }
 
   if (found.target === player) {
     const biteAmt = who.side === ZOMB ? TUNE.BITE_PER_HIT : 0;
@@ -2580,10 +2642,10 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const torsoZ = z + legH + headBob * .5;
   drawBox(cx0 - torsoW / 2, y0, torsoZ, torsoW, dep, torsoH, torso);
   // A belt across the bottom of the torso.
-  drawBox(cx0 - torsoW / 2, y0 - .3, torsoZ, torsoW, dep + .3, 2.6 * s, shade(torso, -34));
+  drawBox(cx0 - torsoW / 2, y0 - .3, torsoZ, torsoW, dep + .3, 2.6 * s, shade(torso, -18));
   // Shoulders sitting in the shadow of the head.
   drawBox(cx0 - torsoW / 2, y0 + .5, torsoZ + torsoH - 1.2, torsoW, dep - 1,
-          1.2 * s, shade(torso, -22));
+          1.2 * s, shade(torso, -10));
   // A collar where the torso meets the head.
   drawBox(cx0 - torsoW * .3, y0 + .8, torsoZ + torsoH - 1.4, torsoW * .6, dep - 1.6,
           2.4 * s, shade(torso, 24));

@@ -101,7 +101,7 @@ eval(code + `
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
-   TP_LOOK_AT, camWant, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   TP_LOOK_AT, camWant, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -200,14 +200,26 @@ ok('moving across the ground moves you diagonally on screen',
 ok('height lifts things up the screen',
   G.isoY(px0, py0, 40) < G.isoY(px0, py0, 0),
   'z=40 sits ' + (G.isoY(px0, py0, 0) - G.isoY(px0, py0, 40)).toFixed(0) + 'px higher');
-ok('blocks are drawn as boxes with three faces', /function drawBox/.test(src)
-  && /Left side, the one in most shadow/.test(src)
-  && /Right side, catching more light/.test(src)
-  && /Top face, fully lit/.test(src));
+ok('blocks are drawn as solid boxes', /function drawBox/.test(src)
+  && /Top face last, so it always sits on top of the sides/.test(src));
+ok('ALL four sides are drawn, not two hardcoded ones',
+  /All four sides are drawn now/.test(src) && typeof G.FACE_SHADE === 'object'
+  && Object.keys(G.FACE_SHADE).length === 4, Object.keys(G.FACE_SHADE).join(''));
+ok('sides are drawn furthest first, so a box is solid from any angle',
+  /sides\.sort/.test(src));
+ok('the reason it broke is written down',
+  /hollow shells with open ends/.test(src));
+ok('lighting is tied to compass directions, not to the screen',
+  /fixed to compass directions/.test(src));
+ok('the light does not slide across the world when the camera turns', (() => {
+  // North should always be the lit side and south the dark one, whatever the yaw.
+  return G.FACE_SHADE.n > G.FACE_SHADE.s && G.FACE_SHADE.e > G.FACE_SHADE.w;
+})(), 'n ' + G.FACE_SHADE.n + ' e ' + G.FACE_SHADE.e
+   + ' w ' + G.FACE_SHADE.w + ' s ' + G.FACE_SHADE.s);
 ok('faces are shaded top to bottom, not one flat tone',
-  /reads as light falling across a surface/.test(src));
-ok('block edges get a bevel and a corner seam',
-  /bright bevel along the two top edges/.test(src) && /dark seam down the corner/.test(src));
+  /reads as light falling across it/.test(src));
+ok('block edges get a lip and an outline',
+  /moulded lip just inside the top/.test(src) && /dark outline right round the top/.test(src));
 ok('drawBox runs without throwing',
   (() => { try { G.drawBox(0, 0, 0, 40, 40, 34, G.WALL_COLOR); return true; }
            catch (e) { console.log('    ' + e.message); return false; } })());
@@ -833,7 +845,7 @@ ok('different patches still differ', (() => {
 })());
 ok('tall walls get seams so they read as stacked bricks',
   /reads as separate parts stacked/.test(src));
-ok('block tops get a moulded lip', /moulded lip you/.test(src));
+ok('block tops get a moulded lip', /moulded lip just inside the top/.test(src));
 ok('the ground has grass tufts, not flat colour',
   /A few tufts of grass/.test(src));
 ok('tufts stay put instead of shimmering', /same place every time/.test(src));
@@ -1333,6 +1345,82 @@ ok('a long run with the camera easing stays sane', (() => {
   }
   return Number.isFinite(G.cam.tx) && Number.isFinite(G.cam.yaw)
     && Math.hypot(G.cam.tx - G.player.x, G.cam.ty - G.player.y) < 200;
+})());
+
+group('Nobody escapes the arena');
+G.reset();
+ok('there is a test for the boundary wall', typeof G.borderAt === 'function');
+ok('the outside ring reports as boundary', G.borderAt(20, 20) && G.borderAt(10, 500));
+ok('the middle of the map does not', !G.borderAt(G.playerStart.x, G.playerStart.y));
+ok('the reason is written down', /wandering off into the sky/.test(src));
+ok('pushing into the boundary wall never climbs it', (() => {
+  // Stand just inside the boundary and shove into it for a good while.
+  const e2 = { x: G.TILE * 1.5, y: G.TILE * 1.5, r: 13, z: 0 };
+  for (let i = 0; i < 600; i++) {
+    G.moveEntity(e2, -205 / 60, -205 / 60);
+    G.updateHeight(e2, -1, -1, 1 / 60);
+  }
+  return e2.z < 1 && !G.borderAt(e2.x, e2.y);
+})(), 'stayed on the ground, inside');
+ok('nothing ends up outside the walls over a long game', (() => {
+  G.reset();
+  for (let i = 0; i < 5400; i++) {
+    aimStickAt(G.player.x + 300, G.player.y + 200);
+    G.update(1 / 60);
+    if (G.waveState === 'picking') G.choose(G.cards[0]);
+  }
+  const inside = o => o.x > G.TILE && o.y > G.TILE
+    && o.x < (G.GW - 1) * G.TILE && o.y < (G.GH - 1) * G.TILE;
+  return inside(G.player) && G.enemies.every(inside)
+    && G.player.z < G.BORDER_H && G.enemies.every(e => e.z < G.BORDER_H);
+})(), 'player and every enemy still inside the boundary');
+
+group('The brute is tricky, not just big');
+G.reset();
+ok('it slams the ground when it connects', /slams the ground when it connects/.test(src));
+ok('the slam reaches further than its arms',
+  G.TUNE.BRUTE_SLAM_RADIUS > G.ZOMBIE_RANKS[0].reach,
+  G.TUNE.BRUTE_SLAM_RADIUS + ' vs a reach of ' + G.ZOMBIE_RANKS[0].reach);
+ok('it splits when it dies', /splits into two runners when it dies/.test(src));
+ok('killing a brute really does leave two more behind', (() => {
+  G.reset();
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', false);
+  const br = G.enemies[0];
+  br.type = 'brute'; br.boss = false; br.split = false;
+  br.maxhp = 200; br.hp = 200;
+  br.x = G.player.x + 120; br.y = G.player.y;
+  G.killEnemy(br, 0);
+  const kids = G.enemies.filter(e => e.split);
+  return kids.length === G.TUNE.BRUTE_SPLIT
+    && kids.every(k => k.type === 'runner' && k.hp > 0);
+})(), 'two runners spawned');
+ok('the pieces do not split again forever', (() => {
+  const kid = G.enemies.find(e => e.split);
+  if (!kid) return false;
+  const before = G.enemies.length;
+  kid.type = 'brute';          // even if it were a brute, it is already a split
+  G.killEnemy(kid, 0);
+  return G.enemies.length <= before;
+})());
+ok('the pieces are weaker than the brute was', (() => {
+  G.reset();
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', false);
+  const br2 = G.enemies[0];
+  br2.type = 'brute'; br2.boss = false; br2.split = false;
+  br2.maxhp = 300; br2.hp = 300;
+  G.killEnemy(br2, 0);
+  return G.enemies.filter(e => e.split).every(k => k.maxhp < 300);
+})());
+ok('a boss does not split, it just dies', (() => {
+  G.reset();
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', true);
+  const bs = G.enemies[0];
+  bs.type = 'brute';
+  G.killEnemy(bs, 0);
+  return G.enemies.filter(e => e.split).length === 0;
 })());
 
 group('Josh is credited');
