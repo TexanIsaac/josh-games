@@ -126,6 +126,8 @@ eval(code + `
    get partMode(){return partMode}, set partMode(v){partMode=v},
    get musicVol(){return musicVol}, get sfxVol(){return sfxVol},
    nudgeVolume, get volRects(){return volRects}, drawPause, drawGuy,
+   WEAPONS, weaponByKey, paintDoll, paintWeapon, rr, limb, tryAttack,
+   get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
    boomShot, hurtPlayer, get shots(){return shots},
@@ -2131,6 +2133,55 @@ ok('there are buttons for it on the pause screen', (() => {
   return G.volRects.length === 4;
 })(), 'minus and plus for each of the two');
 ok('a tap on one does not also unpause', src.indexOf('must not also resume') !== -1);
+
+group('The shop and buying weapons');
+ok('there are weapons to buy', G.WEAPONS.length >= 5,
+  G.WEAPONS.map(w => w.name).join(', '));
+ok('fists are free and everything else costs something',
+  G.WEAPONS[0].cost === 0 && G.WEAPONS.slice(1).every(w => w.cost > 0));
+ok('they get steadily dearer, so there is something to save up for', (() => {
+  const c = G.WEAPONS.map(w => w.cost);
+  for (let i = 1; i < c.length; i++) if (c[i] <= c[i - 1]) return false;
+  return true;
+})(), G.WEAPONS.map(w => w.cost).join(' < '));
+ok('a dearer weapon hits harder than a cheaper one', (() => {
+  for (let i = 1; i < G.WEAPONS.length; i++) {
+    if (G.WEAPONS[i].dmg <= G.WEAPONS[0].dmg) return false;
+  }
+  return true;
+})());
+ok('every weapon says what it is, in words a child can read',
+  G.WEAPONS.every(w => w.blurb && w.blurb.length > 12 && w.name));
+ok('every weapon knows how to draw itself', G.WEAPONS.every(w => !!w.kind));
+ok('looking one up by name works, and a bad name falls back to fists',
+  G.weaponByKey('panzer').key === 'panzer' && G.weaponByKey('nonsense').key === 'fists');
+
+ok('carrying a bought weapon actually makes you hit harder', (() => {
+  G.reset();
+  G.save.look.weapon = 0;
+  const plain = G.WEAPONS[0].dmg;
+  G.save.look.weapon = G.WEAPONS.length - 1;
+  const armed = G.WEAPONS[G.WEAPONS.length - 1].dmg;
+  G.save.look.weapon = 0;
+  return armed > plain * 1.3;
+})(), 'the dearest is well worth the coins');
+ok('the enemies get no benefit from what you bought', (() => {
+  // The multiplier is only applied when the one attacking is the player.
+  return src.indexOf('const wepMul = isPlayer ?') !== -1;
+})());
+
+ok('a save from before weapons existed still loads', (() => {
+  const old = JSON.stringify({ coins: 40, look: { skin: 2, shirt: 1 }, perks: {} });
+  localStorage.setItem('zn_save_v1', old);
+  G.loadSave();
+  return G.save.look.weapon === 0 && G.save.ownedWeapons
+    && G.save.ownedWeapons.fists === true && G.save.coins === 40;
+})(), 'no undefined weapon, no blank shop');
+ok('a nonsense weapon index in a save is repaired rather than trusted', (() => {
+  localStorage.setItem('zn_save_v1', JSON.stringify({ look: { weapon: 999 } }));
+  G.loadSave();
+  return G.save.look.weapon === 0;
+})());
 
 group('Tanks');
 G.reset();

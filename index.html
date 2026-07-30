@@ -33,6 +33,51 @@
     padding-left: env(safe-area-inset-left, 0px);
   }
 
+  /* The shop. The portrait is the point of the Your Guy tab, so it gets room. */
+  #preview { display: flex; flex-direction: column; align-items: center; gap: .35rem; }
+  #preview canvas {
+    background: radial-gradient(circle at 50% 32%, #2b3a4e, #151b25 74%);
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.09);
+  }
+  #pname {
+    font-size: 12px; font-weight: 800; letter-spacing: .05em;
+    color: rgba(238,242,248,0.62); text-transform: uppercase;
+  }
+  .shint {
+    font-size: 12px; line-height: 1.45; text-align: center;
+    color: rgba(238,242,248,0.5); padding: 0 .5rem;
+  }
+
+  .wgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: .55rem;
+  }
+  .wcard {
+    display: flex; flex-direction: column; align-items: center; gap: .3rem;
+    padding: .55rem .45rem;
+    background: rgba(22,28,38,0.9);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px;
+  }
+  .wcard[data-on="1"] { border-color: #ffd84d; background: rgba(255,216,77,0.1); }
+  .wcard[data-own="0"] canvas { opacity: .55; }
+  .wcard canvas {
+    background: rgba(8,11,16,0.5); border-radius: 9px;
+  }
+  .wname { font-size: 12.5px; font-weight: 800; }
+  .wblurb {
+    font-size: 10.5px; line-height: 1.35; text-align: center;
+    color: rgba(238,242,248,0.5); min-height: 2.6em;
+  }
+  .wbuy {
+    width: 100%; padding: .38rem .3rem;
+    font-size: 11.5px; font-weight: 800; font-family: inherit;
+    color: #0d0f14; background: #ffd84d;
+    border: 0; border-radius: 8px;
+  }
+  .wbuy:disabled { background: rgba(255,255,255,0.14); color: rgba(238,242,248,0.5); }
+
   #title {
     position: fixed; inset: 0; z-index: 10;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -169,6 +214,7 @@
   </div>
   <div class="stabs">
     <button class="stab" data-tab="look">Your Guy</button>
+    <button class="stab" data-tab="weapons">Weapons</button>
     <button class="stab" data-tab="perk">Upgrades</button>
   </div>
   <div id="sbody"></div>
@@ -214,7 +260,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v32';
+const VERSION = 'v33';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -937,9 +983,10 @@ function perkCost(perk, level) {
 const SAVE_KEY = 'zn_save_v1';
 const freshSave = () => ({
   coins: 0,
-  look: { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0 },
+  look: { skin: 0, shirt: 0, legs: 0, hat: 0, face: 0, weapon: 0 },
   ownedHats: { 0: true },
   ownedFaces: { 0: true },
+  ownedWeapons: { fists: true },
   perks: {},
 });
 let save = freshSave();
@@ -955,6 +1002,11 @@ function loadSave() {
     save.look = Object.assign(freshSave().look, got.look || {});
     save.ownedHats = Object.assign({ 0: true }, got.ownedHats || {});
     save.ownedFaces = Object.assign({ 0: true }, got.ownedFaces || {});
+    save.ownedWeapons = Object.assign({ fists: true }, got.ownedWeapons || {});
+    // A save from before weapons existed has no weapon chosen, and a bad index
+    // would leave the shop drawing nothing at all.
+    const wi = save.look.weapon;
+    if (!(wi >= 0 && wi < WEAPONS.length)) save.look.weapon = 0;
     save.perks = got.perks || {};
     if (typeof save.coins !== 'number' || !isFinite(save.coins)) save.coins = 0;
   } catch (err) { save = freshSave(); }
@@ -3125,7 +3177,9 @@ function tryAttack(who, isPlayer) {
   const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
   const rageMul = (isPlayer && player.rageT > 0) ? TUNE.RAGE_MULT : 1;
   const formMul = isPlayer ? formByKey(player.form).dmg : 1;
-  const dmg = rk.dmg * up.dmg * streakMul * rageMul * formMul;
+  // Whatever you bought and are carrying. Enemies get nothing from this.
+  const wepMul = isPlayer ? (weaponByKey(WEAPONS[save.look.weapon || 0].key).dmg || 1) : 1;
+  const dmg = rk.dmg * up.dmg * streakMul * rageMul * formMul * wepMul;
   const reach = rk.reach * up.reach;
   const rate = rk.rate * up.rate;
 
@@ -5276,7 +5330,246 @@ function el(tag, cls, text) {
 }
 
 // A little picture of your guy, so choices can be seen rather than guessed at.
-function buildPreview() {
+// ---------------------------------------------------------------------------
+//  THE SHOP DOLL
+//
+//  A big front-on portrait of your guy, painted straight onto its own canvas rather
+//  than being built out of stacked boxes like the old preview. Curves, shading and a
+//  proper face, because the point of the shop is deciding what you want to look like
+//  and you cannot judge that from four coloured rectangles.
+//
+//  This is deliberately its own painter and shares nothing with the world renderer.
+//  Nothing in here can affect the game, and it is free to be as detailed as it likes
+//  because it draws one character, once, instead of thirty every frame.
+// ---------------------------------------------------------------------------
+
+// A rounded box. Everything below is built from these instead of hard rectangles,
+// which is most of the difference between this and the old blocky preview.
+function rr(c, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rad, y);
+  c.arcTo(x + w, y, x + w, y + h, rad);
+  c.arcTo(x + w, y + h, x, y + h, rad);
+  c.arcTo(x, y + h, x, y, rad);
+  c.arcTo(x, y, x + w, y, rad);
+  c.closePath();
+}
+
+// A part with light coming from the upper left, so it reads as round rather than
+// flat. One gradient per part is what gives the whole figure some form.
+function limb(c, x, y, w, h, col, r) {
+  const g = c.createLinearGradient(x, y, x + w, y + h);
+  g.addColorStop(0, shade(col, 26));
+  g.addColorStop(.55, col);
+  g.addColorStop(1, shade(col, -30));
+  c.fillStyle = g;
+  rr(c, x, y, w, h, r === undefined ? Math.min(w, h) * .34 : r);
+  c.fill();
+}
+
+function paintDoll(c, look, W, H) {
+  c.clearRect(0, 0, W, H);
+  const u = H / 100;                 // everything below is in hundredths of the height
+  const cx = W / 2;
+  const skin = SKINS[look.skin || 0];
+  const shirt = SHIRTS[look.shirt || 0];
+  const pants = PANTS[look.legs || 0];
+  const hat = HATS[look.hat || 0];
+  const face = FACES[look.face || 0];
+  const wep = WEAPONS[look.weapon || 0];
+
+  // A soft pool of shadow, so he is standing on something.
+  const sg = c.createRadialGradient(cx, 95 * u, 0, cx, 95 * u, 26 * u);
+  sg.addColorStop(0, 'rgba(0,0,0,0.34)');
+  sg.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = sg;
+  c.fillRect(cx - 30 * u, 86 * u, 60 * u, 18 * u);
+
+  // Legs, with a knee break and a boot.
+  for (const sx of [-1, 1]) {
+    const lx = cx + sx * 5.2 * u - 4.6 * u;
+    limb(c, lx, 60 * u, 9.2 * u, 22 * u, pants, 3 * u);         // thigh to shin
+    limb(c, lx + .5 * u, 80 * u, 8.2 * u, 6 * u, shade(pants, -26), 2 * u);  // knee pad
+    limb(c, lx - .7 * u, 86 * u, 10.6 * u, 8 * u, '#3f444c', 3 * u);         // boot
+    // A toe cap, which is the detail that stops a boot looking like a block.
+    limb(c, lx - .7 * u, 91 * u, 10.6 * u, 3.4 * u, '#54595f', 1.6 * u);
+  }
+
+  // Torso: shoulders wider than the waist, with a collar, pockets and a belt.
+  const tw = 30 * u;
+  limb(c, cx - tw / 2, 36 * u, tw, 26 * u, shirt, 5 * u);
+  // Chest pockets.
+  c.fillStyle = shade(shirt, -22);
+  for (const sx of [-1, 1]) {
+    rr(c, cx + sx * 8.4 * u - 4.4 * u, 43 * u, 8.8 * u, 7 * u, 1.4 * u);
+    c.fill();
+  }
+  // Collar.
+  c.fillStyle = shade(shirt, 20);
+  c.beginPath();
+  c.moveTo(cx - 8 * u, 36 * u);
+  c.lineTo(cx, 43 * u);
+  c.lineTo(cx + 8 * u, 36 * u);
+  c.closePath();
+  c.fill();
+  // Belt and buckle.
+  limb(c, cx - tw / 2 + 1 * u, 59 * u, tw - 2 * u, 4.4 * u, '#3f444c', 1.4 * u);
+  c.fillStyle = '#c9a227';
+  rr(c, cx - 2.6 * u, 59.4 * u, 5.2 * u, 3.6 * u, 1 * u);
+  c.fill();
+
+  // Arms, hanging slightly away from the body, with a rolled sleeve and a glove.
+  for (const sx of [-1, 1]) {
+    const ax = cx + sx * 17 * u - 4.2 * u;
+    limb(c, ax, 38 * u, 8.4 * u, 15 * u, shirt, 3 * u);                     // upper arm
+    limb(c, ax + .4 * u, 51 * u, 7.6 * u, 13 * u, skin, 2.6 * u);           // forearm
+    limb(c, ax + .2 * u, 62 * u, 8 * u, 6 * u, shade(skin, -34), 2.4 * u);  // glove
+  }
+
+  // Neck, then the head.
+  limb(c, cx - 4.6 * u, 31 * u, 9.2 * u, 7 * u, shade(skin, -18), 2 * u);
+  const hw = 21 * u, hh = 22 * u, hy = 11 * u;
+  limb(c, cx - hw / 2, hy, hw, hh, skin, 6.5 * u);
+  // Ears.
+  for (const sx of [-1, 1]) limb(c, cx + sx * (hw / 2) - 1.6 * u, hy + 9 * u, 3.4 * u, 6 * u, shade(skin, -14), 1.6 * u);
+
+  // The face. Brows do most of the work in giving it an expression, and a pupil
+  // inside a white reads far better than a plain dot.
+  const eyY = hy + 9 * u;
+  for (const sx of [-1, 1]) {
+    const ex = cx + sx * 4.6 * u;
+    c.fillStyle = '#f6f8fb';
+    c.beginPath(); c.ellipse(ex, eyY, 2.9 * u, 2.3 * u, 0, 0, 6.283); c.fill();
+    c.fillStyle = '#23282f';
+    c.beginPath(); c.ellipse(ex + sx * .3 * u, eyY + .3 * u, 1.5 * u, 1.6 * u, 0, 0, 6.283); c.fill();
+    // Brow, angled according to which face was chosen.
+    c.strokeStyle = shade(skin, -52);
+    c.lineWidth = 1.5 * u;
+    c.beginPath();
+    const tilt = (face && face.angry) ? sx * 1.5 * u : 0;
+    c.moveTo(ex - 3.2 * u, eyY - 4.2 * u + tilt);
+    c.lineTo(ex + 3.2 * u, eyY - 4.4 * u - tilt);
+    c.stroke();
+  }
+  // Nose and mouth.
+  c.fillStyle = shade(skin, -26);
+  rr(c, cx - 1.1 * u, eyY + 2.6 * u, 2.2 * u, 3.6 * u, .8 * u); c.fill();
+  c.strokeStyle = shade(skin, -56);
+  c.lineWidth = 1.4 * u;
+  c.beginPath();
+  if (face && face.frown) c.arc(cx, eyY + 11 * u, 4 * u, Math.PI * 1.15, Math.PI * 1.85);
+  else c.arc(cx, eyY + 7 * u, 4 * u, Math.PI * .15, Math.PI * .85);
+  c.stroke();
+
+  // A hat, if one is being worn. Each kind is a different shape rather than a
+  // recoloured version of the same block.
+  if (hat && hat.kind) {
+    const col = hat.color;
+    if (hat.kind === 'helmet') {
+      c.fillStyle = col;
+      c.beginPath();
+      c.ellipse(cx, hy + 4 * u, hw * .62, 8.5 * u, 0, Math.PI, 0);
+      c.fill();
+      limb(c, cx - hw * .68, hy + 3 * u, hw * 1.36, 3.4 * u, shade(col, -18), 1.6 * u);
+      // Chin strap.
+      c.strokeStyle = 'rgba(40,44,34,0.7)';
+      c.lineWidth = 1.2 * u;
+      c.beginPath(); c.moveTo(cx - hw * .48, hy + 8 * u); c.lineTo(cx - hw * .3, hy + 20 * u); c.stroke();
+    } else if (hat.kind === 'cowboy') {
+      limb(c, cx - hw * .95, hy + 3 * u, hw * 1.9, 3.6 * u, col, 1.8 * u);
+      limb(c, cx - 7 * u, hy - 5 * u, 14 * u, 9 * u, shade(col, 10), 3 * u);
+    } else if (hat.kind === 'cap') {
+      limb(c, cx - hw * .54, hy - 1 * u, hw * 1.08, 7 * u, col, 3 * u);
+      limb(c, cx - hw * .2, hy + 4.6 * u, hw * .95, 2.8 * u, shade(col, -16), 1.4 * u);
+    } else {
+      // A crown, a beanie, anything else: a simple dome that still reads as worn.
+      c.fillStyle = col;
+      c.beginPath();
+      c.ellipse(cx, hy + 3 * u, hw * .56, 7 * u, 0, Math.PI, 0);
+      c.fill();
+    }
+  }
+
+  // And whatever he is holding, drawn into the right hand.
+  if (wep && wep.kind !== 'fists') paintWeapon(c, wep, cx + 15 * u, 52 * u, u * 1.05, true);
+}
+
+// ---------------------------------------------------------------------------
+//  Weapons, drawn properly so it is obvious what you are buying.
+// ---------------------------------------------------------------------------
+const WEAPONS = [
+  { key: 'fists',   name: 'Fists',        kind: 'fists',  cost: 0,   dmg: 1,
+    blurb: 'What every noob starts with.' },
+  { key: 'knife',   name: 'Trench Knife', kind: 'knife',  cost: 90,  dmg: 1.25,
+    blurb: 'A heavier blade. Hits harder than the one you find.' },
+  { key: 'rifle',   name: 'Bolt Rifle',   kind: 'rifle',  cost: 180, dmg: 1.3,
+    blurb: 'Long barrel, wooden stock, and it reaches further.' },
+  { key: 'smg',     name: 'Grease Gun',   kind: 'smg',    cost: 260, dmg: 1.45,
+    blurb: 'Stubby and fast. Best when they get close.' },
+  { key: 'shield',  name: 'Riot Shield',  kind: 'shield', cost: 320, dmg: 1.2,
+    blurb: 'Nothing bites through this. The rioter carries one.' },
+  { key: 'panzer',  name: 'Panzerfaust',  kind: 'panzer', cost: 480, dmg: 1.7,
+    blurb: 'One tube, one very large bang.' },
+];
+function weaponByKey(k) {
+  for (const w of WEAPONS) { if (w.key === k) return w; }
+  return WEAPONS[0];
+}
+
+// One painter for both the shop cards and the doll's hand, so what you see on the
+// card is exactly what your guy ends up holding.
+function paintWeapon(c, w, x, y, u, held) {
+  const steel = '#8f959e', dark = '#4f5560', wood = '#8a5a2b';
+  const k = w.kind;
+  if (k === 'knife') {
+    limb(c, x - 1.6 * u, y - 12 * u, 3.2 * u, 14 * u, steel, .8 * u);   // blade
+    limb(c, x - 3.4 * u, y + 1 * u, 6.8 * u, 2.4 * u, dark, .8 * u);    // guard
+    limb(c, x - 1.8 * u, y + 3 * u, 3.6 * u, 6 * u, wood, 1.2 * u);     // grip
+  } else if (k === 'rifle') {
+    limb(c, x - 1.3 * u, y - 20 * u, 2.6 * u, 26 * u, dark, .6 * u);    // barrel
+    limb(c, x - 2.4 * u, y + 4 * u, 4.8 * u, 16 * u, wood, 1.4 * u);    // stock
+    limb(c, x - 3.6 * u, y + 2 * u, 7.2 * u, 4 * u, shade(wood, -18), 1 * u);
+    limb(c, x - .8 * u, y - 21 * u, 1.6 * u, 2.4 * u, steel, .5 * u);   // front sight
+    // Bolt handle, sticking out to one side.
+    limb(c, x + 1.6 * u, y + 1 * u, 4 * u, 1.6 * u, steel, .6 * u);
+  } else if (k === 'smg') {
+    limb(c, x - 1.5 * u, y - 12 * u, 3 * u, 15 * u, dark, .7 * u);      // barrel shroud
+    limb(c, x - 3 * u, y + 1 * u, 6 * u, 7 * u, shade(dark, 14), 1.2 * u);
+    limb(c, x - 1.6 * u, y + 7 * u, 3.2 * u, 9 * u, dark, 1 * u);       // magazine
+    limb(c, x + 2 * u, y + 3 * u, 5 * u, 2 * u, steel, .8 * u);         // wire stock
+  } else if (k === 'shield') {
+    const g = c.createLinearGradient(x - 9 * u, y - 14 * u, x + 9 * u, y + 14 * u);
+    g.addColorStop(0, '#d3dae4'); g.addColorStop(.6, '#aab3c0'); g.addColorStop(1, '#7c8592');
+    c.fillStyle = g;
+    rr(c, x - 9 * u, y - 14 * u, 18 * u, 28 * u, 4 * u);
+    c.fill();
+    // A viewing slit, which is the thing that makes it read as a riot shield.
+    c.fillStyle = 'rgba(30,40,55,0.72)';
+    rr(c, x - 6 * u, y - 10 * u, 12 * u, 5 * u, 1.2 * u);
+    c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.4)';
+    c.lineWidth = .9 * u;
+    rr(c, x - 9 * u, y - 14 * u, 18 * u, 28 * u, 4 * u);
+    c.stroke();
+  } else if (k === 'panzer') {
+    limb(c, x - 2.2 * u, y - 16 * u, 4.4 * u, 26 * u, dark, 1 * u);     // tube
+    // The warhead on the front, which is the whole point of the thing.
+    const g2 = c.createLinearGradient(x - 5 * u, y - 22 * u, x + 5 * u, y - 12 * u);
+    g2.addColorStop(0, '#8f959e'); g2.addColorStop(1, '#5b6270');
+    c.fillStyle = g2;
+    c.beginPath();
+    c.moveTo(x, y - 25 * u);
+    c.lineTo(x + 5 * u, y - 15 * u);
+    c.lineTo(x - 5 * u, y - 15 * u);
+    c.closePath();
+    c.fill();
+    limb(c, x - 2 * u, y + 6 * u, 4 * u, 4 * u, wood, 1 * u);           // grip
+  }
+  if (held) { /* nothing extra: the hand is already drawn under it */ }
+}
+
+function buildPreviewOld() {
   const wrap = el('div');
   wrap.id = 'preview';
   const guy = el('div');
@@ -5301,6 +5594,94 @@ function buildPreview() {
     + 'and they stay saved between games.';
   wrap.appendChild(t);
   return wrap;
+}
+
+// A big front-on portrait, so you can actually see what you are choosing.
+function buildPreview() {
+  const wrap = el('div');
+  wrap.id = 'preview';
+  const cvs = el('canvas');
+  // Twice the pixels for a sharp picture on a retina screen, then scaled back down
+  // with CSS so it takes up the space it is meant to.
+  const w = 210, h = 260;
+  cvs.width = w * 2; cvs.height = h * 2;
+  cvs.style.width = w + 'px';
+  cvs.style.height = h + 'px';
+  const c = cvs.getContext('2d');
+  c.scale(2, 2);
+  try {
+    paintDoll(c, save.look, w, h);
+  } catch (err) {
+    c.fillStyle = '#ff9f9f';
+    c.font = '600 12px system-ui';
+    c.fillText('preview unavailable', 10, 20);
+  }
+  wrap.appendChild(cvs);
+  const nm = el('div', null, weaponByKey(WEAPONS[save.look.weapon || 0].key).name);
+  nm.id = 'pname';
+  wrap.appendChild(nm);
+  return wrap;
+}
+
+// The weapons tab. Every one is drawn rather than described, because a name and a
+// price tell an eight year old nothing about what he is getting.
+function weaponRow() {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, 'Weapons'));
+  const grid = el('div', 'wgrid');
+  WEAPONS.forEach((w, i) => {
+    const owned = w.cost === 0 || (save.ownedWeapons && save.ownedWeapons[w.key]);
+    const equipped = (save.look.weapon || 0) === i;
+    const card = el('div', 'wcard');
+    card.setAttribute('data-on', equipped ? '1' : '0');
+    card.setAttribute('data-own', owned ? '1' : '0');
+
+    const cvs = el('canvas');
+    cvs.width = 128; cvs.height = 128;
+    cvs.style.width = '64px'; cvs.style.height = '64px';
+    const c = cvs.getContext('2d');
+    c.scale(2, 2);
+    if (w.kind === 'fists') {
+      // Fists get a fist rather than an empty box.
+      limb(c, 22, 24, 20, 18, SKINS[save.look.skin || 0], 6);
+      limb(c, 26, 40, 12, 10, shade(SKINS[save.look.skin || 0], -22), 3);
+    } else {
+      try { paintWeapon(c, w, 32, 34, 1.15, false); } catch (err) { /* card stays blank */ }
+    }
+    card.appendChild(cvs);
+
+    card.appendChild(el('div', 'wname', w.name));
+    card.appendChild(el('div', 'wblurb', w.blurb));
+
+    const btn = el('button', 'wbuy');
+    if (!owned) {
+      btn.textContent = w.cost + ' coins';
+      btn.disabled = save.coins < w.cost;
+      btn.addEventListener('click', () => {
+        if (save.coins < w.cost) return;
+        save.coins -= w.cost;
+        save.ownedWeapons = save.ownedWeapons || {};
+        save.ownedWeapons[w.key] = true;
+        save.look.weapon = i;
+        writeSave();
+        drawShop();
+      });
+    } else if (equipped) {
+      btn.textContent = 'Carrying';
+      btn.disabled = true;
+    } else {
+      btn.textContent = 'Carry it';
+      btn.addEventListener('click', () => {
+        save.look.weapon = i;
+        writeSave();
+        drawShop();
+      });
+    }
+    card.appendChild(btn);
+    grid.appendChild(card);
+  });
+  row.appendChild(grid);
+  return row;
 }
 
 function swatchRow(title, list, key) {
@@ -5395,11 +5776,16 @@ function drawShop() {
   sbody.innerHTML = '';
   if (shopTab === 'look') {
     sbody.appendChild(buildPreview());
+    sbody.appendChild(el('div', 'shint',
+      'Coins come from kills and from clearing waves, and they stay saved between games.'));
     sbody.appendChild(swatchRow('Skin', SKINS, 'skin'));
     sbody.appendChild(swatchRow('Shirt', SHIRTS, 'shirt'));
     sbody.appendChild(swatchRow('Trousers', PANTS, 'legs'));
     sbody.appendChild(cosmeticRow('Hats', HATS, 'ownedHats', 'hat'));
     sbody.appendChild(cosmeticRow('Faces', FACES, 'ownedFaces', 'face'));
+  } else if (shopTab === 'weapons') {
+    sbody.appendChild(buildPreview());
+    sbody.appendChild(weaponRow());
   } else {
     sbody.appendChild(perkRow());
   }
