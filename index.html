@@ -370,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v42';
+const VERSION = 'v43';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1001,6 +1001,10 @@ const TUNE = {
   // Feel. Turn these up for more chaos.
   // Dragging the right hand side of the screen swings the camera round.
   CAM_DRAG_YAW: 0.006,        // how far it spins per pixel dragged sideways
+  FP_TURN: 2.6,               // how fast pushing the stick sideways turns you, in
+                              // first person, in radians a second
+  ZOOM_MIN: 0.5,              // how close the outside view can get
+  ZOOM_MAX: 1.35,             // and how far back it can pull
   CAM_DRAG_PITCH: 0.004,      // and how much the angle changes dragging up or down
 
   SCREEN_SHAKE: 1.0,
@@ -2656,8 +2660,18 @@ function newPlayer() {
   };
 }
 
+// Which side a fresh game starts you on. Josh asked to be able to choose when
+// starting over, rather than always beginning as a noob.
+let startSide = null;                 // null means the usual starting side
+function startSideFor(side) { startSide = side; }
+
 function reset() {
   player = newPlayer();
+  if (startSide !== null) {
+    player.side = startSide;
+    player.rank = rankFor(player.side, player.kills[player.side]);
+    startSide = null;
+  }
   // Bought health has to be folded in before the bar is drawn for the first time.
   player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
   player.hp = player.maxhp;
@@ -3360,7 +3374,14 @@ function onDown(e) {
         return;
       }
       if (r.key === 'restart') {
-        if (!confirmRestart) { confirmRestart = true; SFX.ui(); return; }
+        // Rather than asking twice, tapping it offers the two sides. Choosing one is
+        // the confirmation, which is both safer and more useful.
+        confirmRestart = !confirmRestart;
+        SFX.ui();
+        return;
+      }
+      if (r.key === 'asA' || r.key === 'asB') {
+        startSide = (r.key === 'asA') ? NOOB : ZOMB;
         confirmRestart = false;
         reset();
         paused = false;
@@ -3407,6 +3428,8 @@ function onDown(e) {
     return;
   }
 
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
   const leftHalf = e.clientX < VW * 0.5;
   if (leftHalf && !stick.active) {
     stick.active = true; stick.id = e.pointerId;
@@ -3417,7 +3440,34 @@ function onDown(e) {
   }
 }
 
+// Every finger currently on the glass, so a pinch can be told from a drag.
+const touches = new Map();
+
+// Two fingers: the distance between them sets the zoom. This takes over from looking
+// while it is happening, otherwise a pinch also spins the camera about.
+let pinchFrom = 0, pinchZoom = 1;
+function pinchSpan() {
+  if (touches.size < 2) return 0;
+  const it = touches.values();
+  const a = it.next().value, b = it.next().value;
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 function onMove(e) {
+  if (touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size >= 2 && !cam.first) {
+      if (!pinchFrom) { pinchFrom = pinchSpan(); pinchZoom = camZoom; }
+      const now = pinchSpan();
+      if (pinchFrom > 20 && now > 20) {
+        // Fingers apart means closer in, which is how every other app behaves.
+        setZoom(pinchZoom * (pinchFrom / now));
+        applyViewpoint();
+        camRefresh();
+      }
+      return;
+    }
+  }
   if (look.active && e.pointerId === look.id) {
     // Aim the camera somewhere new; it eases over rather than jumping.
     camWant.yaw += (e.clientX - look.lx) * TUNE.CAM_DRAG_YAW;
@@ -3435,6 +3485,8 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  touches.delete(e.pointerId);
+  if (touches.size < 2) pinchFrom = 0;
   if (stick.active && e.pointerId === stick.id) { stick.active = false; stick.dx = 0; stick.dy = 0; }
   if (fire.active && e.pointerId === fire.id) { fire.active = false; }
   if (look.active && e.pointerId === look.id) { look.active = false; look.id = null; }
@@ -3721,7 +3773,11 @@ function flipSide() {
   spray(player.x, player.y, wasNoob ? '#6ee787' : '#ffd84d', 34);
   addShake(11);
   SFX.turn();
-  announce(wasNoob ? 'YOU TURNED ZOMBIE' : 'BACK ON THE NOOBS');
+  // The theme decides what the two sides are called, so this cannot say zombie while
+  // the Allied and Axis theme is on.
+  announce(wasNoob
+    ? ('YOU TURNED ' + TH().bName.toUpperCase())
+    : ('BACK WITH THE ' + TH().aName.toUpperCase()));
 
   // Everyone on your old side is now against you, and some of the ones already
   // on the field switch over too, so the fight keeps going either way. A boss is
@@ -3868,7 +3924,20 @@ function update(dt) {
   // The stick points where you want to go on screen; this turns that into a
   // direction across the world, whichever way the camera is facing.
   const raw = inputVector();
-  const mv = stickToWorld(raw.dx, raw.dy);
+
+  // In first person, pushing the stick sideways turns you rather than sidestepping.
+  // Looking around needed a second finger dragging on the right of the screen, and
+  // with a thumb on the stick and a thumb on HIT there is nowhere left to put one, so
+  // there was effectively no way to turn at all. Pushing left to look left is also
+  // simply how you would expect it to work.
+  let mv;
+  if (cam.first) {
+    camWant.yaw += raw.dx * TUNE.FP_TURN * dt;
+    // Forward and back along whichever way you are now looking.
+    mv = stickToWorld(0, raw.dy);
+  } else {
+    mv = stickToWorld(raw.dx, raw.dy);
+  }
   const form = formByKey(player.form);
   const speedMul = (player.speedT > 0 ? TUNE.SPEED_MULT : 1) * form.spd
     * (player.tank ? TUNE.TANK_SPEED : 1);
@@ -3894,6 +3963,9 @@ function update(dt) {
     // The tank does its own steering: the hull follows the stick and the gun
     // tracks a target by itself.
     updateTank(dt, mv);
+  } else if (cam.first) {
+    // Out of your own eyes you face where you are looking, always.
+    player.faceAng = cam.yaw + Math.PI / 2;
   } else {
     const near0 = nearestTarget(player, enemySide());
     if (near0.target && near0.dist < 520) {
@@ -4221,6 +4293,18 @@ function setFirstPerson(on) {
 // Where the camera sits and how high it looks from, for whichever view is on.
 // Split out so switching views takes effect straight away instead of waiting for
 // the next frame to be drawn.
+// How far back the outside view sits, as a multiplier on the normal distance. Pinch
+// to change it, and it is remembered.
+let camZoom = 1;
+function setZoom(z) {
+  camZoom = Math.max(TUNE.ZOOM_MIN, Math.min(TUNE.ZOOM_MAX, z));
+  try { localStorage.setItem('zn_zoom', String(camZoom)); } catch (err) { /* fine */ }
+}
+try {
+  const z0 = parseFloat(localStorage.getItem('zn_zoom'));
+  if (z0 >= 0.4 && z0 <= 1.5) camZoom = z0;
+} catch (err) { camZoom = 1; }
+
 function applyViewpoint() {
   if (cam.first) {
     // Looking out of the player's own eyes, so the viewpoint rides at head
@@ -4229,7 +4313,7 @@ function applyViewpoint() {
     cam.dist = FP_DIST;
   } else {
     cam.tz = (player.z || 0) + TP_LOOK_AT * (player.size || 1);
-    cam.dist = CAM_DIST;
+    cam.dist = CAM_DIST * camZoom;
   }
 }
 
@@ -4354,7 +4438,7 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   // Where the figure goes, and how big. Both come from the projection, so a character
   // shrinks with distance and sits correctly on the ground exactly as the old boxes
   // did. BODY is how tall a character is in world units.
-  const BODY_H = 42 * s2;
+  const BODY_H = 48 * s2;
   const footY = isoY(g.x, g.y, z);
   const headYpx = isoY(g.x, g.y, z + BODY_H);
   const H = Math.max(14, footY - headYpx);
@@ -4589,6 +4673,36 @@ function drawPowerupAt(p) {
   ctx.fillText(p.name.charAt(0), tx, ty);
 }
 
+// How wide a wall tile is drawn, and where.
+//
+// Inner walls are drawn as thin bars rather than filling their whole square. The first
+// attempt pulled in every side that had no wall against it, which sounds right and is
+// not: the last tile of a run has three such sides, so it came out narrower than the
+// rest of the run and left a visible step at the end. Those were the ends Josh saw
+// kicking out.
+//
+// The rule is now about the run rather than about exposure. A tile with wall to its
+// left or right is part of an east-west run, so it is squeezed north and south and
+// left full width along the run, which makes the whole run one even bar with square
+// ends. A tile that is part of a run both ways is a junction, and it stays a full
+// square, so a corner reads as a pillar with bars meeting it. The boundary is never
+// touched and keeps its full thickness.
+const WALL_THIN = 0.33;                     // how far each side comes in, per tile
+function wallBox(gx, gy) {
+  const full = { x: gx * TILE, y: gy * TILE, w: TILE, d: TILE };
+  if (gx <= 0 || gy <= 0 || gx >= GW - 1 || gy >= GH - 1) return full;
+  const isWall = (x, y) =>
+    x >= 0 && y >= 0 && x < GW && y < GH && grid[y][x] === WALL;
+  const horiz = isWall(gx - 1, gy) || isWall(gx + 1, gy);
+  const vert = isWall(gx, gy - 1) || isWall(gx, gy + 1);
+  const IN = TILE * WALL_THIN;
+  if (horiz && vert) return full;                       // a junction stays a pillar
+  if (horiz) return { x: full.x, y: full.y + IN, w: TILE, d: TILE - IN * 2 };
+  if (vert) return { x: full.x + IN, y: full.y, w: TILE - IN * 2, d: TILE };
+  // A wall on its own is a post.
+  return { x: full.x + IN, y: full.y + IN, w: TILE - IN * 2, d: TILE - IN * 2 };
+}
+
 // The tallest point of a tile, whatever kind it is.
 function topHeightAt(gx, gy) {
   const t = grid[gy][gx];
@@ -4666,32 +4780,16 @@ function drawBarrel(wx, wy, h, col, fade) {
   ringPath(ringAt(cx, cy, r * 1.06, 0));
   ctx.fill();
 
-  // The body. Built from the outline of the two rings rather than by walking one and
-  // then the other, which self intersected and gave it a pinched, stacked-plates look.
-  // Height only moves things up the screen, so the silhouette is the two rings joined
-  // down their leftmost and rightmost points.
+  // The body, as three overlapping pieces rather than one clever outline: the bottom
+  // disc, the straight sides between the two discs, and the top disc. Walking a single
+  // path around both rings kept leaving a gap along the bottom edge depending on which
+  // way round the camera was, because which half of each ring is the near one changes.
+  // Three shapes that overlap cannot leave a gap at all.
   let li = 0, ri = 0;
   for (let i = 1; i < bot.length; i++) {
     if (bot[i][0] < bot[li][0]) li = i;
     if (bot[i][0] > bot[ri][0]) ri = i;
   }
-  ctx.beginPath();
-  // Across the top ring the long way round from left to right, keeping the far side,
-  // then down the right, back along the bottom ring's near side, and up the left.
-  ctx.moveTo(top[li][0], top[li][1]);
-  for (let k = 1; k <= bot.length; k++) {
-    const i = (li + k) % bot.length;
-    ctx.lineTo(top[i][0], top[i][1]);
-    if (i === ri) break;
-  }
-  ctx.lineTo(bot[ri][0], bot[ri][1]);
-  for (let k = 1; k <= bot.length; k++) {
-    const i = (ri + k) % bot.length;
-    ctx.lineTo(bot[i][0], bot[i][1]);
-    if (i === li) break;
-  }
-  ctx.closePath();
-
   let minX = Infinity, maxX = -Infinity;
   for (const q of bot) { if (q[0] < minX) minX = q[0]; if (q[0] > maxX) maxX = q[0]; }
   const g = ctx.createLinearGradient(minX, 0, maxX, 0);
@@ -4700,10 +4798,18 @@ function drawBarrel(wx, wy, h, col, fade) {
   g.addColorStop(.5, col);
   g.addColorStop(1, shade(col, -48));
   ctx.fillStyle = g;
+
+  ringPath(bot);
   ctx.fill();
-  ctx.strokeStyle = shade(col, -52);
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(top[li][0], top[li][1]);
+  ctx.lineTo(top[ri][0], top[ri][1]);
+  ctx.lineTo(bot[ri][0], bot[ri][1]);
+  ctx.lineTo(bot[li][0], bot[li][1]);
+  ctx.closePath();
+  ctx.fill();
+  ringPath(top);
+  ctx.fill();
 
   // Two rolling hoops, only across the near side so they wrap the drum.
   strokeNearBand(cx, cy, r * 1.015, h * 0.26, shade(col, -34), 2.6);
@@ -4735,24 +4841,36 @@ function drawBarrel(wx, wy, h, col, fade) {
 //  sandbag emplacement looks like at all.
 // ---------------------------------------------------------------------------
 function drawSandbags(wx, wy, h, col, fade) {
-  if (fade !== undefined) ctx.globalAlpha = fade;
-  const bagW = TILE * 0.42, bagD = TILE * 0.3, bagH = h * 0.55;
+  // One low bank with a few bags along it, rather than several separate lumps scattered
+  // about the tile. The scattered version read as odd because the rows were offset from
+  // each other and nothing lined up with the square it sat in.
+  const inset = TILE * 0.08;
   const wasPart = partMode;
   partMode = true;
-  // Bottom course of three across, then two on top sitting in the gaps, which is how
-  // they are actually stacked so the joins do not line up.
-  const rows = [
-    { z: 0,           at: [-0.26, 0.02, 0.3], off: -0.16 },
-    { z: h * 0.45,    at: [-0.12, 0.18],      off: 0.14 },
-  ];
-  for (const row of rows) {
-    for (const f of row.at) {
-      const bx = wx + TILE / 2 + f * TILE - bagW / 2;
-      const by = wy + TILE / 2 + row.off * TILE - bagD / 2;
-      drawBox(bx, by, row.z, bagW, bagD, bagH, col, fade);
-    }
-  }
+  // The bank itself, filling the tile and low enough to climb.
+  drawBox(wx + inset, wy + inset, 0, TILE - inset * 2, TILE - inset * 2, h, col, fade);
   partMode = wasPart;
+
+  if (fade !== undefined) { ctx.globalAlpha = 1; return; }
+
+  // Three bags along the top, drawn as seams rather than as separate boxes, so the
+  // shape stays one clean bank at this size.
+  ctx.strokeStyle = 'rgba(96,80,46,0.55)';
+  ctx.lineWidth = 1.2;
+  for (const f of [0.34, 0.67]) {
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx + TILE * f, wy + inset, h), isoY(wx + TILE * f, wy + inset, h));
+    ctx.lineTo(isoX(wx + TILE * f, wy + TILE - inset, h),
+               isoY(wx + TILE * f, wy + TILE - inset, h));
+    ctx.stroke();
+  }
+  // And one course line round the side, so it reads as stacked and not as a block.
+  ctx.beginPath();
+  const z = h * 0.5;
+  ctx.moveTo(isoX(wx + inset, wy + TILE - inset, z), isoY(wx + inset, wy + TILE - inset, z));
+  ctx.lineTo(isoX(wx + TILE - inset, wy + TILE - inset, z),
+             isoY(wx + TILE - inset, wy + TILE - inset, z));
+  ctx.stroke();
   ctx.globalAlpha = 1;
 }
 
@@ -4811,45 +4929,54 @@ function drawDoor(gx, gy, wx, wy, h, col, fade) {
   const openAmt = (doorOpen[gy] && doorOpen[gy][gx]) || 0;
   const cx = wx + TILE / 2, cy = wy + TILE / 2;
 
-  // Which way the doorway runs: a door between two walls left and right is a door you
-  // walk through north to south, and the leaves have to swing the other way.
-  const wallLR = (gx > 0 && gx < GW - 1)
-    && (grid[gy][gx - 1] === WALL || grid[gy][gx + 1] === WALL);
+  // Which way the doorway runs. A door with wall to its left and right is a gap in an
+  // east-west wall, so the leaves have to span east-west too and hinge on those walls.
+  // The first version had this the wrong way round and hinged them on the open sides,
+  // which is why the doors faced the wrong way.
+  const isWall = (x, y) =>
+    x >= 0 && y >= 0 && x < GW && y < GH && grid[y][x] === WALL;
+  const alongX = isWall(gx - 1, gy) || isWall(gx + 1, gy);
 
-  // The frame, always there, so a doorway still reads as a doorway when it is open.
-  const fw = wallLR ? TILE * 0.22 : TILE;
-  const fd = wallLR ? TILE : TILE * 0.22;
-  const postW = wallLR ? fw : TILE * 0.16;
-  const postD = wallLR ? TILE * 0.16 : fd;
-  for (const sgn of [-1, 1]) {
-    const px = wallLR ? cx : cx + sgn * (TILE / 2 - postW / 2);
-    const py = wallLR ? cy + sgn * (TILE / 2 - postD / 2) : cy;
-    drawBox(px - postW / 2, py - postD / 2, 0, postW, postD, h, '#6b6f78', fade);
-  }
-  // A lintel across the top.
-  drawBox(cx - fw / 2, cy - fd / 2, h - 6, fw, fd, 6, '#5b6270', fade);
+  const swing = openAmt * (Math.PI / 2) * 0.94;
+  const leafLen = TILE * 0.47;
+  const leafThick = TILE * 0.12;
+  const doorH = h - 5;
 
-  // The two leaves. Each hinges at its own side and turns up to a right angle.
-  const swing = openAmt * (Math.PI / 2) * 0.92;
-  const leafLen = TILE * 0.44;
-  const leafThick = TILE * 0.13;
-  for (const sgn of [-1, 1]) {
-    // Hinge position, on the frame.
-    const hx = wallLR ? cx : cx + sgn * (TILE / 2 - 1);
-    const hy = wallLR ? cy + sgn * (TILE / 2 - 1) : cy;
-    // The leaf runs from the hinge towards the middle when shut, and turns away as it
-    // opens. Its middle is half a leaf along that direction.
-    const base = wallLR ? (sgn < 0 ? Math.PI / 2 : -Math.PI / 2)
-                        : (sgn < 0 ? 0 : Math.PI);
-    const a = base + sgn * swing * (wallLR ? -1 : 1);
-    const mx = hx + Math.cos(a) * leafLen / 2;
-    const my = hy + Math.sin(a) * leafLen / 2;
-    drawBoxRot(mx, my, 0, leafLen, leafThick, h - 6,
-               sgn < 0 ? col : shade(col, -12), a, fade);
-    // A handle, on the swinging edge.
-    const hxx = hx + Math.cos(a) * leafLen * 0.82;
-    const hyy = hy + Math.sin(a) * leafLen * 0.82;
-    drawBoxRot(hxx, hyy, (h - 6) * 0.52, 4, 4, 4, '#c9a227', a, fade);
+  // A lintel across the top, so the opening still reads as a doorway when it is open.
+  const lw = alongX ? TILE : TILE * 0.2;
+  const ld = alongX ? TILE * 0.2 : TILE;
+  drawBox(cx - lw / 2, cy - ld / 2, doorH, lw, ld, 5, '#5b6270', fade);
+
+  // Two leaves, each hinged on the wall at its own end and swinging to the same side.
+  const leaves = alongX
+    ? [{ hx: cx - TILE / 2, hy: cy, a0: 0, dir: -1 },
+       { hx: cx + TILE / 2, hy: cy, a0: Math.PI, dir: 1 }]
+    : [{ hx: cx, hy: cy - TILE / 2, a0: Math.PI / 2, dir: 1 },
+       { hx: cx, hy: cy + TILE / 2, a0: -Math.PI / 2, dir: -1 }];
+
+  for (const L of leaves) {
+    const a = L.a0 + L.dir * swing;
+    const mx = L.hx + Math.cos(a) * leafLen / 2;
+    const my = L.hy + Math.sin(a) * leafLen / 2;
+    drawBoxRot(mx, my, 0, leafLen, leafThick, doorH, col, a, fade);
+    // Two planks across each leaf, which is most of what makes it read as a door.
+    if (fade === undefined) {
+      ctx.strokeStyle = shade(col, -34);
+      ctx.lineWidth = 1.2;
+      for (const f of [0.35, 0.68]) {
+        const z = doorH * f;
+        const ex = L.hx + Math.cos(a) * leafLen;
+        const ey = L.hy + Math.sin(a) * leafLen;
+        ctx.beginPath();
+        ctx.moveTo(isoX(L.hx, L.hy, z), isoY(L.hx, L.hy, z));
+        ctx.lineTo(isoX(ex, ey, z), isoY(ex, ey, z));
+        ctx.stroke();
+      }
+    }
+    // A handle on the swinging edge.
+    const hxx = L.hx + Math.cos(a) * leafLen * 0.84;
+    const hyy = L.hy + Math.sin(a) * leafLen * 0.84;
+    drawBoxRot(hxx, hyy, doorH * 0.5, 3.5, 3.5, 3.5, '#c9a227', a, fade);
   }
 }
 
@@ -5274,17 +5401,11 @@ function drawStanding() {
       } else if (t === HEDGEHOG) {
         drawHedgehog(wx, wy, h, col, fade);
       } else if (t === WALL) {
-        // Inner walls are drawn narrower than their tile. Only the edges that are not
-        // joined to another wall get pulled in, so a run of wall still meets up
-        // seamlessly along its length and only its sides get slimmer. The boundary is
-        // untouched: an edge facing off the map never counts as exposed, so the outer
-        // ring keeps its full thickness and its full height.
-        const IN = TILE * 0.17;
-        const x0 = wx + ((open & 8) ? IN : 0);
-        const x1 = wx + TILE - ((open & 2) ? IN : 0);
-        const y0 = wy + ((open & 1) ? IN : 0);
-        const y1 = wy + TILE - ((open & 4) ? IN : 0);
-        drawBox(x0, y0, 0, x1 - x0, y1 - y0, h, col, fade, decal, open);
+        const b = wallBox(gx, gy);
+        // Decals only go on a face wide enough to carry one. Cracks and tally marks
+        // squeezed onto a thin face were what looked like glitching.
+        const dec = (b.w > TILE * 0.7 && b.d > TILE * 0.7) ? decal : null;
+        drawBox(b.x, b.y, 0, b.w, b.d, h, col, fade, dec, open);
       } else {
         drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
         if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
@@ -5816,12 +5937,32 @@ function drawPause() {
     pauseRects.push({ x: x, y: menuY, w: bwid, h: 34, key: it.key });
   });
 
-  // Starting over is easy to hit by accident, so it asks first.
+  // Starting over offers the two sides. Picking one is the confirmation, so it
+  // cannot happen by accident and you get to choose who you are at the same time.
   if (confirmRestart) {
-    ctx.fillStyle = '#ff9f43';
-    ctx.font = '800 13px -apple-system, system-ui, sans-serif';
-    ctx.fillText('Tap Start over again to lose this run',
-      VW / 2, menuY + 54);
+    const sides = [
+      { key: 'asA', label: 'As a ' + TH().aName, tint: '#7fc7ff' },
+      { key: 'asB', label: 'As a ' + TH().bName, tint: '#8ecf4a' },
+    ];
+    const sy = menuY + 42;
+    const sw2 = Math.min(170, (VW - 60) / 2);
+    const stot = sides.length * sw2 + bgap2;
+    sides.forEach((sd, i) => {
+      const x = VW / 2 - stot / 2 + i * (sw2 + bgap2);
+      ctx.fillStyle = 'rgba(24,30,42,0.94)';
+      ctx.fillRect(x, sy, sw2, 32);
+      ctx.strokeStyle = sd.tint;
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(x, sy, sw2, 32);
+      ctx.fillStyle = sd.tint;
+      ctx.font = '800 13px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(sd.label, x + sw2 / 2, sy + 21);
+      pauseRects.push({ x: x, y: sy, w: sw2, h: 32, key: sd.key });
+    });
+    ctx.fillStyle = 'rgba(238,242,248,0.42)';
+    ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText('this ends the run you are in', VW / 2, sy + 48);
   } else {
     ctx.fillStyle = 'rgba(238,242,248,0.42)';
     ctx.font = '700 12px -apple-system, system-ui, sans-serif';

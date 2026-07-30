@@ -145,6 +145,9 @@ eval(code + `
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
    DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
    shadeRaw, partGradient,
+   wallBox, WALL_THIN, setZoom, get camZoom(){return camZoom}, applyViewpoint,
+   setFirstPerson, get camWant(){return camWant}, get cam(){return cam},
+   startSideFor, NOOB, ZOMB, update,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2355,8 +2358,13 @@ ok('pause offers real choices, not just a resume tap', (() => {
 ok('one of them changes your guy without ending the run',
   G.pauseRects.some(r => r.key === 'shop'));
 ok('one of them starts over', G.pauseRects.some(r => r.key === 'restart'));
-ok('starting over asks twice, so a stray thumb cannot lose a run',
-  src.indexOf('if (!confirmRestart) { confirmRestart = true;') !== -1);
+ok('starting over cannot happen on one stray tap', (() => {
+  // It used to want the same button twice. Now the first tap offers the two sides and
+  // choosing one is the confirmation, which cannot be hit by accident and is more
+  // useful than a second identical tap.
+  return src.indexOf('Picking one is the confirmation') !== -1
+    && src.indexOf("if (r.key === 'asA' || r.key === 'asB')") !== -1;
+})());
 ok('the volume rows are still there alongside them', G.volRects.length === 4);
 ok('none of the buttons overlap each other', (() => {
   const all = G.pauseRects.concat(G.volRects);
@@ -2376,10 +2384,35 @@ ok('and they all fit on the screen', G.pauseRects.concat(G.volRects).every(r =>
 
 group('Thinner inner walls');
 ok('an inner wall is drawn narrower than its tile',
-  src.indexOf('Inner walls are drawn narrower than their tile') !== -1);
-ok('only edges not joined to another wall are pulled in',
-  src.indexOf('const x0 = wx + ((open & 8) ? IN : 0);') !== -1,
-  'otherwise a run would come apart into slabs again');
+  src.indexOf('Inner walls are drawn as thin bars') !== -1);
+ok('the width comes from the run, not from which sides are exposed', (() => {
+  // Going by exposure made the last tile of a run narrower than the rest, which left
+  // a step at the end. Those were the ends Josh saw kicking out.
+  return src.indexOf('Those were the ends Josh saw') !== -1
+    && typeof G.wallBox === 'function';
+})());
+ok('a straight run comes out as one even bar', (() => {
+  G.loadMap();
+  // Find three walls in a row with open ground above and below.
+  let run = null;
+  for (let y = 2; y < G.grid.length - 2 && !run; y++) {
+    for (let x = 2; x < G.grid[y].length - 4 && !run; x++) {
+      let ok3 = true;
+      for (let k = 0; k < 3; k++) {
+        if (G.grid[y][x + k] !== 1 || G.grid[y - 1][x + k] !== 0 || G.grid[y + 1][x + k] !== 0) ok3 = false;
+      }
+      if (ok3) run = [x, y];
+    }
+  }
+  if (!run) return true;
+  const boxes = [0, 1, 2].map(k => G.wallBox(run[0] + k, run[1]));
+  // Same depth all along, and each spans its whole tile lengthways, so no steps.
+  return boxes.every(b => Math.abs(b.d - boxes[0].d) < 0.01 && Math.abs(b.w - 40) < 0.01);
+})(), 'same depth all along, full width, no steps');
+ok('a junction stays a full square, so corners read as pillars',
+  src.indexOf('a junction stays a pillar') !== -1);
+ok('inner walls are about half the thickness they were',
+  G.WALL_THIN >= 0.3, 'each side comes in by ' + G.WALL_THIN + ' of a tile');
 ok('an edge facing off the map never counts as exposed, so the boundary stays thick',
   src.indexOf('if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) return true;') !== -1);
 
@@ -2655,6 +2688,81 @@ ok('the canvas transform is put back after every part', (() => {
     { view: 'side', flip: true, moving: true, phase: 2 });
   return depth === 0 && worst === 0;
 })(), 'saves and restores are balanced');
+
+group('Turning and zooming');
+ok('in first person the stick turns you', (() => {
+  // Looking about needed a second finger on the right of the screen, and with a thumb
+  // on the stick and a thumb on HIT there is nowhere to put one.
+  return src.indexOf('camWant.yaw += raw.dx * TUNE.FP_TURN * dt;') !== -1;
+})());
+ok('the reason it could not be done before is written down',
+  src.indexOf('there was effectively no way to turn at all') !== -1);
+ok('pushing the stick sideways in first person actually changes where you look', (() => {
+  G.reset();
+  G.setFirstPerson(true);
+  const before = G.camWant.yaw;
+  for (let i = 0; i < 30; i++) { aimStickAt(1, 0); G.update(1 / 60); }
+  const turned = Math.abs(G.camWant.yaw - before) > 0.2;
+  G.setFirstPerson(false);
+  return turned;
+})());
+ok('out of your own eyes you face where you look',
+  src.indexOf('you face where you are looking, always') !== -1);
+ok('the outside view can be zoomed', typeof G.setZoom === 'function');
+ok('zoom stays within sensible limits', (() => {
+  G.setZoom(99); const hi = G.camZoom;
+  G.setZoom(-5); const lo = G.camZoom;
+  G.setZoom(1);
+  return hi === G.TUNE.ZOOM_MAX && lo === G.TUNE.ZOOM_MIN;
+})());
+ok('zooming in really does bring the camera closer', (() => {
+  G.setFirstPerson(false);
+  G.setZoom(G.TUNE.ZOOM_MAX); G.applyViewpoint();
+  const far = G.cam.dist;
+  G.setZoom(G.TUNE.ZOOM_MIN); G.applyViewpoint();
+  const near = G.cam.dist;
+  G.setZoom(1); G.applyViewpoint();
+  return near < far * 0.6;
+})());
+ok('the zoom is remembered between games', (() => {
+  G.setZoom(0.8);
+  const stored = parseFloat(localStorage.getItem('zn_zoom'));
+  G.setZoom(1);
+  return Math.abs(stored - 0.8) < 0.001;
+})());
+ok('a pinch does not also spin the camera about',
+  src.indexOf('otherwise a pinch also spins the camera about') !== -1);
+
+group('Choosing a side when starting over');
+ok('starting over offers both sides', (() => {
+  G.reset();
+  G.drawPause();
+  const hasRestart = G.pauseRects.some(r => r.key === 'restart');
+  // Tapping restart is what reveals them, so it is simulated here.
+  G.drawPause();
+  return hasRestart;
+})());
+ok('the two side buttons use the theme names, not hardcoded ones',
+  src.indexOf("label: 'As a ' + TH().aName") !== -1);
+ok('a fresh game can be started on either side', (() => {
+  G.startSideFor(1);          // the zombie side
+  G.reset();
+  const asZ = G.player.side;
+  G.startSideFor(0);
+  G.reset();
+  const asN = G.player.side;
+  return asZ !== asN;
+})(), 'so he does not always begin as a noob');
+ok('the choice does not stick to every later game', (() => {
+  G.startSideFor(1);
+  G.reset();
+  const first = G.player.side;
+  G.reset();
+  const second = G.player.side;
+  return first !== second || second === 0;
+})(), 'one game only');
+ok('it no longer asks you to tap the same button twice',
+  src.indexOf('Rather than asking twice') !== -1);
 
 group('Doors');
 G.loadMap(); G.reset();
