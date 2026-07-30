@@ -370,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v41';
+const VERSION = 'v42';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1527,7 +1527,20 @@ function layout() {
 // big reduction. Characters ended up covered in solid black patches. Darkening now
 // scales the colour instead, so a dark colour gets darker but keeps its shape, and
 // lightening moves it towards white by a fraction rather than by a fixed step.
+// shade() is called several times per part per frame, and it parses a hex string and
+// does floating point work each time. The answers never change, so they are kept.
+const _shadeCache = new Map();
 function shade(hex, amt) {
+  const key = hex + '|' + amt;
+  const hit = _shadeCache.get(key);
+  if (hit !== undefined) return hit;
+  const out = shadeRaw(hex, amt);
+  if (_shadeCache.size > 4000) _shadeCache.clear();
+  _shadeCache.set(key, out);
+  return out;
+}
+
+function shadeRaw(hex, amt) {
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   if (amt < 0) {
@@ -6162,22 +6175,47 @@ function paintFigure(c, cx, footY, H, look, o) {
   c.globalAlpha = 1;
 }
 
+// Gradients, kept and reused instead of being built fresh every time.
+//
+// A gradient is tied to the coordinates it was made with, so the obvious way to write
+// this is to build a new one per part per frame. With a full wave on screen that is
+// roughly four hundred and fifty allocations a frame, which on an iPad is exactly how
+// a game ends up stuttering. So each one is built once at the origin and the canvas is
+// moved to the part instead, which means the same gradient serves every part that
+// shares a colour and a size. Sizes cluster tightly, so nearly everything is a hit.
+const _gradCache = new Map();
+function partGradient(c, w, h, col) {
+  const key = col + '|' + Math.round(w) + '|' + Math.round(h);
+  let g = _gradCache.get(key);
+  if (!g) {
+    g = c.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, shade(col, 26));
+    g.addColorStop(.55, col);
+    g.addColorStop(1, shade(col, -30));
+    // A cap, so a long session cannot grow this without bound.
+    if (_gradCache.size > 900) _gradCache.clear();
+    _gradCache.set(key, g);
+  }
+  return g;
+}
+
 // A part with light from the upper left. Same as the shop's limb(), but it takes the
 // context so the game and the shop can both use it.
 function limbOn(c, x, y, w, h, col, r) {
-  const g = c.createLinearGradient(x, y, x + w, y + h);
-  g.addColorStop(0, shade(col, 26));
-  g.addColorStop(.55, col);
-  g.addColorStop(1, shade(col, -30));
-  c.fillStyle = g;
-  rr(c, x, y, w, h, r === undefined ? Math.min(w, h) * .34 : r);
+  c.save();
+  c.translate(x, y);
+  c.fillStyle = partGradient(c, w, h, col);
+  rr(c, 0, 0, w, h, r === undefined ? Math.min(w, h) * .34 : r);
   c.fill();
-  // A thin darker edge so parts next to each other stay separate. Faint on purpose.
+  // A thin darker edge so parts next to each other stay separate. Faint on purpose:
+  // a heavy outline on a small part is what made the characters look black.
+  const wasAlpha = c.globalAlpha;
   c.strokeStyle = shade(col, -46);
-  c.globalAlpha = (c.globalAlpha === 1 ? 0.28 : c.globalAlpha * 0.28);
+  c.globalAlpha = wasAlpha * 0.28;
   c.lineWidth = 1;
   c.stroke();
-  c.globalAlpha = 1;
+  c.globalAlpha = wasAlpha;
+  c.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -6350,14 +6388,17 @@ function rr(c, x, y, w, h, r) {
 
 // A part with light coming from the upper left, so it reads as round rather than
 // flat. One gradient per part is what gives the whole figure some form.
+// The same thing as limbOn but with no edge stroke, used for weapon parts where an
+// outline on a three pixel sight would be most of the sight. It goes through the same
+// gradient cache: it used to build its own every time, which was every weapon part on
+// every character on every frame.
 function limb(c, x, y, w, h, col, r) {
-  const g = c.createLinearGradient(x, y, x + w, y + h);
-  g.addColorStop(0, shade(col, 26));
-  g.addColorStop(.55, col);
-  g.addColorStop(1, shade(col, -30));
-  c.fillStyle = g;
-  rr(c, x, y, w, h, r === undefined ? Math.min(w, h) * .34 : r);
+  c.save();
+  c.translate(x, y);
+  c.fillStyle = partGradient(c, w, h, col);
+  rr(c, 0, 0, w, h, r === undefined ? Math.min(w, h) * .34 : r);
   c.fill();
+  c.restore();
 }
 
 // The shop portrait: the same painter as the game, face on and much larger, with a

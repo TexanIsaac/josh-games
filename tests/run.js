@@ -144,6 +144,7 @@ eval(code + `
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
    DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
+   shadeRaw, partGradient,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2604,6 +2605,56 @@ ok('and you are back on foot afterwards, not stuck', (() => {
   G.reset();
   return G.player.tank === null;
 })());
+
+group('It has to stay fast on an iPad');
+ok('gradients are reused rather than rebuilt every frame', (() => {
+  // Counting how many are actually created while drawing a crowd of characters. Built
+  // per part per frame this would be in the hundreds.
+  let made = 0;
+  const c = new Proxy({}, {
+    get: (o, k) => k === 'measureText' ? (() => ({ width: 1 }))
+      : k === 'canvas' ? {}
+      : (k === 'createLinearGradient' || k === 'createRadialGradient')
+        ? (() => { made++; return { addColorStop: () => {} }; })
+        : (() => {}),
+    set: () => true,
+  });
+  const look = G.lookFor({ skin: 0, shirt: 0, legs: 0, hat: 2, face: 1, weapon: 3 });
+  // Thirty characters, all the same size and colours, which is the normal case.
+  for (let i = 0; i < 30; i++) {
+    G.paintFigure(c, 100, 200, 90, look, { view: 'front', phase: i, moving: true });
+  }
+  console.log('    ' + made + ' gradients built for 30 characters');
+  // A single figure has about fifteen parts, so uncached this would be over 400.
+  return made < 60;
+})(), 'the cache is doing its job');
+ok('the cache cannot grow without bound',
+  src.indexOf('_gradCache.size > 900') !== -1
+  && src.indexOf('_shadeCache.size > 4000') !== -1);
+ok('shade gives the same answer whether cached or not', (() => {
+  const a = G.shade('#2f9be8', -30);
+  const b = G.shade('#2f9be8', -30);
+  const c2 = G.shadeRaw('#2f9be8', -30);
+  return a === b && a === c2;
+})());
+ok('the canvas transform is put back after every part', (() => {
+  // A missing restore would leave the whole world drawn at an offset.
+  let depth = 0, worst = 0;
+  const c = new Proxy({}, {
+    get: (o, k) => k === 'measureText' ? (() => ({ width: 1 }))
+      : k === 'canvas' ? {}
+      : (k === 'createLinearGradient' || k === 'createRadialGradient')
+        ? (() => ({ addColorStop: () => {} }))
+        : k === 'save' ? (() => { depth++; })
+        : k === 'restore' ? (() => { depth--; if (depth < worst) worst = depth; })
+        : (() => {}),
+    set: () => true,
+  });
+  G.paintFigure(c, 100, 200, 90,
+    G.lookFor({ skin: 0, shirt: 0, legs: 0, hat: 4, face: 3, weapon: 6 }),
+    { view: 'side', flip: true, moving: true, phase: 2 });
+  return depth === 0 && worst === 0;
+})(), 'saves and restores are balanced');
 
 group('Doors');
 G.loadMap(); G.reset();
