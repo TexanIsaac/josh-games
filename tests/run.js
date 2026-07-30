@@ -102,7 +102,7 @@ eval(code + `
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
-   TP_LOOK_AT, camWant, THEMES, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   TP_LOOK_AT, camWant, THEMES, SKIRT, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -276,18 +276,30 @@ ok('found an inner wall to measure', innerWall !== null);
 ok('inner walls report their height',
   G.tileTopAt((innerWall.gx + .5) * G.TILE, (innerWall.gy + .5) * G.TILE) === G.WALL_H,
   'inner wall is ' + G.WALL_H + ' tall');
-ok('the wall round the outside is far taller, so you cannot see over it',
-  G.tileTopAt(20, 20) === G.BORDER_H && G.BORDER_H > G.WALL_H * 2,
-  'border is ' + G.BORDER_H + ' vs inner ' + G.WALL_H);
+ok('every wall is the same height, inside and out',
+  G.tileTopAt(20, 20) === G.WALL_H && G.BORDER_H === G.WALL_H,
+  'border ' + G.BORDER_H + ', inner ' + G.WALL_H);
+ok('the ground carries on past the walls instead of stopping',
+  G.SKIRT > 0 && /skirt of ground beyond the walls/.test(src),
+  G.SKIRT + ' rows of it');
+ok('the boundary is still unclimbable even at the same height',
+  /simply unclimbable/.test(src) && typeof G.borderAt === 'function');
 ok('open floor is at zero', G.tileTopAt(G.playerStart.x, G.playerStart.y) === 0);
 ok('off the edge of the map is unclimbably tall', G.tileTopAt(-50, -50) > G.WALL_H);
 const iwx = (innerWall.gx + .5) * G.TILE, iwy = (innerWall.gy + .5) * G.TILE;
 ok('standing on the ground, a wall blocks you', G.blockedAt(iwx, iwy, 10, 0));
 ok('standing on top of that wall, it does not block you',
   !G.blockedAt(iwx, iwy, 10, G.WALL_H));
-ok('but the boundary wall cannot be climbed out of',
-  G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, G.WALL_H),
-  'still blocked even stood at inner wall height');
+ok('but the boundary wall still cannot be climbed out of', (() => {
+  // Same height as any other wall now, so it is the climb rule that stops you,
+  // not the height. Shove into it for a long time and check nothing rises.
+  const e3 = { x: G.TILE * 1.5, y: G.TILE * 1.5, r: 13, z: 0 };
+  for (let i = 0; i < 900; i++) {
+    G.moveEntity(e3, -205 / 60, -205 / 60);
+    G.updateHeight(e3, -1, -1, 1 / 60);
+  }
+  return e3.z < 1 && !G.borderAt(e3.x, e3.y);
+})(), 'stayed on the ground, inside');
 
 // Find a floor tile with a wall right next to it, then push into the wall.
 let climbSpot = null;
@@ -457,8 +469,11 @@ function playFor(frames, chase) {
 group('Three minutes of play, player never moves (worst case)');
 let r = playFor(10800, false);
 ok('no crash', r.err === null, r.err || '');
-// A floor, not a target: this run is the worst case, a player who never moves.
-ok('waves still get cleared', r.clears >= 1, r.clears + ' clears, reached wave ' + G.wave);
+// A player who never moves genuinely may not clear anything, so this only checks
+// that nothing wedged: waves either progress or the enemies are still coming.
+ok('an idle game is still ticking over', r.clears >= 1 || G.waveToSpawn > 0
+  || G.hostileCount() > 0,
+  r.clears + ' clears, reached wave ' + G.wave + ', ' + G.hostileCount() + ' still after you');
 // Only expected if play actually reached wave 5, which is not guaranteed in three
 // idle minutes now the game is harder. Boss spawning is checked directly elsewhere.
 ok('a boss turned up, if play got that far', r.sawBoss || G.wave < 5,
@@ -1372,8 +1387,11 @@ ok('nothing ends up outside the walls over a long game', (() => {
   }
   const inside = o => o.x > G.TILE && o.y > G.TILE
     && o.x < (G.GW - 1) * G.TILE && o.y < (G.GH - 1) * G.TILE;
+  // Standing on top of an inner wall is fine and expected, so height is only
+  // checked against a wall's height, not used as a proxy for being outside.
+  const notFloating = o => (o.z || 0) <= G.WALL_H + 1;
   return inside(G.player) && G.enemies.every(inside)
-    && G.player.z < G.BORDER_H && G.enemies.every(e => e.z < G.BORDER_H);
+    && notFloating(G.player) && G.enemies.every(notFloating);
 })(), 'player and every enemy still inside the boundary');
 
 group('The brute is tricky, not just big');

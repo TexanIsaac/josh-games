@@ -160,7 +160,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v21';
+const VERSION = 'v22';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -728,10 +728,15 @@ function shade(hex, amt) {
 //  made an earlier version look like Lego instead of Roblox.
 // ---------------------------------------------------------------------------
 const WALL_H = 58, CRATE_H = 26;
-// The wall around the outside is much taller than the inner ones. At one block
-// high you could see straight over the boundary into the sky from this camera
-// angle, and the arena looked like it had an open end.
-const BORDER_H = 168;
+// Every wall is the same height, inside and out. The boundary used to be much
+// taller to stop you seeing over the edge into the sky, but a wall of a different
+// height round the outside looked wrong. Instead the ground carries on past the
+// edge of the map, so there is grass out there rather than nothing, and the
+// boundary is simply unclimbable.
+const BORDER_H = 58;
+// How many rows of plain ground to draw beyond the map, so the world does not
+// visibly stop at the wall.
+const SKIRT = 9;
 function isBorder(gx, gy) {
   return gx === 0 || gy === 0 || gx === GW - 1 || gy === GH - 1;
 }
@@ -2824,6 +2829,28 @@ function drawGuy(g, side, rankIdx, isPlayer) {
 // which is what a Roblox baseplate looks like. The studs live here and nowhere
 // else: putting them on the walls as well is what made it look like Lego.
 function drawFloor() {
+  // A plain skirt of ground beyond the walls first, so looking over the boundary
+  // shows more ground instead of open sky.
+  for (let gy = -SKIRT; gy < GH + SKIRT; gy++) {
+    for (let gx = -SKIRT; gx < GW + SKIRT; gx++) {
+      if (gx >= 0 && gy >= 0 && gx < GW && gy < GH) continue;
+      const wx = gx * TILE, wy = gy * TILE;
+      if (!boxOnScreen(wx, wy, 0)) continue;
+      // Fading out with distance from the map, so the edge is not a hard line.
+      const out = Math.max(0, Math.max(-gx, gx - (GW - 1), -gy, gy - (GH - 1)));
+      const fade = Math.min(1, out / (SKIRT + 2));
+      const base = ((gx + gy) % 2 === 0) ? GRASS_A : GRASS_B;
+      ctx.fillStyle = shade(base, -Math.round(fade * 26));
+      ctx.beginPath();
+      ctx.moveTo(isoX(wx, wy, 0), isoY(wx, wy, 0));
+      ctx.lineTo(isoX(wx + TILE, wy, 0), isoY(wx + TILE, wy, 0));
+      ctx.lineTo(isoX(wx + TILE, wy + TILE, 0), isoY(wx + TILE, wy + TILE, 0));
+      ctx.lineTo(isoX(wx, wy + TILE, 0), isoY(wx, wy + TILE, 0));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
       if (grid[gy][gx] !== 0) continue;
