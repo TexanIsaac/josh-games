@@ -143,6 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2603,6 +2604,92 @@ ok('and you are back on foot afterwards, not stuck', (() => {
   G.reset();
   return G.player.tank === null;
 })());
+
+group('Doors');
+G.loadMap(); G.reset();
+ok('there are doors on the map', (() => {
+  let n = 0;
+  for (let y = 0; y < G.grid.length; y++)
+    for (let x = 0; x < G.grid[y].length; x++) if (G.grid[y][x] === G.DOOR) n++;
+  return n >= 4;
+})());
+ok('they are spread about rather than all in one corner', (() => {
+  const at = [];
+  for (let y = 0; y < G.grid.length; y++)
+    for (let x = 0; x < G.grid[y].length; x++) if (G.grid[y][x] === G.DOOR) at.push([x, y]);
+  const ys = at.map(a => a[1]);
+  return (Math.max.apply(null, ys) - Math.min.apply(null, ys)) > 8;
+})());
+ok('every door is a real doorway, in a wall with floor either side', (() => {
+  const bad = [];
+  for (let y = 1; y < G.grid.length - 1; y++) {
+    for (let x = 1; x < G.grid[y].length - 1; x++) {
+      if (G.grid[y][x] !== G.DOOR) continue;
+      const horiz = G.grid[y][x - 1] === 1 && G.grid[y][x + 1] === 1;
+      const vert = G.grid[y - 1][x] === 1 && G.grid[y + 1][x] === 1;
+      if (!horiz && !vert) bad.push(x + ',' + y);
+    }
+  }
+  if (bad.length) console.log('    not in a wall: ' + bad.join(' '));
+  return bad.length === 0;
+})(), 'so walking through one goes somewhere');
+
+ok('a door starts shut and is solid', (() => {
+  G.loadMap();
+  let d = null;
+  for (let y = 0; y < G.grid.length && !d; y++)
+    for (let x = 0; x < G.grid[y].length && !d; x++) if (G.grid[y][x] === G.DOOR) d = [x, y];
+  return !G.isDoorOpen(d[0], d[1]) && G.topHeightAt(d[0], d[1]) > 30;
+})());
+ok('walking up to one opens it, and it is then not in the way', (() => {
+  G.loadMap(); G.reset();
+  let d = null;
+  for (let y = 0; y < G.grid.length && !d; y++)
+    for (let x = 0; x < G.grid[y].length && !d; x++) if (G.grid[y][x] === G.DOOR) d = [x, y];
+  G.player.x = d[0] * 40 + 20;
+  G.player.y = d[1] * 40 + 20;
+  for (let i = 0; i < 60; i++) G.updateDoors(1 / 60);
+  return G.isDoorOpen(d[0], d[1]) && G.topHeightAt(d[0], d[1]) === 0;
+})(), 'no special case in the collision code, it is simply zero high');
+ok('it closes again once nobody is near', (() => {
+  G.player.x = 40 * 1.5; G.player.y = 40 * 1.5;
+  let d = null;
+  for (let y = 0; y < G.grid.length && !d; y++)
+    for (let x = 0; x < G.grid[y].length && !d; x++) if (G.grid[y][x] === G.DOOR) d = [x, y];
+  for (let i = 0; i < 300; i++) G.updateDoors(1 / 60);
+  return !G.isDoorOpen(d[0], d[1]);
+})());
+ok('a shut door stops a shot and an open one lets it through', (() => {
+  G.loadMap(); G.reset();
+  let d = null;
+  for (let y = 0; y < G.grid.length && !d; y++)
+    for (let x = 0; x < G.grid[y].length && !d; x++) if (G.grid[y][x] === G.DOOR) d = [x, y];
+  const px = d[0] * 40 + 20, py = d[1] * 40 + 20;
+  const shut = G.solidAt(px, py);
+  G.player.x = px; G.player.y = py;
+  for (let i = 0; i < 60; i++) G.updateDoors(1 / 60);
+  const open = G.solidAt(px, py);
+  return shut === true && open === false;
+})());
+ok('a room behind a door is never sealed off', (() => {
+  // The pathfinder treats a door as a way through even when it is shut. If it did not,
+  // sealPockets would wall in any room only reachable through a door and every enemy
+  // in there would be stranded, which is a bug this suite has caught before.
+  G.loadMap();
+  return src.indexOf("grid[ny][nx] !== DOOR") !== -1;
+})());
+ok('enemies can still reach the player with doors in the way', (() => {
+  G.loadMap(); G.reset();
+  G.buildFlow(Math.floor(G.player.x / 40), Math.floor(G.player.y / 40));
+  const bad = [];
+  for (const sp of G.spawnPoints) {
+    const gx = Math.floor(sp.x / 40), gy = Math.floor(sp.y / 40);
+    if (G.flow[gy * G.GW + gx] < 0) bad.push(gx + ',' + gy);
+  }
+  if (bad.length) console.log('    stranded spawn points: ' + bad.join(' '));
+  return bad.length === 0;
+})(), 'every spawn point still has a route');
+G.loadMap(); G.reset();
 
 group('Getting out of a tank');
 ok('you can leave on your own terms', typeof G.leaveTank === 'function');

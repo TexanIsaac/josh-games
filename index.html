@@ -370,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v40';
+const VERSION = 'v41';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1020,13 +1020,13 @@ const TUNE = {
 const MAP = `
 ############################################
 #Z......#....S.....C....#.........#.......Z#
-#.......#..C....C....B..#...CC....#...H....#
+#.......D..C....C....B..D...CC....D...H....#
 #...C...#.......#####...#....S....#...C....#
 #.......#..S....#...#...######.#####.......#
 #.####..#...C...#...#....BB...#....C...S...#
 #....#..#.......#...#####..####.....H......#
 #....#......C...#.......#..#......C....C...#
-#....######..S..#..CC...#..#.....S.....#####
+#....#D####..S..D..CC...#..#.....S.....#D###
 #...............#.......#..#...H...........#
 #..C....#####...#####.###..#####.####...C..#
 #.......#....B.....P....S..................#
@@ -1034,7 +1034,7 @@ const MAP = `
 #####...#####..C....#..C...#.......S.......#
 #....S......#.......#......#....C......#####
 #..C....C...#..#####...BB...####.....H.....#
-#...........#..#....C...C......#....C..C...#
+#...........D..D....C...C......D....C..C...#
 #####.###...#..#.....S.....#####...........#
 #.......#...#..######.##...#.......#####...#
 #..C....#..H...#....#..#...#....C......#...#
@@ -2008,7 +2008,7 @@ function resize() {
 //  The level, loaded from the MAP text
 // ---------------------------------------------------------------------------
 const TILE = 40;
-const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5;
+const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5, DOOR = 6;
 
 // Everything that can stand in your way, in one table. Add a line to add an obstacle.
 //   h            how tall it is. Walls work theirs out per tile, so theirs is null.
@@ -2021,12 +2021,67 @@ const TILE_KIND = {
   3: { name: 'barrel',   h: 34,       hp: 40,   color: '#b4552f', explodes: true, soft: true },
   4: { name: 'sandbag',  h: 15,       hp: 130,  color: '#c2ad72', soft: true },
   5: { name: 'hedgehog', h: 25,       hp: null, color: '#8f959e' },
+  6: { name: 'door',     h: 52,       hp: 200,  color: '#8a5a2b', door: true },
 };
 function tileKind(t) { return TILE_KIND[t] || null; }
 
 // How much punishment each tile has left. Walls and crates start whole; a tile that
 // runs out is cleared away and leaves floor behind.
 let tileHp = [];
+
+// ---------------------------------------------------------------------------
+//  DOORS
+//
+//  A door is solid until somebody walks up to it, then it swings open and anything
+//  can go through. It closes again once nobody is near.
+//
+//  It is done by height rather than by adding a special case to the collision code:
+//  an open door is simply zero high, and everything that already asks "how tall is
+//  this tile" then gets the right answer for free, including walking through it,
+//  climbing, and shots passing along a corridor. The pathfinder treats a door as
+//  always passable, because a door is a way through even when it happens to be shut,
+//  and if it did not then a room behind a door would be sealed off and every enemy
+//  in it would be stranded.
+// ---------------------------------------------------------------------------
+let doorOpen = [];      // how far open, 0 shut to 1 wide open
+const DOOR_REACH = TILE * 1.35;
+
+function resetDoors() {
+  doorOpen = [];
+  for (let y = 0; y < GH; y++) {
+    const row = [];
+    for (let x = 0; x < GW; x++) row.push(0);
+    doorOpen.push(row);
+  }
+}
+
+function isDoorOpen(gx, gy) {
+  return !!(doorOpen[gy] && doorOpen[gy][gx] > 0.55);
+}
+
+// Anything with a body counts, so enemies get through as well. A door held open by a
+// crowd stays open, which is what you would expect.
+function updateDoors(dt) {
+  if (!doorOpen.length) return;
+  for (let gy = 1; gy < GH - 1; gy++) {
+    for (let gx = 1; gx < GW - 1; gx++) {
+      if (grid[gy][gx] !== DOOR) { doorOpen[gy][gx] = 0; continue; }
+      const cx = gx * TILE + TILE / 2, cy = gy * TILE + TILE / 2;
+      let near = Math.hypot(player.x - cx, player.y - cy) < DOOR_REACH;
+      if (!near) {
+        for (const e of enemies) {
+          if (e.hp <= 0) continue;
+          if (Math.hypot(e.x - cx, e.y - cy) < DOOR_REACH) { near = true; break; }
+        }
+      }
+      const want = near ? 1 : 0;
+      const was = doorOpen[gy][gx];
+      // Opens quickly and closes more slowly, so it does not shut on your heels.
+      doorOpen[gy][gx] += (want - was) * (1 - Math.exp(-(near ? 11 : 4) * dt));
+      if (was < .5 && doorOpen[gy][gx] >= .5) SFX.ui();
+    }
+  }
+}
 
 // A blast big enough to matter clears obstacles out of its way. The outer ring is
 // never touched: with a hole in the boundary everything would wander off the map.
@@ -2091,6 +2146,7 @@ function loadMap() {
       if (ch === 'B') { row.push(BARREL); continue; }
       if (ch === 'S') { row.push(SANDBAG); continue; }
       if (ch === 'H') { row.push(HEDGEHOG); continue; }
+      if (ch === 'D') { row.push(DOOR); continue; }
       row.push(0);
       const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
       if (ch === 'Z') spawnPoints.push({ x: cx, y: cy });
@@ -2112,6 +2168,7 @@ function loadMap() {
   if (spawnPoints.length === 0) spawnPoints.push({ x: TILE * 2, y: TILE * 2 });
   if (!playerStart.x) playerStart = { x: GW * TILE / 2, y: GH * TILE / 2 };
   sealPockets();
+  resetDoors();
   // Now that the map is final, give everything its health.
   tileHp = [];
   for (let y = 0; y < GH; y++) {
@@ -2136,6 +2193,7 @@ function sealPockets() {
 
   const sx = Math.floor(playerStart.x / TILE), sy = Math.floor(playerStart.y / TILE);
   if (sx < 0 || sy < 0 || sx >= GW || sy >= GH || grid[sy][sx] !== 0) return 0;
+  // A door counts as floor here: a room reached only through a door is not sealed.
 
   seen[sy * GW + sx] = 1;
   q[tail++] = sy * GW + sx;
@@ -2146,7 +2204,7 @@ function sealPockets() {
       const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
       const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0) continue;
+      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
       const ni = ny * GW + nx;
       if (seen[ni]) continue;
       seen[ni] = 1; q[tail++] = ni;
@@ -2173,7 +2231,9 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 140));
 function solidAt(px, py) {
   const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
   if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true;
-  return grid[gy][gx] !== 0;
+  const t = grid[gy][gx];
+  if (t === DOOR) return !isDoorOpen(gx, gy);
+  return t !== 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2348,6 +2408,7 @@ function tileTopAt(px, py) {
   if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return WALL_H * 4;
   const t = grid[gy][gx];
   if (t === WALL) return wallHeightAt(gx, gy);
+  if (t === DOOR) return isDoorOpen(gx, gy) ? 0 : tileKind(DOOR).h;
   const k = tileKind(t);
   return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
 }
@@ -2458,7 +2519,7 @@ function buildFlow(tx, ty) {
   if (!flow) { flow = new Int32Array(size); flowQueue = new Int32Array(size); }
   flow.fill(-1);
   if (tx < 0 || ty < 0 || tx >= GW || ty >= GH) return;
-  if (grid[ty][tx] !== 0) return;
+  if (grid[ty][tx] !== 0 && grid[ty][tx] !== DOOR) return;
 
   let head = 0, tail = 0;
   const start = ty * GW + tx;
@@ -2473,7 +2534,7 @@ function buildFlow(tx, ty) {
       const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
       const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0) continue;
+      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
       const ni = ny * GW + nx;
       if (flow[ni] !== -1) continue;
       flow[ni] = d;
@@ -2495,7 +2556,7 @@ function flowDir(x, y) {
       if (dx === 0 && dy === 0) continue;
       const nx = gx + dx, ny = gy + dy;
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0) continue;
+      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
       // Never cut a diagonal through the corner of a wall.
       if (dx !== 0 && dy !== 0 && (grid[gy][nx] !== 0 || grid[ny][gx] !== 0)) continue;
       const v = flow[ny * GW + nx];
@@ -4112,6 +4173,7 @@ function update(dt) {
     player.squash = Math.max(player.squash || 0, .1 + drop * .1);
   }
 
+  updateDoors(dt);
   updatePlanes(dt);
   updateBombs(dt);
   popBarrels();
@@ -4518,6 +4580,7 @@ function drawPowerupAt(p) {
 function topHeightAt(gx, gy) {
   const t = grid[gy][gx];
   if (t === WALL) return wallHeightAt(gx, gy);
+  if (t === DOOR) return isDoorOpen(gx, gy) ? 0 : (tileKind(DOOR).h);
   const k = tileKind(t);
   return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
 }
@@ -4725,6 +4788,55 @@ function drawSandbagRows(wx, wy, h) {
     ctx.moveTo(isoX(wx + TILE * f, wy + 3, h), isoY(wx + TILE * f, wy + 3, h));
     ctx.lineTo(isoX(wx + TILE * f, wy + TILE - 3, h), isoY(wx + TILE * f, wy + TILE - 3, h));
     ctx.stroke();
+  }
+}
+
+// A door: a frame with two leaves that swing back out of the way. The leaves are
+// drawn as boxes turned about their hinge, so they genuinely swing rather than fading
+// out or sliding sideways.
+function drawDoor(gx, gy, wx, wy, h, col, fade) {
+  const openAmt = (doorOpen[gy] && doorOpen[gy][gx]) || 0;
+  const cx = wx + TILE / 2, cy = wy + TILE / 2;
+
+  // Which way the doorway runs: a door between two walls left and right is a door you
+  // walk through north to south, and the leaves have to swing the other way.
+  const wallLR = (gx > 0 && gx < GW - 1)
+    && (grid[gy][gx - 1] === WALL || grid[gy][gx + 1] === WALL);
+
+  // The frame, always there, so a doorway still reads as a doorway when it is open.
+  const fw = wallLR ? TILE * 0.22 : TILE;
+  const fd = wallLR ? TILE : TILE * 0.22;
+  const postW = wallLR ? fw : TILE * 0.16;
+  const postD = wallLR ? TILE * 0.16 : fd;
+  for (const sgn of [-1, 1]) {
+    const px = wallLR ? cx : cx + sgn * (TILE / 2 - postW / 2);
+    const py = wallLR ? cy + sgn * (TILE / 2 - postD / 2) : cy;
+    drawBox(px - postW / 2, py - postD / 2, 0, postW, postD, h, '#6b6f78', fade);
+  }
+  // A lintel across the top.
+  drawBox(cx - fw / 2, cy - fd / 2, h - 6, fw, fd, 6, '#5b6270', fade);
+
+  // The two leaves. Each hinges at its own side and turns up to a right angle.
+  const swing = openAmt * (Math.PI / 2) * 0.92;
+  const leafLen = TILE * 0.44;
+  const leafThick = TILE * 0.13;
+  for (const sgn of [-1, 1]) {
+    // Hinge position, on the frame.
+    const hx = wallLR ? cx : cx + sgn * (TILE / 2 - 1);
+    const hy = wallLR ? cy + sgn * (TILE / 2 - 1) : cy;
+    // The leaf runs from the hinge towards the middle when shut, and turns away as it
+    // opens. Its middle is half a leaf along that direction.
+    const base = wallLR ? (sgn < 0 ? Math.PI / 2 : -Math.PI / 2)
+                        : (sgn < 0 ? 0 : Math.PI);
+    const a = base + sgn * swing * (wallLR ? -1 : 1);
+    const mx = hx + Math.cos(a) * leafLen / 2;
+    const my = hy + Math.sin(a) * leafLen / 2;
+    drawBoxRot(mx, my, 0, leafLen, leafThick, h - 6,
+               sgn < 0 ? col : shade(col, -12), a, fade);
+    // A handle, on the swinging edge.
+    const hxx = hx + Math.cos(a) * leafLen * 0.82;
+    const hyy = hy + Math.sin(a) * leafLen * 0.82;
+    drawBoxRot(hxx, hyy, (h - 6) * 0.52, 4, 4, 4, '#c9a227', a, fade);
   }
 }
 
@@ -5144,6 +5256,8 @@ function drawStanding() {
         drawBarrel(wx, wy, h, col, fade);
       } else if (t === SANDBAG) {
         drawSandbags(wx, wy, h, col, fade);
+      } else if (t === DOOR) {
+        drawDoor(gx, gy, wx, wy, h, col, fade);
       } else if (t === HEDGEHOG) {
         drawHedgehog(wx, wy, h, col, fade);
       } else if (t === WALL) {
