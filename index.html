@@ -260,7 +260,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v33';
+const VERSION = 'v34';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1567,6 +1567,116 @@ function drawBox(wx, wy, wz, w, d, h, color, alpha, decal, open) {
 // not drawn at all, and no outline is put along that edge, so a run of wall reads
 // as one wall rather than a row of separate cubes. It is faster as well.
 const OPEN_ALL = 15;
+// ---------------------------------------------------------------------------
+//  ROUNDED PARTS
+//
+//  A box has hard stepped edges, and no amount of extra boxes fixes that: stacking
+//  more of them makes a character more detailed but no less blocky. Josh asked
+//  repeatedly for characters that were not block looking, and this is the answer.
+//
+//  The rig does not change at all. Every part is still positioned, turned and sized
+//  exactly as before, and still sorted by depth the same way. All that changes is how
+//  a part is painted: instead of five flat faces, the outline of the projected box is
+//  taken and drawn as one smooth rounded shape with light falling across it. Same
+//  skeleton, soft skin.
+//
+//  It is also cheaper than what it replaces. Five polygons, an outline and up to two
+//  seams per part become one filled path.
+// ---------------------------------------------------------------------------
+
+// The outline of a set of points: the smallest shape that contains all of them.
+// A projected box gives eight points and its silhouette is always their convex hull.
+// Monotone chain, which on eight points is nothing at all to compute.
+function hullOf(pts) {
+  const p = pts.slice().sort((u, v) => (u[0] - v[0]) || (u[1] - v[1]));
+  const cross = (o, a, b) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+// A closed path that passes through the middle of every edge and curves around each
+// corner, which turns a straight sided outline into a smooth one. This single step is
+// what takes the blockiness out.
+function smoothPath(c, pts) {
+  const n = pts.length;
+  if (n < 3) return false;
+  const mid = i => {
+    const a = pts[i], b = pts[(i + 1) % n];
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  };
+  const m0 = mid(0);
+  c.beginPath();
+  c.moveTo(m0[0], m0[1]);
+  for (let i = 1; i <= n; i++) {
+    const v = pts[i % n];
+    const m = mid(i % n);
+    c.quadraticCurveTo(v[0], v[1], m[0], m[1]);
+  }
+  c.closePath();
+  return true;
+}
+
+// Painting one part. Light comes from the upper left in screen space, the same as the
+// portrait in the shop, so a character looks the same in the game as on the card.
+function drawRoundPart(pts, color) {
+  const h = hullOf(pts);
+  if (h.length < 3) return;
+
+  // Smoothing pulls the shape inside the outline, so it is pushed back out from its
+  // own middle to keep parts the size they were before.
+  let gx = 0, gy = 0;
+  for (const q of h) { gx += q[0]; gy += q[1]; }
+  gx /= h.length; gy /= h.length;
+  const GROW = 1.09;
+  const big = [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const q of h) {
+    const x = gx + (q[0] - gx) * GROW, y = gy + (q[1] - gy) * GROW;
+    big.push([x, y]);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+
+  if (!smoothPath(ctx, big)) return;
+  const g = ctx.createLinearGradient(minX, minY, maxX, maxY);
+  g.addColorStop(0, shade(color, 30));
+  g.addColorStop(.5, color);
+  g.addColorStop(1, shade(color, -34));
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // A soft catch of light near the top, which is what sells a part as round rather
+  // than as a flat shape with a gradient on it. Only worth it on parts big enough to
+  // see it, so the small details do not pay for something invisible.
+  const w = maxX - minX, hh = maxY - minY;
+  if (w > 9 && hh > 9) {
+    ctx.save();
+    ctx.clip();
+    const hg = ctx.createRadialGradient(
+      minX + w * .32, minY + hh * .26, 0,
+      minX + w * .32, minY + hh * .26, Math.max(w, hh) * .5);
+    hg.addColorStop(0, 'rgba(255,255,255,0.22)');
+    hg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hg;
+    ctx.fillRect(minX, minY, w, hh);
+    ctx.restore();
+  }
+}
+
 function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   const zt = wz + h, zb = wz;
   if (alpha !== undefined) ctx.globalAlpha = alpha;
@@ -1588,6 +1698,15 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   const bxB = isoX(cB[0], cB[1], zb), byB = isoY(cB[0], cB[1], zb);
   const cxB = isoX(cC[0], cC[1], zb), cyB = isoY(cC[0], cC[1], zb);
   const dxB = isoX(cD[0], cD[1], zb), dyB = isoY(cD[0], cD[1], zb);
+
+  // Anything belonging to a character is drawn as one smooth rounded shape instead
+  // of as a box, and none of the flat face work below applies to it.
+  if (partMode) {
+    drawRoundPart([[ax, ay], [bx, by], [cx, cy], [dx, dy],
+                   [axB, ayB], [bxB, byB], [cxB, cyB], [dxB, dyB]], color);
+    ctx.globalAlpha = 1;
+    return;
+  }
 
   const mid = (u, v) => [(u[0] + v[0]) / 2, (u[1] + v[1]) / 2];
   const mAB = mid(cA, cB), mBC = mid(cB, cC), mCD = mid(cC, cD), mDA = mid(cD, cA);
@@ -1614,9 +1733,7 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
   for (const side of sides) {
     const q = side.p;
     // Square on to the light is brightest, facing away is darkest.
-    const tone = partMode
-      ? -6 + 12 * Math.cos((side.a || 0) - LIGHT_ANGLE)
-      : -24 + 18 * Math.cos((side.a || 0) - LIGHT_ANGLE);
+    const tone = -24 + 18 * Math.cos((side.a || 0) - LIGHT_ANGLE);
     ctx.fillStyle = shade(color, tone);
     ctx.beginPath();
     ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]);
@@ -1624,9 +1741,8 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
     ctx.closePath(); ctx.fill();
 
     // Darker towards the ground, so a face reads as light falling across it
-    // rather than a flat panel of colour. Barely any of it on a small part, where a
-    // heavy band would swallow the whole thing.
-    ctx.fillStyle = shade(color, tone - (partMode ? 5 : 12));
+    // rather than a flat panel of colour.
+    ctx.fillStyle = shade(color, tone - 12);
     ctx.beginPath();
     ctx.moveTo(q[0], mix(q[1], q[7], band)); ctx.lineTo(q[2], mix(q[3], q[5], band));
     ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]);
@@ -1672,10 +1788,6 @@ function drawBoxRot(mx, my, wz, w, d, h, color, rot, alpha, decal, open) {
 
   // An outline, but only along edges that are actually the outside of something.
   // Outlining every tile is what made a run of wall look like a row of cubes.
-  //
-  // Parts get none. On something a few pixels wide the outline is most of the part,
-  // which is what was turning the characters black.
-  if (partMode) { ctx.globalAlpha = 1; return; }
   ctx.strokeStyle = shade(color, -44);
   ctx.lineWidth = 1;
   const edge = (u, v, uu, vv) => {

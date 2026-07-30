@@ -23,9 +23,15 @@ const ROOT = path.join(__dirname, '..');
 const noop = () => {};
 
 // --- the fake browser -------------------------------------------------------
+// A gradient has to be an object with addColorStop on it, because that is what the
+// drawing code does with whatever createLinearGradient hands back. Returning a bare
+// no-op here meant every rounded part threw.
+const mkGradient = () => ({ addColorStop: noop });
 const mkCtx = () => new Proxy({}, {
   get: (t, k) => k === 'measureText' ? ((s) => ({ width: String(s).length * 7 }))
     : k === 'canvas' ? { width: 0, height: 0 }
+    : (k === 'createLinearGradient' || k === 'createRadialGradient'
+       || k === 'createConicGradient' || k === 'createPattern') ? mkGradient
     : (() => {}),
 });
 const mkCanvas = () => ({
@@ -127,6 +133,7 @@ eval(code + `
    get musicVol(){return musicVol}, get sfxVol(){return sfxVol},
    nudgeVolume, get volRects(){return volRects}, drawPause, drawGuy,
    WEAPONS, weaponByKey, paintDoll, paintWeapon, rr, limb, tryAttack,
+   drawRoundPart, hullOf, smoothPath,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2079,12 +2086,57 @@ ok('a part face is measurably brighter than a wall face', (() => {
   console.log('    wall face ' + wall.toFixed(0) + '  part face ' + part.toFixed(0));
   return part > wall * 1.15;
 })(), 'the same blue, lit the same way');
-ok('a part gets no outline at all', (() => {
-  // The outline was covering most of a limb, being a whole pixel on a six pixel box.
-  const i = src.indexOf('if (partMode) { ctx.globalAlpha = 1; return; }');
-  const j = src.indexOf("ctx.strokeStyle = shade(color, -44)");
-  return i !== -1 && j !== -1 && i < j;
-})(), 'it returns before stroking');
+ok('a part never reaches the outline or the flat faces at all', (() => {
+  // Stronger than skipping the stroke: a part branches off before any of the box
+  // drawing, so there is no outline and no flat face to darken it.
+  // Stronger than skipping the stroke: a part branches off before any of the box
+  // drawing, so there is no outline and no flat face to darken it.
+  const i = src.indexOf('drawRoundPart([[ax, ay]');
+  const j = src.indexOf('const sides = [];');
+  const k = src.indexOf('ctx.strokeStyle = shade(color, -44)');
+  return i !== -1 && j !== -1 && k !== -1 && i < j && i < k;
+})(), 'it returns before any of it');
+
+group('Rounded parts instead of boxes');
+ok('there is a painter for smooth parts', typeof G.drawRoundPart === 'function');
+ok('the reason boxes were the problem is written down',
+  src.indexOf('no amount of extra boxes fixes that') !== -1);
+ok('the outline of a set of points is the smallest shape containing them', (() => {
+  // A square with a point inside it: the inside point must not be on the outline.
+  const h = G.hullOf([[0, 0], [10, 0], [10, 10], [0, 10], [5, 5]]);
+  return h.length === 4 && !h.some(q => q[0] === 5 && q[1] === 5);
+})(), 'inner points dropped');
+ok('a projected box gives an outline the part can be drawn round', (() => {
+  const h = G.hullOf([[0, 0], [8, 1], [9, 9], [1, 8], [0, 3], [8, 4], [9, 12], [1, 11]]);
+  return h.length >= 4;
+})());
+ok('the rig is untouched: a part is still positioned and turned as before', (() => {
+  // drawRoundPart is handed the projected corners, so nothing about where a part sits
+  // or which way it faces has changed. Only the painting did.
+  return src.indexOf('drawRoundPart([[ax, ay], [bx, by], [cx, cy], [dx, dy],') !== -1;
+})());
+ok('walls and vehicles are still solid boxes, not blobs', (() => {
+  // partMode is only on while a character is being drawn, so a wall keeps its edges.
+  return G.partMode === false;
+})());
+ok('a whole character draws without throwing, in both themes', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    for (let r = 0; r < 4; r++) {
+      try {
+        G.player.rank = r;
+        G.drawGuy(G.player, G.player.side, r, true);
+      } catch (err) {
+        console.log('    ' + th + ' rank ' + r + ': ' + err.message);
+        G.applyTheme('noobs');
+        return false;
+      }
+    }
+  }
+  G.applyTheme('noobs');
+  G.player.rank = 0;
+  return true;
+})());
 ok('drawing a character turns part mode on and off again', (() => {
   const before = G.partMode;
   G.reset();
