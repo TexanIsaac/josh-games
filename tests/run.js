@@ -114,12 +114,13 @@ eval(code + `
    unlockFormFrom, drawMorphRow,
    get formRects(){return formRects},
    get _occludees(){return _occludees},
-   brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
+   brickAt, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
    applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
    TP_LOOK_AT, camWant, THEMES, SKIRT,
    SKINS, SHIRTS, PANTS, HATS, FACES, PERKS, perkCost, perkLevel, applyPerks,
-   loadSave, writeSave, addCoins, drawShop, get save(){return save}, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
+   loadSave, writeSave, addCoins, drawShop, get save(){return save},
+   bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -911,8 +912,8 @@ ok('the grass is sunlit, not murky',
     const L = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
     return L > 130;
   })());
-ok('walls use real Roblox brick colours, not one flat grey',
-  /const BRICKS = \[/.test(src) && /brickAt/.test(src));
+ok('walls use real brick colours, not one flat grey',
+  /bricks: \[/.test(src) && /brickAt/.test(src));
 ok('a given tile always gets the same brick colour',
   (() => {
     const a = G.brickAt(7, 4), b = G.brickAt(7, 4), c = G.brickAt(8, 4);
@@ -1659,6 +1660,110 @@ ok('the shop screen builds without throwing', (() => {
 ok('there is a preview of your guy', /picture of your guy/.test(src));
 ok('the shop is real HTML rather than drawn by hand',
   /the browser already does scrolling and tapping properly/.test(src));
+
+group('Each theme has its own world');
+G.applyTheme('noobs');
+ok('the two themes use different bricks', (() => {
+  const a = G.bricks().join(',');
+  G.applyTheme('ww2');
+  const b = G.bricks().join(',');
+  G.applyTheme('noobs');
+  return a !== b;
+})());
+ok('wartime bricks are concrete and sand, not primary colours', (() => {
+  G.applyTheme('ww2');
+  const list = G.bricks();
+  G.applyTheme('noobs');
+  // No strongly saturated colour: max and min channel should stay close together.
+  return list.every(c => {
+    const n = parseInt(c.slice(1), 16);
+    const r = (n >> 16) & 255, g2 = (n >> 8) & 255, b = n & 255;
+    return (Math.max(r, g2, b) - Math.min(r, g2, b)) < 90;
+  });
+})(), 'nothing garish in a held position');
+ok('the noobs world keeps its bright Roblox bricks',
+  G.bricks().some(c => c === '#c4281c' || c === '#0d69ac' || c === '#f5cd30'));
+ok('crates differ between themes', (() => {
+  G.applyTheme('noobs'); const a = G.crateColor();
+  G.applyTheme('ww2'); const b = G.crateColor();
+  G.applyTheme('noobs');
+  return a !== b;
+})());
+ok('every theme brick still stands out from the grass', (() => {
+  const L = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    const bad = G.bricks().concat([G.crateColor()]).filter(c =>
+      Math.min(Math.abs(L(c) - 164.6), Math.abs(L(c) - 156.6)) <= 12);
+    if (bad.length) { console.log('    ' + th + ' too close: ' + bad.join(', ')); G.applyTheme('noobs'); return false; }
+  }
+  G.applyTheme('noobs');
+  return true;
+})());
+
+group('Wall art');
+ok('a face is painted by sliding between its corners, not by pixel position',
+  src.indexOf('four corners rather than by pixel position') !== -1);
+ok('faceAt lands inside the face it is given', (() => {
+  const q = [0, 0, 100, 10, 110, 90, 5, 80];
+  const mid = G.faceAt(q, 0.5, 0.5);
+  return mid[0] > 5 && mid[0] < 110 && mid[1] > 10 && mid[1] < 90;
+})());
+ok('the corners of a face map to the corners of the shape', (() => {
+  const q = [0, 0, 100, 10, 110, 90, 5, 80];
+  const tl = G.faceAt(q, 0, 0), br = G.faceAt(q, 1, 1);
+  return Math.abs(tl[0] - 0) < 0.01 && Math.abs(tl[1] - 0) < 0.01
+    && Math.abs(br[0] - 110) < 0.01 && Math.abs(br[1] - 90) < 0.01;
+})());
+ok('a given wall always gets the same marks', (() => {
+  const a = G.decalFor(9, 5), b = G.decalFor(9, 5);
+  return (a === null && b === null) || (typeof a === 'function' && typeof b === 'function');
+})());
+ok('most walls are left plain, so it does not become noise', (() => {
+  let decorated = 0, total = 0;
+  for (let x = 0; x < 44; x++) for (let y = 0; y < 24; y++) {
+    total++;
+    if (G.decalFor(x, y)) decorated++;
+  }
+  const frac = decorated / total;
+  return frac > 0.3 && frac < 0.7;
+})(), 'about half of them');
+ok('the wasteland marks are cracks, boards, tallies and graffiti',
+  /A crack running down the wall/.test(src) && /Planks nailed across/.test(src)
+  && /been counting days/.test(src) && /Graffiti/.test(src));
+ok('the wartime marks are stencils, stripes, sandbags and wire',
+  /stencilled cross/.test(src) && /painted stripe/.test(src)
+  && /Sandbags stacked/.test(src) && /Barbed wire/.test(src));
+ok('every mark draws without throwing', (() => {
+  const q = [0, 0, 100, 10, 110, 90, 5, 80];
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    for (let id = 0; id < 6; id++) {
+      try {
+        if (th === 'ww2') G.decalWar(q, '#c8c8cb', id);
+        else G.decalWasteland(q, '#c8c8cb', id);
+      } catch (e) { console.log('    ' + th + ' id ' + id + ': ' + e.message); G.applyTheme('noobs'); return false; }
+    }
+  }
+  G.applyTheme('noobs');
+  return true;
+})());
+ok('the ground gets its own marks per theme',
+  /Churned mud/.test(src) && /tyre tracks/.test(src)
+  && /Cracked, dried out earth/.test(src) && /An old stain/.test(src));
+ok('both themes draw a whole frame without throwing', (() => {
+  for (const th of ['noobs', 'ww2']) {
+    G.applyTheme(th);
+    G.reset();
+    try {
+      for (let i = 0; i < 120; i++) G.update(1 / 60);
+      G.draw();
+    } catch (e) { console.log('    ' + th + ': ' + e.message); G.applyTheme('noobs'); return false; }
+  }
+  G.applyTheme('noobs');
+  return true;
+})());
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
