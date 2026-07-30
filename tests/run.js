@@ -100,7 +100,8 @@ eval(code + `
    get _occludees(){return _occludees},
    brickAt, BRICKS, GRASS_A, GRASS_B, SKY,
    get bag(){return bag}, get powerups(){return powerups}, get shots(){return shots},
-   applyViewpoint, hurtPlayer,
+   applyViewpoint, hurtPlayer, boxOnScreen, BORDER_H, isBorder, wallHeightAt,
+   TP_LOOK_AT,
    get blasts(){return blasts}, get zaps(){return zaps},
    get freezeT(){return freezeT}, get bagRects(){return bagRects},
    get _standing(){return _standing},
@@ -246,14 +247,29 @@ ok('a dead stick means no movement',
   G.stickToWorld(0, 0).dx === 0 && G.stickToWorld(0, 0).dy === 0);
 
 group('Climbing')
-ok('walls report their height', G.tileTopAt(0, 0) === G.WALL_H,
-  'the border wall is ' + G.tileTopAt(0, 0) + ' tall');
+// Find an inner wall: the ring around the outside is deliberately much taller.
+let innerWall = null;
+for (let gy = 2; gy < G.GH - 2 && !innerWall; gy++) {
+  for (let gx = 2; gx < G.GW - 2 && !innerWall; gx++) {
+    if (G.grid[gy][gx] === 1) innerWall = { gx: gx, gy: gy };
+  }
+}
+ok('found an inner wall to measure', innerWall !== null);
+ok('inner walls report their height',
+  G.tileTopAt((innerWall.gx + .5) * G.TILE, (innerWall.gy + .5) * G.TILE) === G.WALL_H,
+  'inner wall is ' + G.WALL_H + ' tall');
+ok('the wall round the outside is far taller, so you cannot see over it',
+  G.tileTopAt(20, 20) === G.BORDER_H && G.BORDER_H > G.WALL_H * 2,
+  'border is ' + G.BORDER_H + ' vs inner ' + G.WALL_H);
 ok('open floor is at zero', G.tileTopAt(G.playerStart.x, G.playerStart.y) === 0);
 ok('off the edge of the map is unclimbably tall', G.tileTopAt(-50, -50) > G.WALL_H);
-ok('standing on the ground, a wall blocks you',
-  G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, 0));
+const iwx = (innerWall.gx + .5) * G.TILE, iwy = (innerWall.gy + .5) * G.TILE;
+ok('standing on the ground, a wall blocks you', G.blockedAt(iwx, iwy, 10, 0));
 ok('standing on top of that wall, it does not block you',
-  !G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, G.WALL_H));
+  !G.blockedAt(iwx, iwy, 10, G.WALL_H));
+ok('but the boundary wall cannot be climbed out of',
+  G.blockedAt(G.TILE * 0.5, G.TILE * 0.5, 10, G.WALL_H),
+  'still blocked even stood at inner wall height');
 
 // Find a floor tile with a wall right next to it, then push into the wall.
 let climbSpot = null;
@@ -1157,7 +1173,7 @@ ok('walking advances the stride', (() => {
   return G.player.walk > was && G.player.moving === true;
 })(), 'phase advanced');
 ok('the legs step in opposite time to each other',
-  /const stepA = swing \* 2\.6/.test(src) && /swingB/.test(src));
+  /const stepA = swing \* 2\.2/.test(src) && /swingB/.test(src));
 ok('the arms swing opposite to the legs',
   /swinging opposite to the legs/.test(src)
   && /const armA = swingB/.test(src));
@@ -1218,6 +1234,50 @@ G.player.invuln = 0;
 G.hurtPlayer(5, G.TUNE.BITE_PER_HIT);
 ok('but a plain Noob still gets infected', G.player.bite > 0,
   'meter at ' + G.player.bite.toFixed(0));
+
+group('The camera centres on the player');
+G.reset();
+G.setFirstPerson(false);
+G.updateCamera();
+ok('it aims at chest height, not at the floor', G.cam.tz > 10,
+  'looking at z=' + G.cam.tz.toFixed(0) + ' rather than 0');
+ok('the reason is written down', /pushed the player up out of the/.test(src));
+ok('the player lands near the middle of the screen', (() => {
+  // Mid-body, which is what should sit in the middle of the frame.
+  const sy = G.isoY(G.player.x, G.player.y, 22) + G.VH / 2;
+  const sx = G.isoX(G.player.x, G.player.y, 22) + G.VW / 2;
+  return Math.abs(sx - G.VW / 2) < 40 && Math.abs(sy - G.VH / 2) < 60;
+})(), 'within a few dozen pixels of centre');
+ok('the camera sits closer in than it used to, so the player is not tiny',
+  G.FOCAL / G.cam.dist > 2, 'scale ' + (G.FOCAL / G.cam.dist).toFixed(2) + 'x');
+
+group('Limbs swing along the way you are going');
+ok('the swing uses the travel direction, not a fixed world axis',
+  /const mlen = Math\.hypot/.test(src) && /fwdX \* stepA/.test(src));
+ok('the reason is written down', /slide sideways out of the body/.test(src));
+ok('the head no longer slides off the neck', /just pulled it off the neck/.test(src));
+ok('travel direction is recorded as you move', (() => {
+  G.reset();
+  aimStickAt(G.player.x + 200, G.player.y);
+  for (let i = 0; i < 20; i++) { aimStickAt(G.player.x + 200, G.player.y); G.update(1 / 60); }
+  return Math.abs(G.player.mvx) + Math.abs(G.player.mvy) > 0.5;
+})());
+
+group('Culling covers the whole block, not just its middle');
+ok('there is a footprint test', typeof G.boxOnScreen === 'function');
+ok('the reason is written down', src.indexOf('well off screen') !== -1);
+ok('a block right next to the camera is never dropped', (() => {
+  G.reset(); G.updateCamera();
+  // Whatever tile the player is standing on, as a block, must count as visible.
+  const gx = Math.floor(G.player.x / G.TILE), gy = Math.floor(G.player.y / G.TILE);
+  return G.boxOnScreen(gx * G.TILE, gy * G.TILE, G.WALL_H);
+})());
+ok('a block far behind the camera is dropped', (() => {
+  G.reset(); G.updateCamera();
+  const bx = G.player.x - Math.sin(G.cam.yaw) * 3000;
+  const by = G.player.y - Math.cos(G.cam.yaw) * 3000;
+  return !G.boxOnScreen(bx, by, G.WALL_H);
+})());
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));

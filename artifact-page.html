@@ -148,7 +148,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v17';
+const VERSION = 'v18';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -661,6 +661,16 @@ function shade(hex, amt) {
 //  made an earlier version look like Lego instead of Roblox.
 // ---------------------------------------------------------------------------
 const WALL_H = 58, CRATE_H = 26;
+// The wall around the outside is much taller than the inner ones. At one block
+// high you could see straight over the boundary into the sky from this camera
+// angle, and the arena looked like it had an open end.
+const BORDER_H = 168;
+function isBorder(gx, gy) {
+  return gx === 0 || gy === 0 || gx === GW - 1 || gy === GH - 1;
+}
+function wallHeightAt(gx, gy) {
+  return isBorder(gx, gy) ? BORDER_H : WALL_H;
+}
 // Actual Roblox brick colours. A Roblox build is not one shade of grey: it is
 // mostly white and stone grey with the odd bright block, so walls now pick a
 // colour from the tile they sit on. Same tile always gets the same colour, so
@@ -707,7 +717,10 @@ const cam = {
   first: false,          // stood in the player's own shoes
 };
 const FOCAL = 1400;      // smaller means more exaggerated perspective
-const CAM_DIST = 900;    // how far back it sits looking over the shoulder
+const CAM_DIST = 620;    // how far back it sits looking over the shoulder
+// The camera looks down, so aiming at floor level pushed the player up out of the
+// middle of the screen. Aiming at about chest height centres them properly.
+const TP_LOOK_AT = 22;
 const CAM_SCALE = 1.0;
 let PITCH_MIN = 0.22, PITCH_MAX = 1.15;
 
@@ -989,7 +1002,7 @@ function tileTopAt(px, py) {
   const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
   if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return WALL_H * 4;
   const t = grid[gy][gx];
-  return t === WALL ? WALL_H : t === CRATE ? CRATE_H : 0;
+  return t === WALL ? wallHeightAt(gx, gy) : t === CRATE ? CRATE_H : 0;
 }
 
 // The tallest thing under a body, checking its four corners.
@@ -1180,7 +1193,7 @@ function newPlayer() {
     side: NOOB, kills: { noob: 0, zombie: 0 },
     rank: 0, hp: TUNE.PLAYER_HEALTH, maxhp: TUNE.PLAYER_HEALTH,
     face: 1, aimx: 1, aimy: 0, wob: 0, z: 0, climbing: false,
-    walk: 0, moving: false,
+    walk: 0, moving: false, mvx: 0, mvy: 1,
     cool: 0, bite: 0, hurtTimer: 0, invuln: 0, swing: 0, squash: 0,
     up: freshUpgrades(), rageT: 0, speedT: 0,
     points: 0, bossT: 0, size: 1,
@@ -1508,7 +1521,7 @@ function spawnEnemy(side, boss) {
     hp: hp, maxhp: hp, type: type.key, size: size, spd: speed, boss: !!boss,
     rank: rank, cool: Math.random() * .6, face: 1, swing: 0, hurtFlash: 0,
     squash: 0, wob: Math.random() * 6.28, z: 0, climbing: false,
-    walk: Math.random() * 6.28, moving: false,
+    walk: Math.random() * 6.28, moving: false, mvx: 0, mvy: 1,
     lastX: p.x, lastY: p.y, stuckT: 0,
     // Which way this one prefers to circle, and how long it has been charging.
     turn: Math.random() < .5 ? -1 : 1, chargeT: 0, chargeCool: 1 + Math.random() * 2,
@@ -2047,7 +2060,10 @@ function update(dt) {
   // The stride keeps pace with how fast you are actually going, so the legs
   // never look like they are skating along the ground.
   player.moving = (mv.dx !== 0 || mv.dy !== 0);
-  if (player.moving) player.walk += dt * 9 * player.up.speed * speedMul;
+  if (player.moving) {
+    player.walk += dt * 9 * player.up.speed * speedMul;
+    player.mvx = mv.dx; player.mvy = mv.dy;
+  }
   // Climb whatever you are pushing against, or fall if you walked off an edge.
   updateHeight(player, mv.dx, mv.dy, dt);
   unstick(player);
@@ -2240,6 +2256,7 @@ function update(dt) {
         moveEntity(e, sx * spd * dt, sy * spd * dt);
         e.moving = true;
         e.walk += dt * 9 * e.spd;
+        e.mvx = sx; e.mvy = sy;
         // They climb with exactly the same rules you do, so they will follow you
         // up onto a wall rather than milling about at the bottom of it.
         updateHeight(e, sx, sy, dt);
@@ -2355,7 +2372,7 @@ function applyViewpoint() {
     cam.tz = (player.z || 0) + FP_EYE * (player.size || 1);
     cam.dist = FP_DIST;
   } else {
-    cam.tz = 0;
+    cam.tz = (player.z || 0) + TP_LOOK_AT * (player.size || 1);
     cam.dist = CAM_DIST;
   }
 }
@@ -2367,13 +2384,37 @@ function updateCamera() {
   camRefresh();
 }
 
-// Rough check so things off screen are skipped rather than drawn for nothing.
-// Anything behind the camera is skipped too, which a fixed angle never needed.
+// Rough check for a single point, used for small things like pickups.
 function onScreen(wx, wy, wz) {
   if (viewDepth(wx, wy, wz || 0) <= 70) return false;
   const sx = isoX(wx, wy, wz || 0) + VW / 2;
   const sy = isoY(wx, wy, wz || 0) + VH / 2;
   return sx > -200 && sx < VW + 200 && sy > -240 && sy < VH + 280;
+}
+
+// Whether any part of a tile-sized box lands on screen.
+//
+// Testing only the middle of a tile was what put a hole in the walls. Under
+// perspective a block near the camera is drawn enormous, so its middle can sit
+// well off screen while the block itself still fills half the view. Checking every
+// corner instead means a block is only dropped once all of it has really gone.
+function boxOnScreen(wx, wy, h) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let anyInFront = false;
+  for (let i = 0; i < 8; i++) {
+    const cx = wx + ((i & 1) ? TILE : 0);
+    const cy = wy + ((i & 2) ? TILE : 0);
+    const cz = (i & 4) ? h : 0;
+    if (viewDepth(cx, cy, cz) > 70) anyInFront = true;
+    const sx = isoX(cx, cy, cz) + VW / 2;
+    const sy = isoY(cx, cy, cz) + VH / 2;
+    if (sx < minX) minX = sx;
+    if (sx > maxX) maxX = sx;
+    if (sy < minY) minY = sy;
+    if (sy > maxY) maxY = sy;
+  }
+  if (!anyInFront) return false;
+  return maxX > -40 && minX < VW + 40 && maxY > -40 && minY < VH + 40;
 }
 
 // A character, built out of real boxes stacked on top of each other: two legs, a
@@ -2449,6 +2490,11 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const liftB = Math.max(0, swingB) * 3.4 * s;
   const breathe = striding ? 0 : Math.sin((g.wob || 0) * .6) * .5 * s;
   const headBob = (striding ? Math.abs(Math.sin(ph)) * 1.6 : 0) * s + breathe;
+  // Steps go along the way the character is actually travelling. Swinging along
+  // a fixed world axis made the limbs slide sideways out of the body as soon as
+  // the camera could be turned.
+  const mlen = Math.hypot(g.mvx || 0, g.mvy || 1) || 1;
+  const fwdX = (g.mvx || 0) / mlen, fwdY = (g.mvy || 1) / mlen;
 
   const legH = 15.2 * s * hs, torsoH = 15.2 * s * hs, headH = 11.4 * s * hs;
   const hw = 7.6 * s * ws;            // half the width of the torso
@@ -2465,22 +2511,28 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   const torsoW = U * 2 * ws;
   const cx0 = g.x;
 
-  // Legs, side by side, taking turns to lift and step.
-  const stepA = swing * 2.6 * s, stepB = swingB * 2.6 * s;
-  drawBox(cx0 - legW, y0 + stepA, z + lift, legW, dep, legH, legs);
-  drawBox(cx0, y0 + stepB, z + liftB, legW, dep, legH, legs);
+  // Legs, side by side, taking turns to lift and step along the way they are going.
+  const stepA = swing * 2.2 * s, stepB = swingB * 2.2 * s;
+  drawBox(cx0 - legW + fwdX * stepA, y0 + fwdY * stepA, z + lift, legW, dep, legH, legs);
+  drawBox(cx0 + fwdX * stepB, y0 + fwdY * stepB, z + liftB, legW, dep, legH, legs);
   // Shoes, riding with the leg they belong to.
   const shoe = shade(legs, -34);
-  drawBox(cx0 - legW, y0 + stepA - .6, z + lift, legW, dep + .6, 3.2 * s, shoe);
-  drawBox(cx0, y0 + stepB - .6, z + liftB, legW, dep + .6, 3.2 * s, shoe);
+  drawBox(cx0 - legW + fwdX * stepA, y0 + fwdY * stepA - .6, z + lift,
+          legW, dep + .6, 3.2 * s, shoe);
+  drawBox(cx0 + fwdX * stepB, y0 + fwdY * stepB - .6, z + liftB,
+          legW, dep + .6, 3.2 * s, shoe);
   // Arms, flush against the torso, swinging opposite to the legs.
   const armZ = z + legH + headBob * .4;
-  const armA = swingB * 2.9 * s, armB = swing * 2.9 * s;
-  drawBox(cx0 - torsoW / 2 - armW, y0 + armA, armZ, armW, dep, torsoH, skin);
-  drawBox(cx0 + torsoW / 2, y0 + armB, armZ, armW, dep, torsoH, skin);
+  const armA = swingB * 2.4 * s, armB = swing * 2.4 * s;
+  drawBox(cx0 - torsoW / 2 - armW + fwdX * armA, y0 + fwdY * armA, armZ,
+          armW, dep, torsoH, skin);
+  drawBox(cx0 + torsoW / 2 + fwdX * armB, y0 + fwdY * armB, armZ,
+          armW, dep, torsoH, skin);
   // Hands on the bottom of each arm.
-  drawBox(cx0 - torsoW / 2 - armW, y0 + armA - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
-  drawBox(cx0 + torsoW / 2, y0 + armB - .4, armZ, armW, dep + .4, 3 * s, shade(skin, -20));
+  drawBox(cx0 - torsoW / 2 - armW + fwdX * armA, y0 + fwdY * armA - .4, armZ,
+          armW, dep + .4, 3 * s, shade(skin, -20));
+  drawBox(cx0 + torsoW / 2 + fwdX * armB, y0 + fwdY * armB - .4, armZ,
+          armW, dep + .4, 3 * s, shade(skin, -20));
   // Torso, riding the same bob as the head.
   const torsoZ = z + legH + headBob * .5;
   drawBox(cx0 - torsoW / 2, y0, torsoZ, torsoW, dep, torsoH, torso);
@@ -2495,7 +2547,9 @@ function drawGuy(g, side, rankIdx, isPlayer) {
   // Head, two studs wide like the real thing, nodding with each stride and
   // turning a little towards whatever is being aimed at.
   const headW = U * 2 * ws;
-  const headTurn = isPlayer ? player.aimx * 1.1 * s : 0;
+  // The head used to be shifted sideways to suggest looking around, but that
+  // just pulled it off the neck. It only nods now.
+  const headTurn = 0;
   const headZ = torsoZ + torsoH + headBob * .5;
   drawBox(cx0 - headW / 2 + headTurn, y0, headZ, headW, dep, headH, skin);
 
@@ -2573,7 +2627,7 @@ function drawFloor() {
     for (let gx = 0; gx < GW; gx++) {
       if (grid[gy][gx] !== 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      if (!onScreen(wx + TILE / 2, wy + TILE / 2, 0)) continue;
+      if (!boxOnScreen(wx, wy, 0)) continue;
 
       // Ground tucked up against a block sits in its shadow.
       let shadowed = 0;
@@ -2782,8 +2836,8 @@ function drawStanding() {
       const t = grid[gy][gx];
       if (t === 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = t === WALL ? WALL_H : CRATE_H;
-      if (!onScreen(wx + TILE / 2, wy + TILE / 2, h * .5)) continue;
+      const h = t === WALL ? wallHeightAt(gx, gy) : CRATE_H;
+      if (!boxOnScreen(wx, wy, h)) continue;
       slot(viewDepth(wx + TILE / 2, wy + TILE / 2, 0), 0, gx, gy, t);
     }
   }
@@ -2801,7 +2855,7 @@ function drawStanding() {
     if (o.k === 0) {
       const gx = o.a, gy = o.b, t = o.c;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = t === WALL ? WALL_H : CRATE_H;
+      const h = t === WALL ? wallHeightAt(gx, gy) : CRATE_H;
       const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
         ? TUNE.WALL_FADE : undefined;
       const col = t === WALL ? brickAt(gx, gy) : CRATE_COLOR;
