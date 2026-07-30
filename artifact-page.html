@@ -225,7 +225,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v28';
+const VERSION = 'v29';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -375,8 +375,12 @@ function noteHz(name) {
 const TRACKS = [
   { name: 'Off', notes: null },
 
+  // ---- Allied ----
   {
     name: 'Soviet Anthem',
+    side: 'ALLIED',
+    // The real recording. Everything below it is the fallback if the file is missing.
+    file: 'assets/anthem-1977.mp3',
     tempo: 1.9,
     notes: [
       ['G3', 1], ['C4', 2], ['C5', 1], ['G4', 1], ['A4', 1], ['B4', 2],
@@ -385,8 +389,6 @@ const TRACKS = [
       ['F4', 2], ['G4', 1], ['A4', 1], ['B4', 1], ['C5', 2], ['D5', 2],
       ['-', 2],
     ],
-    // A third above the melody for most of it, which is what makes a tune sound
-    // like a band playing rather than one instrument.
     harm: [
       ['-', 1], ['E4', 2], ['E5', 1], ['B4', 1], ['C5', 1], ['D5', 2],
       ['G4', 1], ['G4', 1], ['C5', 2], ['B4', 1], ['A4', 1], ['B4', 2],
@@ -403,63 +405,133 @@ const TRACKS = [
   },
 
   {
-    name: 'Ode to Joy',
-    tempo: 2.6,
+    name: 'Star-Spangled Banner',
+    side: 'ALLIED',
+    tempo: 2.0,
     notes: [
-      ['E4', 1], ['E4', 1], ['F4', 1], ['G4', 1], ['G4', 1], ['F4', 1],
-      ['E4', 1], ['D4', 1], ['C4', 1], ['C4', 1], ['D4', 1], ['E4', 1],
-      ['E4', 1.5], ['D4', .5], ['D4', 2],
-      ['E4', 1], ['E4', 1], ['F4', 1], ['G4', 1], ['G4', 1], ['F4', 1],
-      ['E4', 1], ['D4', 1], ['C4', 1], ['C4', 1], ['D4', 1], ['E4', 1],
-      ['D4', 1.5], ['C4', .5], ['C4', 2], ['-', 1],
+      ['G4', .75], ['E4', .25], ['C4', 1], ['E4', 1], ['G4', 2], ['C5', 3],
+      ['E5', .75], ['D5', .25], ['C5', 1], ['E4', 1], ['F#4', 1.5], ['G4', 1.5],
+      ['G4', .5], ['G4', .5], ['E5', 1], ['D5', 1], ['C5', 1], ['B4', 2],
+      ['A4', .75], ['B4', .25], ['C5', 1], ['C5', 1], ['G4', 1], ['E4', 1],
+      ['C4', 2], ['-', 2],
     ],
     bass: [
-      ['C2', 4], ['G2', 4], ['C2', 4], ['G2', 2], ['C2', 2],
-      ['C2', 4], ['G2', 4], ['F2', 2], ['G2', 2], ['C2', 4],
+      ['C2', 4], ['C2', 4], ['G2', 3], ['C2', 3],
+      ['C2', 2], ['D2', 2], ['G2', 4],
+      ['E2', 2], ['G2', 2], ['C2', 4], ['G2', 2], ['C2', 2],
     ],
+    drum: true,
   },
 
   {
-    name: 'Mountain King',
-    tempo: 3.4,
+    name: 'La Marseillaise',
+    side: 'ALLIED',
+    tempo: 2.5,
     notes: [
-      ['C4', 1], ['D4', 1], ['D#4', 1], ['F4', 1], ['G4', 1], ['D#4', 1],
-      ['G4', 2], ['F#4', 1], ['D4', 1], ['F#4', 2],
-      ['F4', 1], ['C#4', 1], ['F4', 2],
-      ['C4', 1], ['D4', 1], ['D#4', 1], ['F4', 1], ['G4', 1], ['D#4', 1],
-      ['G4', 1], ['C5', 1], ['B4', 1], ['G4', 1], ['D#4', 1], ['G4', 1],
-      ['B4', 2], ['-', 1],
-    ],
-  },
-
-  {
-    name: 'Toreador',
-    tempo: 2.4,
-    notes: [
-      ['C4', .5], ['E4', .5], ['G4', 1], ['E4', .5], ['C4', .5], ['G3', 1],
-      ['A3', .5], ['C4', .5], ['F4', 1], ['C4', .5], ['A3', .5], ['F3', 1],
-      ['G3', .5], ['B3', .5], ['D4', 1], ['B3', .5], ['G3', .5], ['D3', 1],
-      ['C4', 2], ['-', 1],
-    ],
-  },
-
-  {
-    // Not borrowed from anybody: a low driving loop for fighting to.
-    name: 'Zombie March',
-    tempo: 3.0,
-    notes: [
-      ['E3', 1], ['E3', 1], ['G3', 1], ['E3', 1],
-      ['A3', 1], ['A3', 1], ['G3', 1], ['E3', 1],
-      ['D3', 1], ['D3', 1], ['F3', 1], ['D3', 1],
-      ['E3', 2], ['-', 1],
+      ['D4', .5], ['D4', .5], ['D4', .75], ['G4', 1.25], ['G4', 1],
+      ['A4', 1], ['A4', .75], ['D5', 1.25],
+      ['B4', 1], ['G4', 1], ['G4', .5], ['B4', .5], ['G4', .5], ['E4', .5],
+      ['C5', 2], ['A4', 1], ['F#4', 1], ['G4', 2],
+      ['D4', .5], ['D4', .5], ['G4', 1], ['B4', 1], ['A4', 1], ['G4', 2],
+      ['-', 2],
     ],
     bass: [
-      ['E1', 2], ['E1', 2], ['A1', 2], ['A1', 2],
-      ['D1', 2], ['D1', 2], ['E1', 4],
+      ['G2', 4], ['G2', 4], ['D2', 4], ['G2', 4],
+      ['C2', 2], ['D2', 2], ['G2', 4], ['D2', 2], ['G2', 2],
+    ],
+    drum: true,
+  },
+
+  // ---- Axis ----
+  //
+  //  These are the state anthems the Axis countries actually used, and all three are
+  //  old enough to be out of copyright as compositions: Haydn wrote the German tune
+  //  in 1797, Gabetti the Italian royal march in 1831 and Hayashi the Japanese one
+  //  in 1880. The Nazi party had a separate song of its own and it is deliberately
+  //  not in here. It is banned in Germany, it is propaganda rather than an anthem,
+  //  and it has no place in a game.
+  {
+    name: 'Deutschlandlied',
+    side: 'AXIS',
+    tempo: 2.1,
+    notes: [
+      ['G4', 1], ['A4', .5], ['F#4', .5], ['G4', 1], ['A4', .5], ['B4', .5],
+      ['C5', 1], ['B4', 1], ['A4', 2],
+      ['B4', 1], ['C5', .5], ['A4', .5], ['B4', 1], ['C5', .5], ['D5', .5],
+      ['B4', 1], ['A4', 1], ['G4', 2],
+      ['D5', 1], ['D5', .5], ['C5', .5], ['B4', 1], ['A4', 1], ['G4', 2],
+      ['-', 2],
+    ],
+    bass: [
+      ['G2', 4], ['D2', 2], ['G2', 2], ['C2', 2], ['D2', 2], ['G2', 4],
+      ['G2', 2], ['C2', 2], ['D2', 2], ['G2', 4], ['D2', 2],
+    ],
+    drum: true,
+  },
+
+  {
+    name: 'Kimigayo',
+    side: 'AXIS',
+    // Slow and stately, which is how it is actually played. Nothing else in the game
+    // is anywhere near this tempo.
+    tempo: 1.1,
+    notes: [
+      ['D4', 2], ['E4', 2], ['F4', 2], ['E4', 2], ['G4', 2], ['F4', 2], ['E4', 4],
+      ['D4', 2], ['E4', 2], ['F4', 2], ['G4', 2], ['A4', 4],
+      ['G4', 2], ['F4', 2], ['E4', 2], ['D4', 4],
+      ['-', 3],
+    ],
+    bass: [
+      ['D2', 6], ['A2', 6], ['D2', 4],
+      ['D2', 6], ['G2', 4], ['A2', 4], ['D2', 6],
+    ],
+  },
+
+  {
+    name: 'Marcia Reale',
+    side: 'AXIS',
+    tempo: 2.8,
+    notes: [
+      ['C4', .5], ['E4', .5], ['G4', 1], ['G4', .5], ['A4', .5], ['G4', 1],
+      ['E4', 1], ['C4', 1],
+      ['D4', .5], ['F4', .5], ['A4', 1], ['A4', .5], ['B4', .5], ['A4', 1],
+      ['F4', 1], ['D4', 1],
+      ['G4', 1], ['E4', 1], ['C4', 2],
+      ['-', 1],
+    ],
+    bass: [
+      ['C2', 4], ['C2', 4], ['F2', 4], ['F2', 4],
+      ['G2', 2], ['C2', 2], ['C2', 4],
     ],
     drum: true,
   },
 ];
+
+// The anthem is the actual 1977 Red Army Choir recording, singing and all, rather
+// than notes played by the tone maker. It sits in assets/ and is credited in
+// CREDITS.md: it is free to use because a Soviet state symbol is not an object of
+// copyright under article 1259 of the Russian Civil Code. It is used whole, which
+// is the condition the source puts on it.
+//
+// If the file cannot be loaded for any reason, and that includes opening this page
+// straight off the disk without the assets folder next to it, the synthesised
+// arrangement further down takes over on its own. The music never just stops.
+let anthemEl = null, anthemBroken = false;
+function anthemAudio() {
+  if (anthemEl || anthemBroken) return anthemEl;
+  try {
+    const a = new Audio('assets/anthem-1977.mp3');
+    a.loop = true;
+    a.preload = 'auto';
+    a.volume = .55;
+    a.addEventListener('error', () => { anthemBroken = true; anthemEl = null; });
+    anthemEl = a;
+  } catch (err) { anthemBroken = true; }
+  return anthemEl;
+}
+function stopRecording() {
+  if (anthemEl && !anthemEl.paused) anthemEl.pause();
+}
 
 let musicTrack = 0, musicStep = 0, musicWait = 0;
 // Extra voices. One line of single notes sounds like a doorbell. A melody with a
@@ -476,6 +548,10 @@ function cycleMusic() {
   musicStep = 0;
   musicWait = 0;
   harmStep = 0; harmWait = 0; bassStep = 0; bassWait = 0; drumWait = 0;
+  // Switching away silences the recording, and coming back to it starts it again
+  // from the beginning rather than halfway through a verse.
+  stopRecording();
+  if (anthemEl) { try { anthemEl.currentTime = 0; } catch (err) { /* fine */ } }
   try { localStorage.setItem('zn_music', String(musicTrack)); } catch (err) { /* fine */ }
   if (!muted) { audioStart(); SFX.ui(); }
 }
@@ -484,6 +560,23 @@ function cycleMusic() {
 // effects so it never drowns out something you need to hear.
 function updateMusic(dt) {
   const t = TRACKS[musicTrack];
+
+  // A track with a recording just plays it. Nothing to step.
+  if (t && t.file && !anthemBroken) {
+    const rec = anthemAudio();
+    if (rec) {
+      if (muted) { if (!rec.paused) rec.pause(); }
+      else if (rec.paused) {
+        const pr = rec.play();
+        // Safari hands back a promise that rejects if there has been no tap yet.
+        // That is not a problem: the next frame tries again.
+        if (pr && pr.catch) pr.catch(() => {});
+      }
+      return;
+    }
+  }
+  stopRecording();
+
   if (!t || !t.notes || muted || !zzfxX) return;
   // The melody, with a quiet note an octave up to thicken it.
   musicWait -= dt;
@@ -609,6 +702,30 @@ const TUNE = {
   RPG_DMG: 260, RPG_RADIUS: 150, RPG_SPEED: 330,
   BOMB_DMG: 210,    BOMB_RADIUS: 180,
   NUKE_DMG: 2200,   NUKE_RADIUS: 3000,
+
+  // The tank. You climb in and drive it, and it stays yours until it is wrecked.
+  // A tank is slow and turns slowly on purpose: it is powerful, so it should feel
+  // heavy rather than just being a faster you.
+  TANK_HP: 30,          // how much punishment the tank soaks up before it blows
+  TANK_SPEED: 1.15,     // a shade faster than walking, but it corners badly
+  TANK_TURN: 3.2,       // how quickly the hull comes round. Lower is heavier.
+  TANK_TURRET_TURN: 5,  // the gun swings faster than the hull does
+  TANK_RELOAD: 1.15,    // seconds between shells
+  TANK_SHELL_SPEED: 620,
+  TANK_SHELL_DMG: 340,
+  TANK_SHELL_RADIUS: 200,
+  TANK_ARMOR: .78,      // how much of a hit the armour eats
+  TANK_CRUSH: 42,       // damage a second to anything you drive over
+  TANK_CRUSH_REACH: 34,
+
+  // The bombing run. One plane crosses the map and walks a line of bombs along it.
+  PLANE_SPEED: 560,
+  PLANE_HEIGHT: 300,    // how high it flies, in world units
+  PLANE_BOMBS: 8,
+  PLANE_BOMB_GAP: .17,  // seconds between releases, which sets how far apart they land
+  PLANE_BOMB_DMG: 190,
+  PLANE_BOMB_RADIUS: 165,
+  BOMB_FALL: 400,       // how fast a bomb drops
   LIGHTNING_DMG: 190, LIGHTNING_JUMPS: 6,
   FREEZE_TIME: 4.5,
   RAGE_TIME: 9, RAGE_MULT: 3,
@@ -943,6 +1060,8 @@ const POWERUPS = [
   { kind: 'shield',    name: 'SHIELD',    color: '#c9d6e8', weight: 12 },
   { kind: 'speed',     name: 'FAST FEET', color: '#ffd84d', weight: 12 },
   { kind: 'rpg',       name: 'RPG',       color: '#4f5560', weight: 13 },
+  { kind: 'tank',      name: 'TANK',      color: '#8a9c50', weight: 7  },
+  { kind: 'airstrike', name: 'AIRSTRIKE', color: '#9fb8d4', weight: 8  },
   { kind: 'nuke',      name: 'NUKE',      color: '#ff9f43', weight: 5  },
 ];
 const POWERUP_WEIGHT = POWERUPS.reduce((s, p) => s + p.weight, 0);
@@ -1838,6 +1957,7 @@ function flowDir(x, y) {
 const NOOB = 'noob', ZOMB = 'zombie';
 let player, enemies, shots, bits, popups, hearts, powerups, blasts, zaps;
 let freezeT = 0, nukeFlash = 0;
+let planes = [], bombs = [];
 // What you are carrying. One slot per kind, and duplicates stack up in it.
 let bag = [];
 let spawnTimer, spawnGap, running, paused, best;
@@ -1883,7 +2003,8 @@ function reset() {
   player.maxhp = TUNE.PLAYER_HEALTH + player.up.hpAdd;
   player.hp = player.maxhp;
   enemies = []; shots = []; bits = []; popups = []; hearts = [];
-  powerups = []; blasts = []; zaps = [];
+  powerups = []; blasts = []; zaps = []; planes = []; bombs = [];
+  player.tank = null;
   freezeT = 0; nukeFlash = 0; bag = [];
   wave = 0; waveState = 'fighting'; waveToSpawn = 0; bossPending = false;
   cards = []; cardRects = [];
@@ -2020,6 +2141,181 @@ function chainLightning(fromX, fromY) {
   addHitstop(.05);
 }
 
+// A rocket or a shell going off. A tank shell hits harder and wider than an RPG,
+// and carrying those numbers on the shot itself keeps them out of the collision code.
+function boomShot(s) {
+  explode(s.x, s.y, s.radius || TUNE.RPG_RADIUS, s.boom || TUNE.RPG_DMG,
+          s.shell ? '#ffd06a' : '#ffb44a');
+}
+
+// ---------------------------------------------------------------------------
+//  TANKS
+//
+//  You climb in and drive. A tank is slow and corners badly on purpose: it should
+//  feel like a heavy machine being steered rather than a faster way of running
+//  about. The hull points where you drive, the gun tracks whatever is nearest on
+//  its own, and the shell goes off with the usual attack button.
+//
+//  While you are inside, hits land on the tank rather than on you and nothing can
+//  infect you, so it is also the safest place on the map. It does not last: once
+//  the hull is gone it blows up and throws you clear.
+// ---------------------------------------------------------------------------
+function enterTank() {
+  player.tank = {
+    hp: TUNE.TANK_HP, maxhp: TUNE.TANK_HP,
+    hull: player.faceAng, turret: player.faceAng,
+    reload: 0, tread: 0,
+  };
+  announce('TANK');
+  addShake(7);
+  SFX.boss();
+}
+
+function wreckTank() {
+  if (!player.tank) return;
+  player.tank = null;
+  // Rather bigger than a shell, because a tank going up should be an event.
+  explode(player.x, player.y, 300, 240, '#ffb44a');
+  nukeFlash = Math.max(nukeFlash, .45);
+  for (let i = 0; i < 6; i++) {
+    bits.push({ x: player.x + (Math.random() - .5) * 40, y: player.y + (Math.random() - .5) * 40,
+                z: 20 + Math.random() * 40, vx: (Math.random() - .5) * 130,
+                vy: (Math.random() - .5) * 130, life: .9, max: .9, c: '#3a3f4a', s: 5 });
+  }
+  player.invuln = Math.max(player.invuln, 1.2);
+  announce('TANK DOWN');
+  SFX.smash();
+}
+
+function fireShell() {
+  const tk = player.tank;
+  if (!tk || tk.reload > 0) return;
+  tk.reload = TUNE.TANK_RELOAD;
+  const a = tk.turret;
+  shots.push({
+    x: player.x + Math.cos(a) * 46, y: player.y + Math.sin(a) * 46, z: 26,
+    vx: Math.cos(a) * TUNE.TANK_SHELL_SPEED, vy: Math.sin(a) * TUNE.TANK_SHELL_SPEED,
+    dmg: 0, side: player.side, life: 2.2, rocket: true, shell: true, smoke: 0,
+    radius: TUNE.TANK_SHELL_RADIUS, boom: TUNE.TANK_SHELL_DMG,
+  });
+  // A proper muzzle flash, and the camera shoved back by the recoil.
+  for (let i = 0; i < 7; i++) {
+    bits.push({ x: player.x + Math.cos(a) * 50, y: player.y + Math.sin(a) * 50, z: 26,
+                vx: Math.cos(a) * 90 + (Math.random() - .5) * 60,
+                vy: Math.sin(a) * 90 + (Math.random() - .5) * 60,
+                life: .3, max: .3, c: '#ffd06a', s: 4 });
+  }
+  addShake(9, -Math.cos(a), -Math.sin(a));
+  addHitstop(.05);
+  SFX.smash();
+}
+
+// Turn something the short way round, easing into it.
+function easeAngle(from, to, rate, dt) {
+  let d = to - from;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return from + d * (1 - Math.exp(-rate * dt));
+}
+
+function updateTank(dt, mv) {
+  const tk = player.tank;
+  if (tk.reload > 0) tk.reload -= dt;
+
+  // The hull comes round towards where you are driving, slowly.
+  if (mv.dx !== 0 || mv.dy !== 0) {
+    tk.hull = easeAngle(tk.hull, Math.atan2(mv.dy, mv.dx), TUNE.TANK_TURN, dt);
+    tk.tread += dt * 6;
+  }
+  // The gun looks after itself and tracks the nearest thing worth shooting.
+  const near = nearestTarget(player, enemySide());
+  if (near.target) {
+    tk.turret = easeAngle(tk.turret,
+      Math.atan2(near.target.y - player.y, near.target.x - player.x),
+      TUNE.TANK_TURRET_TURN, dt);
+  } else {
+    tk.turret = easeAngle(tk.turret, tk.hull, 3, dt);
+  }
+  player.faceAng = tk.hull;
+
+  // Anything driven over gets crushed, which is most of the fun of having a tank.
+  for (const e of enemies.slice()) {
+    if (e.hp <= 0 || e.side === player.side) continue;
+    if (Math.hypot(e.x - player.x, e.y - player.y) < TUNE.TANK_CRUSH_REACH + (e.r || 10)) {
+      hurtEnemy(e, TUNE.TANK_CRUSH * dt, player.x, player.y, .4);
+    }
+  }
+  if (tk.hp <= 0) wreckTank();
+}
+
+// ---------------------------------------------------------------------------
+//  BOMBING RUNS
+//
+//  One plane crosses the whole map and walks a line of bombs along the way rather
+//  than dropping them all in one spot. It comes in over one edge and flies out the
+//  far side, so you watch it arrive and watch it leave.
+// ---------------------------------------------------------------------------
+function callAirstrike() {
+  // Flown through wherever you are standing, along the way you are facing, so you
+  // get some say in where the line of bombs comes down.
+  const a = player.faceAng || 0;
+  const span = Math.max(GW * TILE, GH * TILE) * 1.3;
+  planes.push({
+    x: player.x - Math.cos(a) * span * .55,
+    y: player.y - Math.sin(a) * span * .55,
+    ang: a,
+    left: TUNE.PLANE_BOMBS,
+    gap: .55,            // a moment of run-in before the first one goes
+    life: span / TUNE.PLANE_SPEED + 1.4,
+    side: player.side,
+  });
+  announce('BOMBING RUN');
+  SFX.boss();
+}
+
+function updatePlanes(dt) {
+  for (const pl of planes) {
+    pl.x += Math.cos(pl.ang) * TUNE.PLANE_SPEED * dt;
+    pl.y += Math.sin(pl.ang) * TUNE.PLANE_SPEED * dt;
+    pl.life -= dt;
+    if (pl.left > 0) {
+      pl.gap -= dt;
+      if (pl.gap <= 0) {
+        pl.gap = TUNE.PLANE_BOMB_GAP;
+        pl.left--;
+        // Released carrying the plane's speed, so a bomb travels forward as it
+        // falls instead of dropping straight out of the sky.
+        bombs.push({
+          x: pl.x, y: pl.y, z: TUNE.PLANE_HEIGHT,
+          vx: Math.cos(pl.ang) * TUNE.PLANE_SPEED * .55,
+          vy: Math.sin(pl.ang) * TUNE.PLANE_SPEED * .55,
+          spin: 0, side: pl.side,
+        });
+      }
+    }
+  }
+  planes = planes.filter(pl => pl.life > 0);
+}
+
+function updateBombs(dt) {
+  for (const b of bombs) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.z -= TUNE.BOMB_FALL * dt;
+    b.spin += dt * 5;
+    // A thin thread of disturbed air behind it on the way down.
+    if (Math.random() < .5) {
+      bits.push({ x: b.x, y: b.y, z: b.z, vx: 0, vy: 0,
+                  life: .3, max: .3, c: 'rgba(210,215,225,0.7)', s: 2 });
+    }
+    if (b.z <= 0) {
+      b.done = true;
+      explode(b.x, b.y, TUNE.PLANE_BOMB_RADIUS, TUNE.PLANE_BOMB_DMG, '#ffc257');
+      SFX.smash();
+    }
+  }
+  bombs = bombs.filter(b => !b.done);
+}
+
 function usePowerup(kind) {
   if (kind === 'grenade') {
     // Lobbed at whoever is nearest, so it always hits something.
@@ -2045,6 +2341,10 @@ function usePowerup(kind) {
   } else if (kind === 'bomb') {
     explode(player.x, player.y, TUNE.BOMB_RADIUS, TUNE.BOMB_DMG, '#ffb44a');
     SFX.smash();
+  } else if (kind === 'tank') {
+    enterTank();
+  } else if (kind === 'airstrike') {
+    callAirstrike();
   } else if (kind === 'nuke') {
     explode(player.x, player.y, TUNE.NUKE_RADIUS, TUNE.NUKE_DMG, '#ffd84d');
     nukeFlash = 1;
@@ -2623,6 +2923,18 @@ function infectEnemy(e) {
 
 function hurtPlayer(dmg, biteAmount) {
   if (player.invuln > 0) return;
+
+  // Inside a tank the hull takes it. Teeth cannot reach you at all, which is the
+  // real reason a tank is worth having on the zombie side of the fight.
+  if (player.tank) {
+    player.tank.hp -= dmg * (1 - TUNE.TANK_ARMOR);
+    player.hurtTimer = TUNE.HEAL_DELAY;
+    addShake(5.5);
+    spray(player.x, player.y, '#8a8f98', 5);
+    SFX.hurt();
+    if (player.tank.hp <= 0) wreckTank();
+    return;
+  }
   const armor = Math.min(.85, myRanks()[player.rank].armor + player.up.armorAdd
     + (formByKey(player.form).armor || 0));
   player.hp -= dmg * (1 - armor);
@@ -2677,6 +2989,9 @@ function flipSide() {
 //  Attacking
 // ---------------------------------------------------------------------------
 function tryAttack(who, isPlayer) {
+  // In a tank the attack button is the main gun, and nothing else about your rank
+  // matters while you are in there.
+  if (isPlayer && player.tank) { fireShell(); return; }
   const table = who.side === NOOB ? NOOB_RANKS : ZOMBIE_RANKS;
   const rk = table[who.rank];
   if (who.cool > 0) return;
@@ -2790,7 +3105,8 @@ function update(dt) {
   const raw = inputVector();
   const mv = stickToWorld(raw.dx, raw.dy);
   const form = formByKey(player.form);
-  const speedMul = (player.speedT > 0 ? TUNE.SPEED_MULT : 1) * form.spd;
+  const speedMul = (player.speedT > 0 ? TUNE.SPEED_MULT : 1) * form.spd
+    * (player.tank ? TUNE.TANK_SPEED : 1);
   const sp = TUNE.PLAYER_SPEED * player.up.speed * speedMul * dt;
   moveEntity(player, mv.dx * sp, mv.dy * sp);
   // The stride keeps pace with how fast you are actually going, so the legs
@@ -2802,11 +3118,17 @@ function update(dt) {
   }
   // Face whatever is being aimed at when there is something in range, otherwise
   // face the way you are walking. This is what makes a weapon point at things.
-  const near0 = nearestTarget(player, enemySide());
-  if (near0.target && near0.dist < 520) {
-    turnToward(player, near0.target.x - player.x, near0.target.y - player.y, dt, 12);
-  } else if (player.moving) {
-    turnToward(player, mv.dx, mv.dy, dt, 12);
+  if (player.tank) {
+    // The tank does its own steering: the hull follows the stick and the gun
+    // tracks a target by itself.
+    updateTank(dt, mv);
+  } else {
+    const near0 = nearestTarget(player, enemySide());
+    if (near0.target && near0.dist < 520) {
+      turnToward(player, near0.target.x - player.x, near0.target.y - player.y, dt, 12);
+    } else if (player.moving) {
+      turnToward(player, mv.dx, mv.dy, dt, 12);
+    }
   }
   // Climb whatever you are pushing against, or fall if you walked off an edge.
   updateHeight(player, mv.dx, mv.dy, dt);
@@ -3058,13 +3380,13 @@ function update(dt) {
     }
     if (solidAt(s.x, s.y)) {
       s.life = 0;
-      if (s.rocket) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
+      if (s.rocket) boomShot(s);
       else spray(s.x, s.y, '#8a8f98', 4);
       continue;
     }
     const wantSide = s.side === NOOB ? ZOMB : NOOB;
     if (player.side === wantSide && Math.hypot(player.x - s.x, player.y - s.y) < player.r + 5) {
-      if (s.rocket) { explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a'); }
+      if (s.rocket) { boomShot(s); }
       else hurtPlayer(s.dmg, s.bites ? TUNE.BITE_PER_HIT * .7 : 0);
       s.life = 0; continue;
     }
@@ -3072,16 +3394,19 @@ function update(dt) {
     for (const e of enemies) {
       if (e.side !== wantSide || e.hp <= 0) continue;
       if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + 5) {
-        if (s.rocket) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
+        if (s.rocket) boomShot(s);
         else hurtEnemy(e, s.dmg, s.x - s.vx * .01, s.y - s.vy * .01);
         s.life = 0; hitOne = true; break;
       }
     }
     if (hitOne) continue;
     // A rocket that runs out of fuel goes off where it is.
-    if (s.rocket && s.life <= 0) explode(s.x, s.y, TUNE.RPG_RADIUS, TUNE.RPG_DMG, '#ffb44a');
+    if (s.rocket && s.life <= 0) boomShot(s);
   }
   shots = shots.filter(s => s.life > 0);
+
+  updatePlanes(dt);
+  updateBombs(dt);
 
   driftEffects(dt);
   if (slowmo > 0) slowmo = Math.max(0, slowmo - dt);
@@ -3837,8 +4162,178 @@ function drawPlayerMarker() {
 function drawOne(o) {
   if (o.__pow) drawPowerupAt(o);
   else if (o.__heart) drawHeartAt(o);
-  else if (o === player) drawGuy(player, player.side, player.rank, true);
+  else if (o === player) {
+    if (player.tank) drawTank(player);
+    else drawGuy(player, player.side, player.rank, true);
+  }
   else drawGuy(o, o.side, o.rank, false);
+}
+
+// ---------------------------------------------------------------------------
+//  A tank, built the same way as everything else: turnable boxes, lit by the angle
+//  they face. The hull and the turret turn separately, so the gun can be pointing
+//  one way while the tracks take you another. That one detail is most of what makes
+//  it read as a tank rather than a box on the move.
+// ---------------------------------------------------------------------------
+function drawTank(g) {
+  const tk = g.tank;
+  const war = TH().decals === 'war';
+  const hullCol = war ? '#8a9c50' : '#6fae4f';
+  const trackCol = '#4a4f58';
+  const turretCol = war ? '#7d9147' : '#5f9c45';
+  const hull = tk.hull, turret = tk.turret;
+
+  // Positions in the tank's own frame: forward along the hull, and out to one side.
+  const ch = Math.cos(hull), sh = Math.sin(hull);
+  const at = (fwd, side) => [g.x + ch * fwd - sh * side, g.y + sh * fwd + ch * side];
+  const ct = Math.cos(turret), st = Math.sin(turret);
+  const atT = (fwd, side) => [g.x + ct * fwd - st * side, g.y + st * fwd + ct * side];
+
+  // Shadow first, wider than a person's.
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(isoX(g.x, g.y, 0), isoY(g.x, g.y, 0), 30, 15, 0, 0, 6.283);
+  ctx.fill();
+
+  // Tracks down either side, sitting lower and running longer than the hull.
+  for (const side of [-21, 21]) {
+    const t = at(0, side);
+    drawBoxRot(t[0], t[1], 0, 70, 14, 13, trackCol, hull);
+    // Road wheels showing through, and the tread pattern along the top run.
+    for (let i = -2; i <= 2; i++) {
+      const w = at(i * 14, side);
+      drawBoxRot(w[0], w[1], 1.5, 9, 15.5, 9, i % 2 ? '#5b6270' : '#3f444c', hull);
+    }
+  }
+
+  // The hull, with a sloped plate at the front.
+  drawBoxRot(g.x, g.y, 11, 62, 38, 15, hullCol, hull);
+  const nose = at(26, 0);
+  drawBoxRot(nose[0], nose[1], 9, 14, 34, 10, shade(hullCol, 12), hull);
+  // A stowage box on the back deck and a spare track link on the nose, which is the
+  // sort of clutter that makes a vehicle look used rather than new.
+  const stow = at(-24, 0);
+  drawBoxRot(stow[0], stow[1], 26, 13, 26, 7, war ? '#6b7248' : '#4f7a3c', hull);
+  const link = at(31, -9);
+  drawBoxRot(link[0], link[1], 20, 4, 11, 4, '#5b6270', hull);
+
+  // The turret, offset a little back, turning independently of the hull.
+  const tc = atT(-3, 0);
+  drawBoxRot(tc[0], tc[1], 26, 32, 30, 16, turretCol, turret);
+  // Commander's hatch on top.
+  const hatch = atT(-9, 0);
+  drawBoxRot(hatch[0], hatch[1], 42, 13, 13, 3, shade(turretCol, -16), turret);
+
+  // The gun: a long barrel out of the front of the turret, with a mantlet where it
+  // joins and a thicker muzzle at the end.
+  const mant = atT(15, 0);
+  drawBoxRot(mant[0], mant[1], 30, 10, 16, 11, shade(turretCol, -10), turret);
+  const bar = atT(40, 0);
+  drawBoxRot(bar[0], bar[1], 32, 42, 7, 7, '#4f5560', turret);
+  const muz = atT(63, 0);
+  drawBoxRot(muz[0], muz[1], 31.5, 9, 9.5, 9.5, '#3f444c', turret);
+
+  // A marking on the turret side, so the two themes read differently.
+  const star = atT(-3, 0);
+  const sx = isoX(star[0], star[1], 34), sy = isoY(star[0], star[1], 34);
+  ctx.fillStyle = war ? 'rgba(240,238,220,0.75)' : 'rgba(255,216,77,0.85)';
+  ctx.font = '800 11px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(war ? '\u2605' : 'J', sx, sy + 4);
+  ctx.textAlign = 'left';
+
+  // How much hull is left, above the turret, so it is obvious when to bail out.
+  const bx = isoX(g.x, g.y, 62), by = isoY(g.x, g.y, 62);
+  const frac = Math.max(0, tk.hp / tk.maxhp);
+  ctx.fillStyle = 'rgba(14,18,24,0.7)';
+  ctx.fillRect(bx - 24, by - 6, 48, 6);
+  ctx.fillStyle = frac > .5 ? '#7ed957' : frac > .25 ? '#ffd84d' : '#ff6b4a';
+  ctx.fillRect(bx - 23, by - 5, 46 * frac, 4);
+
+  // Reloading, shown as a thin line under the hull bar rather than a number.
+  if (tk.reload > 0) {
+    const r = 1 - tk.reload / TUNE.TANK_RELOAD;
+    ctx.fillStyle = 'rgba(159,184,212,0.85)';
+    ctx.fillRect(bx - 23, by + 1, 46 * r, 2);
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Planes and their bombs. A plane flies well above everything, so it is drawn
+//  after the world rather than sorted into it, and it throws a shadow on the
+//  ground underneath so you can see where it is heading.
+// ---------------------------------------------------------------------------
+function drawPlanes() {
+  const war = TH().decals === 'war';
+  const body = war ? '#79857f' : '#9fb8d4';
+  const wing = war ? '#6d7a74' : '#8aa6c4';
+
+  for (const pl of planes) {
+    const z = TUNE.PLANE_HEIGHT;
+    const ca = Math.cos(pl.ang), sa = Math.sin(pl.ang);
+    const at = (fwd, side) => [pl.x + ca * fwd - sa * side, pl.y + sa * fwd + ca * side];
+
+    // Its shadow on the ground, which is what tells you the line it is flying.
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    ctx.beginPath();
+    ctx.ellipse(isoX(pl.x, pl.y, 0), isoY(pl.x, pl.y, 0), 26, 9, 0, 0, 6.283);
+    ctx.fill();
+
+    // Fuselage, nose, and a tail that steps down at the back.
+    drawBoxRot(pl.x, pl.y, z, 74, 15, 14, body, pl.ang);
+    const nose = at(41, 0);
+    drawBoxRot(nose[0], nose[1], z + 2, 12, 12, 11, shade(body, 14), pl.ang);
+    const tail = at(-40, 0);
+    drawBoxRot(tail[0], tail[1], z + 6, 12, 9, 18, wing, pl.ang);
+    const tplane = at(-36, 0);
+    drawBoxRot(tplane[0], tplane[1], z + 3, 10, 34, 5, wing, pl.ang);
+
+    // One wing across the whole span, with an engine out on each side.
+    drawBoxRot(pl.x, pl.y, z + 4, 22, 104, 6, wing, pl.ang);
+    for (const side of [-32, 32]) {
+      const e = at(4, side);
+      drawBoxRot(e[0], e[1], z + 2, 26, 13, 12, shade(body, -12), pl.ang);
+      // A blur where the propeller is, drawn as a pale disc rather than blades.
+      const pr = at(19, side);
+      ctx.fillStyle = 'rgba(226,232,240,0.4)';
+      ctx.beginPath();
+      ctx.ellipse(isoX(pr[0], pr[1], z + 8), isoY(pr[0], pr[1], z + 8), 4, 13, 0, 0, 6.283);
+      ctx.fill();
+    }
+
+    // A marking on the wing, matching whichever side called it in.
+    const mk = at(-2, 34);
+    ctx.fillStyle = war ? 'rgba(240,238,220,0.8)' : 'rgba(255,216,77,0.9)';
+    ctx.font = '800 10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(war ? '\u2605' : 'J',
+      isoX(mk[0], mk[1], z + 11), isoY(mk[0], mk[1], z + 11) + 3);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawBombs() {
+  for (const b of bombs) {
+    // A shadow that tightens as the bomb gets closer to the ground, which is the
+    // clearest possible warning about where it is going to land.
+    const near = 1 - Math.min(1, b.z / TUNE.PLANE_HEIGHT);
+    ctx.fillStyle = 'rgba(0,0,0,' + (0.1 + near * 0.3).toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.ellipse(isoX(b.x, b.y, 0), isoY(b.x, b.y, 0), 5 + near * 9, 2.5 + near * 4.5,
+                0, 0, 6.283);
+    ctx.fill();
+    // A red ring on the ground right where it will hit.
+    ctx.strokeStyle = 'rgba(255,107,74,' + (0.25 + near * 0.5).toFixed(3) + ')';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(isoX(b.x, b.y, 0), isoY(b.x, b.y, 0), 15, 7.5, 0, 0, 6.283);
+    ctx.stroke();
+
+    // The bomb: a body, a nose and fins, tipped nose-down as it falls.
+    drawBoxRot(b.x, b.y, b.z, 9, 9, 21, '#4a5058', b.spin * .2);
+    drawBoxRot(b.x, b.y, b.z - 4, 7, 7, 5, '#3a3f4a', b.spin * .2);
+    drawBoxRot(b.x, b.y, b.z + 17, 15, 15, 4, '#5b6270', b.spin * .2);
+  }
 }
 
 // Everything that stands up, drawn back to front. In a tilted view the things
@@ -3859,7 +4354,7 @@ function buildOccludees() {
       pad: pad,
     });
   };
-  add(player, 12);
+  add(player, player.tank ? 34 : 12);
   for (const e of enemies) { if (e.hp > 0) add(e, 11 * (e.size || 1)); }
   for (const p of powerups) add(p, 7);
 }
@@ -4262,6 +4757,13 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(238,242,248,0.42)';
     ctx.font = '700 10px -apple-system, system-ui, sans-serif';
     ctx.fillText(musicName(), btn.pause.x + btn.pause.w, btn.pause.y + btn.pause.h + 12);
+    // Which side the anthem belongs to, under its name.
+    const tside = TRACKS[musicTrack].side;
+    if (tside) {
+      ctx.fillStyle = tside === 'ALLIED' ? 'rgba(127,199,255,0.5)' : 'rgba(232,180,120,0.5)';
+      ctx.font = '800 8px -apple-system, system-ui, sans-serif';
+      ctx.fillText(tside, btn.pause.x + btn.pause.w, btn.pause.y + btn.pause.h + 22);
+    }
     ctx.textAlign = 'left';
   }
 
@@ -4451,6 +4953,9 @@ function draw() {
     }
     else ctx.fillRect(px - 2.5, py - 1.2, 6, 2.4);
   }
+
+  drawBombs();
+  drawPlanes();
 
   // Blast rings.
   for (const b of blasts) {

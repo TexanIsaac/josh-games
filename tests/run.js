@@ -121,7 +121,11 @@ eval(code + `
    SKINS, SHIRTS, PANTS, HATS, FACES, PERKS, perkCost, perkLevel, applyPerks,
    loadSave, writeSave, addCoins, drawShop, get save(){return save},
    bricks, crateColor, decalFor, decalWar, decalWasteland, faceAt, drawCrateLid,
-   turnToward, drawBoxRot, LIGHT_ANGLE,
+   turnToward, drawBoxRot, LIGHT_ANGLE, OPEN_ALL,
+   easeAngle, enterTank, wreckTank, fireShell, updateTank,
+   callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
+   get planes(){return planes}, get bombs(){return bombs},
+   boomShot, hurtPlayer, get shots(){return shots},
    TRACKS, noteHz, cycleMusic, updateMusic, musicName,
    get musicTrack(){return musicTrack}, set musicTrack(v){musicTrack=v}, applyTheme, TH, FACE_SHADE, borderAt, moveCamera, CAM_FOLLOW, CAM_TURN, CAM_FOLLOW_FP,
    get blasts(){return blasts}, get zaps(){return zaps},
@@ -1889,9 +1893,36 @@ ok('both themes draw a whole frame without throwing', (() => {
 })());
 
 group('Music');
-ok('there are six things to cycle through', G.TRACKS.length === 6,
+ok('there are six anthems, plus off', G.TRACKS.length === 7,
   G.TRACKS.map(t => t.name).join(', '));
+ok('three are Allied and three are Axis', (() => {
+  const a = G.TRACKS.filter(x => x.side === 'ALLIED').length;
+  const x = G.TRACKS.filter(x2 => x2.side === 'AXIS').length;
+  return a === 3 && x === 3;
+})(), G.TRACKS.filter(x => x.side).map(x => x.name + ' ' + x.side).join(', '));
+ok('every anthem is placed on a side', G.TRACKS.slice(1).every(x => !!x.side));
+ok('the Nazi party song is deliberately not one of them', (() => {
+  // It is banned in Germany, it is propaganda rather than a state anthem, and the
+  // reason for leaving it out is written down next to the Axis tracks.
+  const names = G.TRACKS.map(x => x.name.toLowerCase()).join(' ');
+  return names.indexOf('horst') === -1
+    && src.indexOf('no place in a game') !== -1;
+})());
+ok('the anthems used are old enough to be out of copyright as compositions',
+  src.indexOf('Haydn wrote the German tune') !== -1);
 ok('the first one is off', G.TRACKS[0].name === 'Off' && G.TRACKS[0].notes === null);
+ok('the Soviet anthem plays the real recording, not a synthesised one', (() => {
+  const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
+  return !!(a && a.file && a.file.indexOf('.mp3') !== -1);
+})());
+ok('and it still has notes to fall back on if the file is missing', (() => {
+  const a = G.TRACKS.find(x => x.name === 'Soviet Anthem');
+  return !!(a.notes && a.notes.length > 8);
+})(), 'the music never just stops');
+ok('the recording is credited and its licence basis recorded',
+  src.indexOf('article 1259') !== -1 && src.indexOf('CREDITS.md') !== -1);
+ok('it is used whole rather than clipped, which is the condition on it',
+  src.indexOf('used whole') !== -1);
 ok('the Soviet anthem is one of them',
   G.TRACKS.some(t => t.name === 'Soviet Anthem'));
 ok('every playable track has notes and a tempo',
@@ -2007,6 +2038,112 @@ ok('walls that touch do not each draw their own buried faces',
 ok('a lone block still draws all four of its sides', (() => {
   // Nothing passed means nothing is hidden, which is what every crate relies on.
   return src.indexOf('(open === undefined) ? OPEN_ALL : open') !== -1;
+})());
+
+group('Tanks');
+G.reset();
+ok('a tank is something you can find', G.POWERUPS.some(p => p.kind === 'tank'));
+ok('you start out on foot', G.player.tank === null);
+ok('using one puts you in it', (() => {
+  G.usePowerup('tank');
+  return !!G.player.tank && G.player.tank.hp > 0;
+})());
+ok('the hull and the gun turn separately', (() => {
+  const tk = G.player.tank;
+  return typeof tk.hull === 'number' && typeof tk.turret === 'number';
+})(), 'which is what makes it read as a tank');
+ok('driving turns the hull the short way round, not the long way', (() => {
+  const tk = G.player.tank;
+  tk.hull = 3.0;
+  // A target just past the wrap-around point. Going the short way means the angle
+  // should head upward past pi, not swing all the way back down through zero.
+  const out = G.easeAngle(3.0, -3.0, 14, 0.05);
+  let d = out - 3.0;
+  return d > 0;
+})(), 'no spinning the wrong way round');
+ok('the gun has to reload between shells', (() => {
+  const tk = G.player.tank;
+  tk.reload = 0;
+  const before = G.shots.length;
+  G.fireShell();
+  const fired = G.shots.length > before;
+  const blocked = (() => { const n = G.shots.length; G.fireShell(); return G.shots.length === n; })();
+  return fired && blocked && tk.reload > 0;
+})());
+ok('a shell hits harder and wider than a rocket', (() => {
+  const sh = G.shots[G.shots.length - 1];
+  return sh.shell === true && sh.boom > G.TUNE.RPG_DMG && sh.radius > G.TUNE.RPG_RADIUS;
+})());
+ok('armour eats most of a hit, and it lands on the tank not on you', (() => {
+  const tk = G.player.tank;
+  const hpBefore = G.player.hp, hullBefore = tk.hp;
+  G.player.invuln = 0;
+  G.hurtPlayer(10, 40);
+  return G.player.hp === hpBefore && tk.hp < hullBefore
+    && (hullBefore - tk.hp) < 10;
+})(), 'the hull soaks it');
+ok('nothing can infect you through armour', (() => {
+  G.player.invuln = 0;
+  const bite = G.player.bite;
+  G.hurtPlayer(4, 60);
+  return G.player.bite === bite;
+})());
+ok('a wrecked tank blows up and throws you clear', (() => {
+  G.player.tank.hp = 0.0001;
+  G.player.invuln = 0;
+  G.hurtPlayer(50, 0);
+  return G.player.tank === null && G.player.invuln > 0;
+})());
+ok('and you are back on foot afterwards, not stuck', (() => {
+  G.reset();
+  return G.player.tank === null;
+})());
+
+group('Bombing runs');
+G.reset();
+ok('an airstrike is something you can find', G.POWERUPS.some(p => p.kind === 'airstrike'));
+ok('calling one sends a plane', (() => {
+  G.planes.length = 0;
+  G.usePowerup('airstrike');
+  return G.planes.length === 1;
+})());
+ok('the plane starts off the map and flies across it', (() => {
+  const pl = G.planes[0];
+  const away = Math.hypot(pl.x - G.player.x, pl.y - G.player.y);
+  return away > 400;
+})(), 'you watch it come in');
+ok('it walks a line of bombs rather than dropping them all in one place', (() => {
+  G.bombs.length = 0;
+  // Step it far enough to release everything.
+  for (let i = 0; i < 400; i++) G.updatePlanes(1 / 60);
+  if (G.bombs.length < 2) return false;
+  const first = G.bombs[0], last = G.bombs[G.bombs.length - 1];
+  return Math.hypot(last.x - first.x, last.y - first.y) > 100;
+})(), G.bombs.length + ' bombs, spread out');
+ok('every bomb was released up in the air', G.bombs.every(b => b.z > 0));
+ok('a bomb falls and goes off when it lands', (() => {
+  G.bombs.length = 0;
+  G.bombs.push({ x: 300, y: 300, z: 40, vx: 0, vy: 0, spin: 0, side: G.player.side });
+  const before = G.blasts.length;
+  for (let i = 0; i < 60; i++) G.updateBombs(1 / 60);
+  return G.bombs.length === 0 && G.blasts.length > before;
+})(), 'it does not hang in the air');
+ok('the plane leaves once it is done', (() => {
+  for (let i = 0; i < 900; i++) G.updatePlanes(1 / 60);
+  return G.planes.length === 0;
+})());
+ok('none of this throws when it is all going at once', (() => {
+  try {
+    G.reset();
+    G.usePowerup('tank');
+    G.usePowerup('airstrike');
+    for (let i = 0; i < 300; i++) {
+      G.updatePlanes(1 / 60); G.updateBombs(1 / 60);
+      if (G.player.tank) G.updateTank(1 / 60, { dx: 1, dy: 0 });
+    }
+    G.reset();
+    return true;
+  } catch (err) { console.log('    threw: ' + err.message); return false; }
 })());
 
 group('Brighter people on darker ground');
