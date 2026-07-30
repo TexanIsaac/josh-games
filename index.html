@@ -33,6 +33,29 @@
     padding-left: env(safe-area-inset-left, 0px);
   }
 
+  #how {
+    position: fixed; inset: 0; z-index: 30; display: none;
+    flex-direction: column;
+    background: #0f131a;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  #how[data-open="1"] { display: flex; }
+  #howbody {
+    flex: 1; overflow-y: auto; padding: 1rem 1.1rem 2rem;
+    max-width: 46rem; margin: 0 auto; width: 100%;
+  }
+  #howbody h3 {
+    margin: 1.1rem 0 .3rem; font-size: 13px; letter-spacing: .06em;
+    text-transform: uppercase; color: #ffd84d;
+  }
+  #howbody h3:first-child { margin-top: 0; }
+  #howbody p {
+    margin: 0; font-size: 14px; line-height: 1.55;
+    color: rgba(238,242,248,0.78);
+  }
+  #howbody b { color: #eef2f8; }
+
   /* The shop. The portrait is the point of the Your Guy tab, so it gets room. */
   #preview {
     display: flex; flex-direction: column; align-items: center; gap: .35rem;
@@ -71,6 +94,40 @@
     background: rgba(8,11,16,0.5); border-radius: 9px;
   }
   .wname { font-size: 12.5px; font-weight: 800; }
+  .wstats { width: 100%; display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
+  .sbarrow { display: flex; align-items: center; gap: 5px; }
+  .sbarlab {
+    font-size: 8.5px; font-weight: 800; letter-spacing: .04em;
+    color: rgba(238,242,248,0.45); width: 32px; text-align: right;
+  }
+  .sbartrack {
+    flex: 1; height: 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.1); overflow: hidden;
+  }
+  .sbarfill { height: 100%; border-radius: 3px; }
+  .wtag {
+    font-size: 8.5px; font-weight: 800; letter-spacing: .05em; color: #7ed957;
+  }
+
+  /* Hats and faces, each shown as a picture instead of a line of text. */
+  .dgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+    gap: .5rem;
+  }
+  .dcard {
+    display: flex; flex-direction: column; align-items: center; gap: .25rem;
+    padding: .45rem .35rem;
+    background: rgba(22,28,38,0.9);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px;
+  }
+  .dcard[data-on="1"] { border-color: #ffd84d; background: rgba(255,216,77,0.1); }
+  .dcard[data-own="0"] canvas { opacity: .5; }
+  .dcard canvas {
+    background: radial-gradient(circle at 50% 40%, #2b3a4e, #151b25 76%);
+    border-radius: 9px;
+  }
+  .dname { font-size: 11.5px; font-weight: 800; }
   .wblurb {
     font-size: 10.5px; line-height: 1.35; text-align: center;
     color: rgba(238,242,248,0.5); min-height: 2.6em;
@@ -219,8 +276,44 @@
   </div>
   <div id="lblurb"></div>
   <button id="shopopen" class="tbtn">Shop and Your Guy</button>
+  <button id="howopen" class="tbtn">How to play</button>
   <div id="credit">A game by<span>Josh Alexander</span></div>
   <div id="ver"></div>
+</div>
+
+<div id="how">
+  <div class="sbar">
+    <strong>HOW TO PLAY</strong>
+    <button id="howdone" class="tbtn">Got it</button>
+  </div>
+  <div id="howbody">
+    <h3>The idea</h3>
+    <p>You are a noob with nothing but your fists. Zombies bite you, and if they
+       bite you enough you turn into one. Then you bite noobs instead. You can end up
+       on either side, over and over, and there is no game over.</p>
+
+    <h3>Getting better</h3>
+    <p>Every kill counts. At <b>7 kills</b> you get a knife, at <b>22</b> a gun, and
+       at <b>37</b> a riot shield that nothing can bite through. Turn into a zombie
+       and the same four ranks are waiting on that side too.</p>
+
+    <h3>Moving about</h3>
+    <p>Left thumb to walk, <b>HIT</b> to fight. Drag anywhere else to swing the camera
+       round. Walk into a wall to climb it, and jump down off the top.</p>
+
+    <h3>The rows at the bottom</h3>
+    <p>The top row is what you can <b>turn into</b>. Kill one of something and you can
+       become it. The bottom row is your <b>things</b>: grenades, bombs, a tank, a
+       bombing run. Tap one to use it.</p>
+
+    <h3>Becoming the boss</h3>
+    <p>Points build up as you fight. Get enough and <b>BOSS</b> lights up. Kill a boss
+       and you unlock it for yourself.</p>
+
+    <h3>Coins</h3>
+    <p>Kills and finished waves pay coins, and they are kept for good. Spend them in
+       the shop on hats, faces, weapons and upgrades.</p>
+  </div>
 </div>
 
 <div id="shop">
@@ -277,7 +370,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v39';
+const VERSION = 'v40';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -2690,6 +2783,18 @@ function enterTank() {
   SFX.boss();
 }
 
+// Getting out on your own terms. Until now the only way out was for the hull to be
+// destroyed, which meant a tank you did not want any more was a problem rather than
+// an asset. Left where it stands it also makes a decent lump of cover.
+function leaveTank() {
+  if (!player.tank) return;
+  player.tank = null;
+  player.invuln = Math.max(player.invuln, .6);
+  puffDust(player.x, player.y, 0, 8, 1.1);
+  announce('OUT');
+  SFX.ui();
+}
+
 function wreckTank() {
   if (!player.tank) return;
   player.tank = null;
@@ -2923,6 +3028,9 @@ function dropPowerup(x, y) {
 // does NOT change: a wider body is what used to wedge things in corridors, so a
 // brute-shaped player is only bigger to look at and to hit with.
 function morphTo(key) {
+  // Tapping NORMAL while driving means get out, which is what it already means for
+  // every other form.
+  if (player.tank && key === 'normal') { leaveTank(); return; }
   const f = formByKey(key);
   if (!player.unlocked[f.key]) return false;
   // Boss form has to be paid for every single time. Unlocking it once must not
@@ -4813,6 +4921,14 @@ function drawTank(g) {
   ctx.fillText(war ? '\u2605' : 'J', sx, sy + 4);
   ctx.textAlign = 'left';
 
+  // A hint that getting out is possible at all.
+  const outY = isoY(g.x, g.y, 78);
+  ctx.fillStyle = 'rgba(238,242,248,0.5)';
+  ctx.font = '800 9px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('NORMAL to get out', isoX(g.x, g.y, 78), outY);
+  ctx.textAlign = 'left';
+
   // How much hull is left, above the turret, so it is obvious when to bail out.
   const bx = isoX(g.x, g.y, 62), by = isoY(g.x, g.y, 62);
   const frac = Math.max(0, tk.hp / tk.maxhp);
@@ -6417,21 +6533,33 @@ function weaponRow() {
     card.setAttribute('data-own', owned ? '1' : '0');
 
     const cvs = el('canvas');
-    cvs.width = 128; cvs.height = 128;
-    cvs.style.width = '64px'; cvs.style.height = '64px';
+    cvs.width = 184; cvs.height = 184;
+    cvs.style.width = '92px'; cvs.style.height = '92px';
     const c = cvs.getContext('2d');
     c.scale(2, 2);
     if (w.kind === 'fists') {
       // Fists get a fist rather than an empty box.
-      limb(c, 22, 24, 20, 18, SKINS[save.look.skin || 0], 6);
-      limb(c, 26, 40, 12, 10, shade(SKINS[save.look.skin || 0], -22), 3);
+      limb(c, 32, 34, 28, 25, SKINS[save.look.skin || 0], 8);
+      limb(c, 38, 56, 16, 13, shade(SKINS[save.look.skin || 0], -22), 4);
     } else {
-      try { paintWeapon(c, w, 32, 34, 1.15, false); } catch (err) { /* card stays blank */ }
+      try { paintWeapon(c, w, 46, 52, 1.55, false); } catch (err) { /* card stays blank */ }
     }
     card.appendChild(cvs);
 
     card.appendChild(el('div', 'wname', w.name));
     card.appendChild(el('div', 'wblurb', w.blurb));
+
+    // Damage, swing speed and reach, each against the best in the list, so what you
+    // are trading away for what is obvious without reading anything.
+    const maxDmg = Math.max.apply(null, WEAPONS.map(x => x.dmg));
+    const maxReach = Math.max.apply(null, WEAPONS.map(x => x.reach));
+    const fastest = Math.min.apply(null, WEAPONS.map(x => x.cool));
+    const stats = el('div', 'wstats');
+    stats.appendChild(statBar('HIT', w.dmg / maxDmg, '#ff8a5c'));
+    stats.appendChild(statBar('SPD', fastest / w.cool, '#7fc7ff'));
+    stats.appendChild(statBar('REACH', w.reach / maxReach, '#ffd84d'));
+    card.appendChild(stats);
+    if (w.noBite) card.appendChild(el('div', 'wtag', 'CANNOT BE BITTEN'));
 
     const btn = el('button', 'wbuy');
     if (!owned) {
@@ -6444,6 +6572,7 @@ function weaponRow() {
         save.ownedWeapons[w.key] = true;
         save.look.weapon = i;
         writeSave();
+        SFX.rankup();
         drawShop();
       });
     } else if (equipped) {
@@ -6454,6 +6583,7 @@ function weaponRow() {
       btn.addEventListener('click', () => {
         save.look.weapon = i;
         writeSave();
+        SFX.ui();
         drawShop();
       });
     }
@@ -6462,6 +6592,91 @@ function weaponRow() {
   });
   row.appendChild(grid);
   return row;
+}
+
+// A little portrait of your own guy wearing one particular thing. A text button
+// saying "Cowboy, 320 coins" tells an eight year old nothing about what he is getting,
+// which is most of why the shop was not worth opening.
+function itemThumb(overrides, w, h) {
+  const cvs = el('canvas');
+  cvs.width = w * 2; cvs.height = h * 2;
+  cvs.style.width = w + 'px';
+  cvs.style.height = h + 'px';
+  const c = cvs.getContext('2d');
+  c.scale(2, 2);
+  const look = Object.assign({}, save.look, overrides);
+  try {
+    // Head and shoulders, blown right up and clipped, so a hat or a face fills the
+    // picture instead of being four pixels on top of a whole body.
+    c.save();
+    c.beginPath(); c.rect(0, 0, w, h); c.clip();
+    paintFigure(c, w / 2, h * 2.6, h * 2.5, lookFor(look), { view: 'front' });
+    c.restore();
+  } catch (err) { /* a blank thumbnail beats a broken shop */ }
+  return cvs;
+}
+
+// Hats and faces, each shown as a picture of your guy actually wearing it.
+function dressRow(title, list, ownedKey, lookKey) {
+  const row = el('div', 'srow');
+  row.appendChild(el('h3', null, title));
+  const grid = el('div', 'dgrid');
+  list.forEach((item, i) => {
+    const owned = item.cost === 0 || (save[ownedKey] && save[ownedKey][i]);
+    const on = (save.look[lookKey] || 0) === i;
+    const card = el('div', 'dcard');
+    card.setAttribute('data-on', on ? '1' : '0');
+    card.setAttribute('data-own', owned ? '1' : '0');
+
+    const o = {};
+    o[lookKey] = i;
+    card.appendChild(itemThumb(o, 68, 68));
+    card.appendChild(el('div', 'dname', item.name));
+
+    const btn = el('button', 'wbuy');
+    if (!owned) {
+      btn.textContent = item.cost + ' coins';
+      btn.disabled = save.coins < item.cost;
+      btn.addEventListener('click', () => {
+        if (save.coins < item.cost) return;
+        save.coins -= item.cost;
+        save[ownedKey] = save[ownedKey] || {};
+        save[ownedKey][i] = true;
+        save.look[lookKey] = i;
+        writeSave();
+        SFX.rankup();
+        drawShop();
+      });
+    } else if (on) {
+      btn.textContent = 'Wearing it';
+      btn.disabled = true;
+    } else {
+      btn.textContent = 'Wear it';
+      btn.addEventListener('click', () => {
+        save.look[lookKey] = i;
+        writeSave();
+        SFX.ui();
+        drawShop();
+      });
+    }
+    card.appendChild(btn);
+    grid.appendChild(card);
+  });
+  row.appendChild(grid);
+  return row;
+}
+
+// A little bar, so two weapons can be compared at a glance instead of by reading.
+function statBar(label, frac, tint) {
+  const wrap = el('div', 'sbarrow');
+  wrap.appendChild(el('span', 'sbarlab', label));
+  const track = el('div', 'sbartrack');
+  const fill = el('div', 'sbarfill');
+  fill.style.width = Math.round(Math.max(0.06, Math.min(1, frac)) * 100) + '%';
+  fill.style.background = tint;
+  track.appendChild(fill);
+  wrap.appendChild(track);
+  return wrap;
 }
 
 function swatchRow(title, list, key) {
@@ -6556,13 +6771,15 @@ function drawShop() {
   sbody.innerHTML = '';
   if (shopTab === 'look') {
     sbody.appendChild(buildPreview());
-    sbody.appendChild(el('div', 'shint',
-      'Coins come from kills and from clearing waves, and they stay saved between games.'));
+    // Hats and faces first. They are the fun part, and they used to sit so far down
+    // the page that Josh reported the faces as being "down below".
+    sbody.appendChild(dressRow('Hats', HATS, 'ownedHats', 'hat'));
+    sbody.appendChild(dressRow('Faces', FACES, 'ownedFaces', 'face'));
     sbody.appendChild(swatchRow('Skin', SKINS, 'skin'));
     sbody.appendChild(swatchRow('Shirt', SHIRTS, 'shirt'));
     sbody.appendChild(swatchRow('Trousers', PANTS, 'legs'));
-    sbody.appendChild(cosmeticRow('Hats', HATS, 'ownedHats', 'hat'));
-    sbody.appendChild(cosmeticRow('Faces', FACES, 'ownedFaces', 'face'));
+    sbody.appendChild(el('div', 'shint',
+      'Coins come from kills and from clearing waves, and they stay saved between games.'));
   } else if (shopTab === 'weapons') {
     sbody.appendChild(buildPreview());
     sbody.appendChild(weaponRow());
@@ -6570,6 +6787,27 @@ function drawShop() {
     sbody.appendChild(perkRow());
   }
 }
+
+(function wireHow() {
+  const panel = document.getElementById('how');
+  const openBtn = document.getElementById('howopen');
+  const doneBtn = document.getElementById('howdone');
+  if (!panel) return;
+  const set = (on) => panel.setAttribute('data-open', on ? '1' : '0');
+  if (openBtn) {
+    const go = (ev) => { ev.stopPropagation(); ev.preventDefault(); set(true); };
+    openBtn.addEventListener('pointerdown', go);
+    openBtn.addEventListener('click', go);
+  }
+  if (doneBtn) {
+    const go = (ev) => { ev.stopPropagation(); ev.preventDefault(); set(false); };
+    doneBtn.addEventListener('pointerdown', go);
+    doneBtn.addEventListener('click', go);
+  }
+  // Taps inside must not fall through and start a game behind it.
+  panel.addEventListener('pointerdown', ev => ev.stopPropagation());
+  panel.addEventListener('click', ev => ev.stopPropagation());
+})();
 
 (function wireShop() {
   const openBtn = document.getElementById('shopopen');

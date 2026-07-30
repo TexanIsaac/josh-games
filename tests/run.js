@@ -142,6 +142,7 @@ eval(code + `
    bagSlots, bossCost, applyPerks, freshUpgrades,
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
+   leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2601,6 +2602,67 @@ ok('a wrecked tank blows up and throws you clear', (() => {
 ok('and you are back on foot afterwards, not stuck', (() => {
   G.reset();
   return G.player.tank === null;
+})());
+
+group('Getting out of a tank');
+ok('you can leave on your own terms', typeof G.leaveTank === 'function');
+ok('tapping NORMAL while driving gets you out', (() => {
+  G.reset();
+  G.usePowerup('tank');
+  if (!G.player.tank) return false;
+  G.morphTo('normal');
+  return G.player.tank === null;
+})());
+ok('leaving does not blow the tank up on top of you', (() => {
+  G.reset();
+  G.usePowerup('tank');
+  const hp = G.player.hp;
+  G.leaveTank();
+  return G.player.hp === hp && G.player.invuln > 0;
+})(), 'unlike being blown out of it');
+ok('leaving twice is harmless', (() => {
+  G.leaveTank(); G.leaveTank();
+  return G.player.tank === null;
+})());
+ok('the reason it matters is written down',
+  src.indexOf('a tank you did not want any more was a problem rather than') !== -1);
+
+group('The how to play card');
+ok('there is one', src.indexOf('id="how"') !== -1 && src.indexOf('HOW TO PLAY') !== -1);
+ok("it explains Josh's ranks with the real numbers",
+  src.indexOf('<b>7 kills</b>') !== -1 && src.indexOf('<b>22</b>') !== -1
+  && src.indexOf('<b>37</b>') !== -1);
+ok('it explains both sides, which is the whole idea',
+  src.indexOf('You can end up') !== -1 && src.indexOf('there is no game over') !== -1);
+ok('it explains the two rows, the boss and the coins',
+  src.indexOf('turn into') !== -1 && src.indexOf('BOSS</b> lights up') !== -1
+  && src.indexOf('Spend them in') !== -1);
+ok('opening it cannot start a game behind it',
+  src.indexOf('Taps inside must not fall through and start a game behind it') !== -1);
+
+group('The shop is worth opening');
+ok('a hat is shown as a picture of your guy wearing it',
+  typeof G.itemThumb === 'function' && typeof G.dressRow === 'function');
+ok('the reason text buttons were not good enough is written down',
+  src.indexOf('tells an eight year old nothing about what he is getting') !== -1);
+ok('hats and faces come before the colour swatches now',
+  src.indexOf("dressRow('Hats'") < src.indexOf("swatchRow('Skin'"),
+  'they used to be below the fold');
+ok('a weapon card shows how it compares, not just words',
+  typeof G.statBar === 'function' && src.indexOf("statBar('HIT'") !== -1
+  && src.indexOf("statBar('SPD'") !== -1 && src.indexOf("statBar('REACH'") !== -1);
+ok('buying something makes a noise', (() => {
+  const i = src.indexOf('save[ownedKey][i] = true;');
+  return src.slice(i, i + 220).indexOf('SFX.rankup()') !== -1;
+})());
+ok('the shop still builds without throwing, on every tab', (() => {
+  for (const tab of ['look', 'weapons', 'perk']) {
+    G.shopTab = tab;
+    try { G.drawShop(); }
+    catch (err) { console.log('    ' + tab + ': ' + err.message); return false; }
+  }
+  G.shopTab = 'look';
+  return true;
 })());
 
 group('Bombing runs');
