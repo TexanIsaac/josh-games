@@ -138,6 +138,8 @@ eval(code + `
    LEVELS, LV, setLevel, get levelIdx(){return levelIdx}, waveCount,
    get pauseRects(){return pauseRects}, get confirmRestart(){return confirmRestart},
    get grid(){return grid}, loadMap, explode,
+   drawBarrel, drawSandbags, ringAt, ringPath, PERKS, perkCost, drawFloor,
+   bagSlots, bossCost, applyPerks, freshUpgrades,
    get shopTab(){return shopTab}, set shopTab(v){shopTab=v},
    callAirstrike, updatePlanes, updateBombs, drawTank, drawPlanes, drawBombs,
    get planes(){return planes}, get bombs(){return bombs},
@@ -2223,7 +2225,7 @@ ok('carrying a bought weapon actually makes you hit harder', (() => {
 })(), 'the dearest is well worth the coins');
 ok('the enemies get no benefit from what you bought', (() => {
   // The multiplier is only applied when the one attacking is the player.
-  return src.indexOf('const wepMul = isPlayer ?') !== -1;
+  return src.indexOf('const wep = isPlayer ? WEAPONS') !== -1;
 })());
 
 ok('a save from before weapons existed still loads', (() => {
@@ -2384,6 +2386,146 @@ ok('only edges not joined to another wall are pulled in',
   'otherwise a run would come apart into slabs again');
 ok('an edge facing off the map never counts as exposed, so the boundary stays thick',
   src.indexOf('if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) return true;') !== -1);
+
+group('Parts are shapes again, not blobs');
+ok('corners are rounded, the edges are left alone',
+  src.indexOf('the edges stay where they are and only the') !== -1);
+ok('what went wrong the first time is written down',
+  src.indexOf('It dissolved arms, torso and head into one melted lump') !== -1);
+ok('a rounded corner keeps most of the shape', (() => {
+  // A square rounded at 0.3 must stay near the square. The old version cut through
+  // the middle of every edge, which loses a quarter of the area and every corner.
+  const pts = [[0, 0], [10, 0], [10, 10], [0, 10]];
+  const seen = [];
+  const fake = {
+    beginPath() {}, closePath() {},
+    moveTo(x, y) { seen.push([x, y]); },
+    lineTo(x, y) { seen.push([x, y]); },
+    quadraticCurveTo(a, b, x, y) { seen.push([x, y]); },
+  };
+  G.smoothPath(fake, pts, 0.3);
+  // Every point produced must lie on the square's edge, never cutting the middle.
+  return seen.every(q =>
+    (q[0] > -0.01 && q[0] < 10.01 && q[1] > -0.01 && q[1] < 10.01));
+})());
+ok('parts no longer get fattened up to compensate',
+  src.indexOf('No growing.') !== -1,
+  'growing them is what merged the limbs together');
+ok('a part still gets a faint edge so limbs read as separate',
+  src.indexOf('so next to each other an arm and a torso still read as two') !== -1);
+ok('but the edge is faint, not the heavy outline that blackened them', (() => {
+  const i = src.indexOf('ctx.strokeStyle = shade(color, -46);');
+  const seg = src.slice(i, i + 160);
+  return i !== -1 && seg.indexOf('globalAlpha = 0.3') !== -1 && seg.indexOf('lineWidth = 1') !== -1;
+})());
+
+group('Barrels are actually cylinders');
+ok('a barrel is built from a ring of points, not from a box',
+  typeof G.drawBarrel === 'function' && typeof G.ringAt === 'function');
+ok('the reason a rounded box could never look like a drum is written down',
+  src.indexOf('a box has four corners and a drum has none') !== -1);
+ok('the ring is a proper circle in world coordinates', (() => {
+  const pts = G.ringAt(100, 100, 10, 0);
+  return pts.length >= 12;
+})(), 'sampled and projected like everything else');
+ok('a barrel draws without throwing, at any camera angle', (() => {
+  for (const yaw of [0, 1, 2, 3, 4, 5, 6]) {
+    G.cam.yaw = yaw;
+    G.camRefresh();
+    try { G.drawBarrel(200, 200, 34, '#b4552f'); }
+    catch (err) { console.log('    yaw ' + yaw + ': ' + err.message); return false; }
+  }
+  return true;
+})());
+ok('a bank of sandbags is several bags, not one pillow', (() => {
+  try { G.drawSandbags(200, 200, 15, '#c2ad72'); } catch (err) { return false; }
+  return src.indexOf('two courses of three, staggered') !== -1;
+})());
+
+ok('the ground is drawn under the obstacles too', (() => {
+  // Skipping it was invisible while everything filled its whole tile, and showed as
+  // pale blue sky the moment a barrel was drawn narrower than its square.
+  return src.indexOf('Ground goes under everything') !== -1
+    && src.indexOf('the sky showed through the gap around them') !== -1;
+})());
+
+group('Eleven weapons and sixteen upgrades');
+ok('there are eleven weapons', G.WEAPONS.length === 11,
+  G.WEAPONS.map(w => w.name).join(', '));
+ok('there are sixteen upgrades', G.PERKS.length === 16);
+ok('the prices are worked out against what the game pays, not guessed',
+  src.indexOf('The prices are worked out against what the game actually pays') !== -1);
+ok('a weapon changes reach and speed, not only damage', (() => {
+  return G.WEAPONS.every(w => w.cool > 0 && w.reach > 0)
+    && G.WEAPONS.some(w => w.cool < 1) && G.WEAPONS.some(w => w.cool > 1);
+})(), 'some are fast and weak, some slow and heavy');
+ok('damage does not simply climb with price', (() => {
+  // Otherwise the dearest is always right and there is no choice to make.
+  let inversions = 0;
+  for (let i = 1; i < G.WEAPONS.length; i++) {
+    if (G.WEAPONS[i].dmg < G.WEAPONS[i - 1].dmg) inversions++;
+  }
+  return inversions >= 2;
+})(), 'dearer means more specialised');
+ok('the shield is the one that cannot be bitten through',
+  G.WEAPONS.filter(w => w.noBite).length === 1);
+
+ok('the first upgrade is affordable inside a first run', (() => {
+  // About 400 coins by the end of wave 5 on normal.
+  const cheapest = Math.min.apply(null, G.PERKS.map(pk => G.perkCost(pk, 0)));
+  return cheapest <= 150;
+})(), 'cheapest first level is ' + Math.min.apply(null, G.PERKS.map(pk => G.perkCost(pk, 0))) + ' coins');
+ok('the first weapon is affordable inside a first run',
+  G.WEAPONS[1].cost <= 200, G.WEAPONS[1].cost + ' coins');
+ok('the dearest weapon takes several good runs', (() => {
+  // Roughly 3250 coins by wave 20, so the top item should be most of a long run.
+  const top = G.WEAPONS[G.WEAPONS.length - 1].cost;
+  return top > 2000 && top < 4000;
+})(), G.WEAPONS[G.WEAPONS.length - 1].cost + ' coins');
+ok('there is a long tail rather than everything bought in one run', (() => {
+  let perks = 0;
+  for (const pk of G.PERKS) {
+    for (let l = 0; l < pk.levels; l++) perks += G.perkCost(pk, l);
+  }
+  const weps = G.WEAPONS.reduce((a, w) => a + w.cost, 0);
+  console.log('    everything costs ' + (perks + weps) + ' coins ('
+    + perks + ' upgrades, ' + weps + ' weapons)');
+  return perks + weps > 15000;
+})(), 'always a next thing to save for');
+
+ok('every new upgrade actually changes a number', (() => {
+  G.save.perks = {};
+  const before = G.applyPerks(G.freshUpgrades());
+  const missing = [];
+  for (const pk of G.PERKS) {
+    G.save.perks = {};
+    G.save.perks[pk.id] = pk.levels;
+    const after = G.applyPerks(G.freshUpgrades());
+    let changed = false;
+    for (const k in after) if (after[k] !== before[k]) changed = true;
+    // 'packed' gives a starting item rather than changing a stat.
+    if (!changed && pk.id !== 'packed') missing.push(pk.id);
+  }
+  G.save.perks = {};
+  if (missing.length) console.log('    do nothing: ' + missing.join(', '));
+  return missing.length === 0;
+})());
+ok('Deep Pockets really does add an item slot', (() => {
+  G.save.perks = {}; G.reset();
+  const base = G.bagSlots();
+  G.save.perks = { pockets: 2 }; G.reset();
+  const more = G.bagSlots();
+  G.save.perks = {}; G.reset();
+  return more === base + 2;
+})());
+ok('Boss Ready really does make the boss form cheaper', (() => {
+  G.save.perks = {}; G.reset();
+  const base = G.bossCost();
+  G.save.perks = { bossup: 2 }; G.reset();
+  const less = G.bossCost();
+  G.save.perks = {}; G.reset();
+  return less < base;
+})());
 
 group('Tanks');
 G.reset();

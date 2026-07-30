@@ -34,7 +34,12 @@
   }
 
   /* The shop. The portrait is the point of the Your Guy tab, so it gets room. */
-  #preview { display: flex; flex-direction: column; align-items: center; gap: .35rem; }
+  #preview {
+    display: flex; flex-direction: column; align-items: center; gap: .35rem;
+    /* The body is a grid, and without this the portrait ends up in one column with a
+       screenful of nothing next to it. */
+    grid-column: 1 / -1; width: 100%;
+  }
   #preview canvas {
     background: radial-gradient(circle at 50% 32%, #2b3a4e, #151b25 74%);
     border-radius: 14px;
@@ -272,7 +277,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v36';
+const VERSION = 'v37';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -984,16 +989,36 @@ const FACES = [
 
 // Upgrades you keep for good. Each one can be bought a few times, and the price
 // goes up each level so the last one always feels like a decision.
+// ---------------------------------------------------------------------------
+//  UPGRADES
+//
+//  Sixteen of them, priced on the same curve as the weapons. Each level costs half
+//  again as much as the one before, so the first level of anything is cheap enough
+//  to buy in a first run and maxing something out is a project. Everything here
+//  comes to roughly 12,700 coins, and the weapons to another 10,400.
+//
+//  Most of these drive numbers that were already in the game and simply had nothing
+//  attached to them yet, which is why there can be this many without the fighting
+//  code getting more complicated.
+// ---------------------------------------------------------------------------
 const PERKS = [
-  { id: 'tough',  name: 'Tougher',      desc: '+30 max health',        levels: 3, base: 120 },
-  { id: 'strong', name: 'Stronger',     desc: '+14% damage',           levels: 3, base: 150 },
-  { id: 'quick',  name: 'Quicker',      desc: '+8% speed',             levels: 3, base: 110 },
-  { id: 'medic',  name: 'Fast Healer',  desc: 'heal 60% faster',       levels: 2, base: 100 },
-  { id: 'lucky',  name: 'Lucky',        desc: '+40% drops',            levels: 2, base: 140 },
-  { id: 'packed', name: 'Well Packed',  desc: 'start with an item',    levels: 1, base: 300 },
-  { id: 'armour', name: 'Padded',       desc: '+7% armour',            levels: 2, base: 180 },
+  { id: 'tough',   name: 'Tougher',     desc: '+30 max health',          levels: 5, base: 90 },
+  { id: 'strong',  name: 'Stronger',    desc: '+14% damage',             levels: 5, base: 120 },
+  { id: 'quick',   name: 'Quicker',     desc: '+8% speed',               levels: 4, base: 100 },
+  { id: 'rapid',   name: 'Faster Hands', desc: 'attack 10% faster',      levels: 4, base: 130 },
+  { id: 'longarm', name: 'Longer Reach', desc: '+10% reach',             levels: 3, base: 110 },
+  { id: 'medic',   name: 'Fast Healer', desc: 'heal 60% faster',         levels: 3, base: 90 },
+  { id: 'lucky',   name: 'Lucky',       desc: '+40% drops',              levels: 3, base: 130 },
+  { id: 'armour',  name: 'Padded',      desc: '+7% armour',              levels: 3, base: 150 },
+  { id: 'ironjaw', name: 'Iron Jaw',    desc: 'infected 20% slower',     levels: 3, base: 140 },
+  { id: 'vampire', name: 'Bloodthirsty', desc: 'heal a little on a kill', levels: 3, base: 170 },
+  { id: 'scav',    name: 'Scavenger',   desc: '+35% coins from kills',   levels: 3, base: 160 },
+  { id: 'streak',  name: 'On A Roll',   desc: 'streaks pay off harder',  levels: 2, base: 200 },
+  { id: 'pockets', name: 'Deep Pockets', desc: '+1 item slot',           levels: 2, base: 240 },
+  { id: 'bossup',  name: 'Boss Ready',  desc: 'boss form costs 15% less', levels: 2, base: 260 },
+  { id: 'engineer', name: 'Engineer',   desc: 'tanks take 30% more hits', levels: 2, base: 220 },
+  { id: 'packed',  name: 'Well Packed', desc: 'start with an item',      levels: 1, base: 280 },
 ];
-
 function perkCost(perk, level) {
   // Each level costs half again as much as the one before.
   return Math.round(perk.base * Math.pow(1.5, level));
@@ -1042,6 +1067,23 @@ function addCoins(n) {
 
 function perkLevel(id) { return save.perks[id] || 0; }
 
+// How many item slots you actually have, Deep Pockets included. Guarded because the
+// hotbar is laid out before there is a player to ask.
+// What the boss form costs, with Boss Ready taken off.
+function bossCost() {
+  let off = 1;
+  // The hotbar and the shop are laid out before `player` exists, and reading a
+  // variable declared further down the file throws rather than reading undefined.
+  try { if (player && player.up) off = player.up.bossOff || 1; } catch (err) { off = 1; }
+  return Math.round(TUNE.BOSS_POINTS * off);
+}
+
+function bagSlots() {
+  let extra = 0;
+  try { if (player && player.up) extra = player.up.bag || 0; } catch (err) { extra = 0; }
+  return TUNE.BAG_SLOTS + extra;
+}
+
 // Everything bought turns into the same shape the in-run upgrades use, so the
 // rest of the game does not need to know the shop exists.
 function applyPerks(up) {
@@ -1051,6 +1093,17 @@ function applyPerks(up) {
   up.heal *= Math.pow(1.6, perkLevel('medic'));
   up.luck *= Math.pow(1.4, perkLevel('lucky'));
   up.armorAdd += 0.07 * perkLevel('armour');
+  // rate is a cooldown, so faster hands means a smaller number.
+  up.rate *= Math.pow(0.9, perkLevel('rapid'));
+  up.reach *= Math.pow(1.1, perkLevel('longarm'));
+  // biteRes multiplies how much infection a bite adds, so lower is better.
+  up.biteRes *= Math.pow(0.8, perkLevel('ironjaw'));
+  up.lifesteal += 0.035 * perkLevel('vampire');
+  up.coin *= Math.pow(1.35, perkLevel('scav'));
+  up.streak *= Math.pow(1.5, perkLevel('streak'));
+  up.bag += perkLevel('pockets');
+  up.bossOff *= Math.pow(0.85, perkLevel('bossup'));
+  up.tankHp *= Math.pow(1.3, perkLevel('engineer'));
   return up;
 }
 
@@ -1232,7 +1285,9 @@ function formByKey(k) {
 
 function freshUpgrades() {
   return { dmg: 1, speed: 1, rate: 1, reach: 1, hpAdd: 0, armorAdd: 0,
-           biteRes: 1, heal: 1, luck: 1, lifesteal: 0 };
+           biteRes: 1, heal: 1, luck: 1, lifesteal: 0,
+           // Driven by the newer upgrades.
+           coin: 1, streak: 1, bag: 0, bossOff: 1, tankHp: 1 };
 }
 const NO_UP = freshUpgrades();
 
@@ -1336,12 +1391,13 @@ function layout() {
   // button. Slots shrink on a narrow screen rather than running into either.
   const gap = 8;
   const room = VW - (PAD.l + 190) - (PAD.r + hr * 2 + 16);
-  const sz = Math.max(38, Math.min(56, room / TUNE.BAG_SLOTS - gap));
-  const total = TUNE.BAG_SLOTS * sz + (TUNE.BAG_SLOTS - 1) * gap;
+  const slots = bagSlots();
+  const sz = Math.max(38, Math.min(56, room / slots - gap));
+  const total = slots * sz + (slots - 1) * gap;
   const bx = PAD.l + 190 + Math.max(0, (room - total) / 2);
   const by = VH - PAD.b - sz;
   bagRects = [];
-  for (let i = 0; i < TUNE.BAG_SLOTS; i++) {
+  for (let i = 0; i < slots; i++) {
     bagRects.push({ x: bx + i * (sz + gap), y: by, w: sz, h: sz });
   }
 
@@ -1626,23 +1682,33 @@ function hullOf(pts) {
   return lower.concat(upper);
 }
 
-// A closed path that passes through the middle of every edge and curves around each
-// corner, which turns a straight sided outline into a smooth one. This single step is
-// what takes the blockiness out.
-function smoothPath(c, pts) {
+// A closed path with rounded corners: the edges stay where they are and only the
+// corners are cut. `t` is how far along each edge the cut starts, so a small value is
+// a crisp part with soft corners and a large one is a blob.
+//
+// The first version of this curved through the middle of every edge, which is the
+// maximum possible smoothing. It dissolved arms, torso and head into one melted lump
+// with no limbs you could pick out, and Josh said so immediately. A limb wants
+// rounded corners, not to stop being a limb. The shop portrait had it right all along
+// by using rounded rectangles, so this matches it.
+function smoothPath(c, pts, t) {
   const n = pts.length;
   if (n < 3) return false;
-  const mid = i => {
-    const a = pts[i], b = pts[(i + 1) % n];
-    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  };
-  const m0 = mid(0);
+  const cut = Math.max(.05, Math.min(.5, t === undefined ? .3 : t));
+  const along = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+
   c.beginPath();
-  c.moveTo(m0[0], m0[1]);
+  const first = along(pts[0], pts[1 % n], cut);
+  c.moveTo(first[0], first[1]);
   for (let i = 1; i <= n; i++) {
+    const prev = pts[(i - 1) % n];
     const v = pts[i % n];
-    const m = mid(i % n);
-    c.quadraticCurveTo(v[0], v[1], m[0], m[1]);
+    const next = pts[(i + 1) % n];
+    // Straight along the edge to where the corner starts, round the corner, and out.
+    const inPt = along(prev, v, 1 - cut);
+    const outPt = along(v, next, cut);
+    c.lineTo(inPt[0], inPt[1]);
+    c.quadraticCurveTo(v[0], v[1], outPt[0], outPt[1]);
   }
   c.closePath();
   return true;
@@ -1654,30 +1720,37 @@ function drawRoundPart(pts, color) {
   const h = hullOf(pts);
   if (h.length < 3) return;
 
-  // Smoothing pulls the shape inside the outline, so it is pushed back out from its
-  // own middle to keep parts the size they were before.
-  let gx = 0, gy = 0;
-  for (const q of h) { gx += q[0]; gy += q[1]; }
-  gx /= h.length; gy /= h.length;
-  const GROW = 1.09;
-  const big = [];
+  // No growing. Rounding corners barely changes the area, and the old version grew
+  // every part by nine per cent to make up for heavy smoothing, which fattened
+  // neighbouring parts into each other and helped turn the figure into one mass.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const q of h) {
-    const x = gx + (q[0] - gx) * GROW, y = gy + (q[1] - gy) * GROW;
-    big.push([x, y]);
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
+    if (q[0] < minX) minX = q[0];
+    if (q[1] < minY) minY = q[1];
+    if (q[0] > maxX) maxX = q[0];
+    if (q[1] > maxY) maxY = q[1];
   }
 
-  if (!smoothPath(ctx, big)) return;
+  // How much to round by, in proportion to how big the part is on screen. A small
+  // hand gets a gentle round; nothing gets rounded so hard it stops being a shape.
+  const shortest = Math.max(2, Math.min(maxX - minX, maxY - minY));
+  const cut = Math.min(.34, 5 / shortest + .12);
+  if (!smoothPath(ctx, h, cut)) return;
   const g = ctx.createLinearGradient(minX, minY, maxX, maxY);
   g.addColorStop(0, shade(color, 30));
   g.addColorStop(.5, color);
   g.addColorStop(1, shade(color, -34));
   ctx.fillStyle = g;
   ctx.fill();
+
+  // A thin darker edge, so next to each other an arm and a torso still read as two
+  // separate parts. Kept faint and thin on purpose: a heavy outline on a small part is
+  // exactly what made the characters look black before.
+  ctx.strokeStyle = shade(color, -46);
+  ctx.globalAlpha = 0.3;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 
   // A soft catch of light near the top, which is what sells a part as round rather
   // than as a flat shape with a gradient on it. Only worth it on parts big enough to
@@ -1849,8 +1922,8 @@ const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5;
 const TILE_KIND = {
   1: { name: 'wall',     h: null,     hp: 320,  color: null },
   2: { name: 'crate',    h: 26,       hp: 90,   color: null },
-  3: { name: 'barrel',   h: 32,       hp: 40,   color: '#b4552f', explodes: true, soft: true },
-  4: { name: 'sandbag',  h: 17,       hp: 130,  color: '#c2ad72', soft: true },
+  3: { name: 'barrel',   h: 34,       hp: 40,   color: '#b4552f', explodes: true, soft: true },
+  4: { name: 'sandbag',  h: 15,       hp: 130,  color: '#c2ad72', soft: true },
   5: { name: 'hedgehog', h: 25,       hp: null, color: '#8f959e' },
 };
 function tileKind(t) { return TILE_KIND[t] || null; }
@@ -2605,7 +2678,7 @@ function boomShot(s) {
 // ---------------------------------------------------------------------------
 function enterTank() {
   player.tank = {
-    hp: TUNE.TANK_HP, maxhp: TUNE.TANK_HP,
+    hp: TUNE.TANK_HP * player.up.tankHp, maxhp: TUNE.TANK_HP * player.up.tankHp,
     hull: player.faceAng, turret: player.faceAng,
     reload: 0, tread: 0,
   };
@@ -2821,7 +2894,7 @@ function addToBag(p) {
   for (const slot of bag) {
     if (slot.kind === p.kind) { slot.count++; return true; }
   }
-  if (bag.length >= TUNE.BAG_SLOTS) return false;
+  if (bag.length >= bagSlots()) return false;
   bag.push({ kind: p.kind, name: p.name, color: p.color, count: 1 });
   return true;
 }
@@ -3344,7 +3417,8 @@ function killEnemy(e, dirAngle) {
 
     unlockFormFrom(e);
 
-    addCoins(e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL);
+    addCoins(Math.round((e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL)
+      * player.up.coin));
     coinsThisRun += e.boss ? TUNE.COINS_PER_BOSS : TUNE.COINS_PER_KILL;
 
     if (e.boss) {
@@ -3352,7 +3426,7 @@ function killEnemy(e, dirAngle) {
       becomeBoss(false);
     } else {
       player.points += TUNE.POINTS_PER_KILL;
-      if (player.bossT <= 0 && player.points >= TUNE.BOSS_POINTS) becomeBoss();
+      if (player.bossT <= 0 && player.points >= bossCost()) becomeBoss();
     }
 
     const k = myKills();
@@ -3471,14 +3545,14 @@ function tryAttack(who, isPlayer) {
 
   // Upgrades and streaks are yours alone. Enemies fight at base stats.
   const up = isPlayer ? player.up : NO_UP;
-  const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS) : 1;
+  const streakMul = isPlayer ? (1 + streak * TUNE.STREAK_BONUS * player.up.streak) : 1;
   const rageMul = (isPlayer && player.rageT > 0) ? TUNE.RAGE_MULT : 1;
   const formMul = isPlayer ? formByKey(player.form).dmg : 1;
   // Whatever you bought and are carrying. Enemies get nothing from this.
-  const wepMul = isPlayer ? (weaponByKey(WEAPONS[save.look.weapon || 0].key).dmg || 1) : 1;
-  const dmg = rk.dmg * up.dmg * streakMul * rageMul * formMul * wepMul;
-  const reach = rk.reach * up.reach;
-  const rate = rk.rate * up.rate;
+  const wep = isPlayer ? WEAPONS[save.look.weapon || 0] : null;
+  const dmg = rk.dmg * up.dmg * streakMul * rageMul * formMul * ((wep && wep.dmg) || 1);
+  const reach = rk.reach * up.reach * ((wep && wep.reach) || 1);
+  const rate = rk.rate * up.rate * ((wep && wep.cool) || 1);
 
   const wantSide = who.side === NOOB ? ZOMB : NOOB;
   const found = nearestTarget(who, wantSide);
@@ -4456,9 +4530,12 @@ function drawFloor() {
     }
   }
 
+  // Ground goes under everything, including under the walls and the obstacles. It
+  // used to be skipped on any solid tile, which was invisible while every obstacle
+  // filled its whole square. The moment barrels were drawn narrower than their tile
+  // the sky showed through the gap around them, as pale blue patches on the floor.
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
-      if (grid[gy][gx] !== 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
       if (!boxOnScreen(wx, wy, 0)) continue;
 
@@ -4601,8 +4678,134 @@ function topHeightAt(gx, gy) {
   return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
 }
 
-// Two hoops and a bung, which is all it takes for a rounded shape to read as a fuel
-// drum rather than a lump.
+// ---------------------------------------------------------------------------
+//  A proper oil drum.
+//
+//  It was a rounded box before, which is a lumpy cube however smoothly it is drawn:
+//  a box has four corners and a drum has none. This builds an actual cylinder. The
+//  footprint is a circle sampled in world coordinates and run through the same
+//  projection as everything else, so it sits in the scene correctly from any camera
+//  angle, and the body is shaded across its width so it reads as round rather than
+//  as a flat panel.
+// ---------------------------------------------------------------------------
+const BARREL_STEPS = 20;
+
+// A ring of points around the middle of a tile at a given height.
+function ringAt(cx, cy, r, z) {
+  const pts = [];
+  for (let i = 0; i < BARREL_STEPS; i++) {
+    const a = (i / BARREL_STEPS) * Math.PI * 2;
+    const wx = cx + Math.cos(a) * r, wy = cy + Math.sin(a) * r;
+    pts.push([isoX(wx, wy, z), isoY(wx, wy, z)]);
+  }
+  return pts;
+}
+
+function ringPath(pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+}
+
+function drawBarrel(wx, wy, h, col, fade) {
+  if (fade !== undefined) ctx.globalAlpha = fade;
+  const cx = wx + TILE / 2, cy = wy + TILE / 2;
+  const r = TILE * 0.29;
+  const bot = ringAt(cx, cy, r, 0);
+  const top = ringAt(cx, cy, r, h);
+  // A drum bulges very slightly in the middle, which is most of why it reads as a
+  // drum and not a tin can.
+  const midR = ringAt(cx, cy, r * 1.05, h * 0.5);
+
+  // Shadow on the ground.
+  ctx.fillStyle = 'rgba(0,0,0,0.26)';
+  ringPath(ringAt(cx, cy, r * 1.05, 0));
+  ctx.fill();
+
+  // The body: down one side of the top ring, round the bottom, and back.
+  let minX = Infinity, maxX = -Infinity;
+  for (const q of bot) { if (q[0] < minX) minX = q[0]; if (q[0] > maxX) maxX = q[0]; }
+  ctx.beginPath();
+  ctx.moveTo(top[0][0], top[0][1]);
+  for (let i = 1; i < top.length; i++) ctx.lineTo(top[i][0], top[i][1]);
+  for (let i = bot.length - 1; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(minX, 0, maxX, 0);
+  g.addColorStop(0, shade(col, -40));
+  g.addColorStop(.3, shade(col, 22));
+  g.addColorStop(.55, col);
+  g.addColorStop(1, shade(col, -46));
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // Two raised hoops and the bulge line, drawn as rings so they wrap round it.
+  ctx.lineWidth = 2.4;
+  ctx.strokeStyle = shade(col, -34);
+  for (const f of [0.28, 0.72]) {
+    const ring = ringAt(cx, cy, r * 1.04, h * f);
+    ringPath(ring);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = shade(col, 16);
+  ringPath(midR);
+  ctx.stroke();
+
+  // The lid, with a rim and a bung.
+  ringPath(top);
+  ctx.fillStyle = shade(col, 30);
+  ctx.fill();
+  ctx.strokeStyle = shade(col, -30);
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  const bung = ringAt(cx + r * .38, cy - r * .25, r * .17, h);
+  ringPath(bung);
+  ctx.fillStyle = shade(col, -22);
+  ctx.fill();
+
+  // A hazard band, so it is obvious this is the one worth shooting.
+  ctx.strokeStyle = 'rgba(255,216,77,0.9)';
+  ctx.lineWidth = 3.4;
+  const band = ringAt(cx, cy, r * 1.02, h * 0.5);
+  // Only the front half, so it looks painted on rather than being another hoop.
+  ctx.beginPath();
+  const half = Math.floor(band.length / 2);
+  ctx.moveTo(band[0][0], band[0][1]);
+  for (let i = 1; i <= half; i++) ctx.lineTo(band[i][0], band[i][1]);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------------------
+//  A bank of sandbags: two courses of three, staggered, each its own rounded bag.
+//  One smooth lump the size of the tile looked like a pillow, which is not what a
+//  sandbag emplacement looks like at all.
+// ---------------------------------------------------------------------------
+function drawSandbags(wx, wy, h, col, fade) {
+  if (fade !== undefined) ctx.globalAlpha = fade;
+  const bagW = TILE * 0.42, bagD = TILE * 0.3, bagH = h * 0.55;
+  const wasPart = partMode;
+  partMode = true;
+  // Bottom course of three across, then two on top sitting in the gaps, which is how
+  // they are actually stacked so the joins do not line up.
+  const rows = [
+    { z: 0,           at: [-0.26, 0.02, 0.3], off: -0.16 },
+    { z: h * 0.45,    at: [-0.12, 0.18],      off: 0.14 },
+  ];
+  for (const row of rows) {
+    for (const f of row.at) {
+      const bx = wx + TILE / 2 + f * TILE - bagW / 2;
+      const by = wy + TILE / 2 + row.off * TILE - bagD / 2;
+      drawBox(bx, by, row.z, bagW, bagD, bagH, col, fade);
+    }
+  }
+  partMode = wasPart;
+  ctx.globalAlpha = 1;
+}
+
+// Two hoops and a bung, kept for reference. The cylinder above replaced it.
 function drawBarrelTop(wx, wy, h) {
   const cx = wx + TILE / 2, cy = wy + TILE / 2;
   ctx.strokeStyle = 'rgba(30,22,16,0.45)';
@@ -5054,15 +5257,10 @@ function drawStanding() {
       // A barrel and a sandbag are soft things, so they are drawn with the rounded
       // painter the characters use rather than as flat panelled boxes. A hedgehog is
       // welded steel bar and stays angular.
-      if (kind && kind.soft) {
-        const wasPart = partMode;
-        partMode = true;
-        // Inset a little, so a barrel does not fill its whole square like a wall does.
-        const in2 = t === BARREL ? TILE * 0.22 : TILE * 0.06;
-        drawBox(wx + in2, wy + in2, 0, TILE - in2 * 2, TILE - in2 * 2, h, col, fade);
-        partMode = wasPart;
-        if (t === BARREL && fade === undefined) drawBarrelTop(wx, wy, h);
-        if (t === SANDBAG && fade === undefined) drawSandbagRows(wx, wy, h);
+      if (t === BARREL) {
+        drawBarrel(wx, wy, h, col, fade);
+      } else if (t === SANDBAG) {
+        drawSandbags(wx, wy, h, col, fade);
       } else if (t === HEDGEHOG) {
         drawHedgehog(wx, wy, h, col, fade);
       } else if (t === WALL) {
@@ -5101,7 +5299,7 @@ function drawMorphRow() {
     const f = FORMS[i];
     const have = !!player.unlocked[f.key];
     const isNow = player.form === f.key;
-    const affordable = !f.timed || isNow || player.points >= TUNE.BOSS_POINTS;
+    const affordable = !f.timed || isNow || player.points >= bossCost();
     const usable = have && affordable;
 
     ctx.fillStyle = isNow ? 'rgba(255,216,77,0.22)'
@@ -5120,7 +5318,7 @@ function drawMorphRow() {
     ctx.fillStyle = 'rgba(238,242,248,0.4)';
     if (!have) ctx.fillText('kill one', r.x + r.w / 2, r.y + 24);
     else if (f.timed && isNow) ctx.fillText(player.bossT.toFixed(1) + 's', r.x + r.w / 2, r.y + 24);
-    else if (f.timed) ctx.fillText(TUNE.BOSS_POINTS + ' pts', r.x + r.w / 2, r.y + 24);
+    else if (f.timed) ctx.fillText(bossCost() + ' pts', r.x + r.w / 2, r.y + 24);
     else if (isNow) ctx.fillText('active', r.x + r.w / 2, r.y + 24);
   }
   ctx.textAlign = 'left';
@@ -5974,19 +6172,67 @@ function paintDoll(c, look, W, H) {
 // ---------------------------------------------------------------------------
 //  Weapons, drawn properly so it is obvious what you are buying.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  WEAPONS
+//
+//  The prices are worked out against what the game actually pays, not guessed.
+//  On normal, a wave holds 8 + 3 per wave after it, a kill pays 2, clearing a wave
+//  pays 25 + 5 per wave, and a boss pays 60. That works out to roughly:
+//
+//      end of wave  5     400 coins
+//      end of wave 10    1075 coins
+//      end of wave 15    2025 coins
+//      end of wave 20    3250 coins
+//
+//  Coins are kept between runs, so the ladder below is built so that the first
+//  weapon is affordable partway through a first run, the middle of the list needs a
+//  decent run, and the top needs a few. Everything here plus every upgrade comes to
+//  about 23,000, which is a long tail on purpose: there should always be a next
+//  thing to save for.
+//
+//  Damage deliberately does not climb in step with price. A dearer weapon is more
+//  specialised rather than strictly better, so the choice stays interesting instead
+//  of there being one right answer at each price.
+//
+//    dmg    how hard each hit lands
+//    cool   time between hits, so BELOW one is faster and above one is slower
+//    reach  how far it hits from
+//    noBite nothing can infect you while you carry it
+// ---------------------------------------------------------------------------
 const WEAPONS = [
-  { key: 'fists',   name: 'Fists',        kind: 'fists',  cost: 0,   dmg: 1,
+  { key: 'fists',   name: 'Fists',        kind: 'fists',   cost: 0,
+    dmg: 1,    cool: 1,    reach: 1,
     blurb: 'What every noob starts with.' },
-  { key: 'knife',   name: 'Trench Knife', kind: 'knife',  cost: 90,  dmg: 1.25,
-    blurb: 'A heavier blade. Hits harder than the one you find.' },
-  { key: 'rifle',   name: 'Bolt Rifle',   kind: 'rifle',  cost: 180, dmg: 1.3,
-    blurb: 'Long barrel, wooden stock, and it reaches further.' },
-  { key: 'smg',     name: 'Grease Gun',   kind: 'smg',    cost: 260, dmg: 1.45,
-    blurb: 'Stubby and fast. Best when they get close.' },
-  { key: 'shield',  name: 'Riot Shield',  kind: 'shield', cost: 320, dmg: 1.2,
-    blurb: 'Nothing bites through this. The rioter carries one.' },
-  { key: 'panzer',  name: 'Panzerfaust',  kind: 'panzer', cost: 480, dmg: 1.7,
-    blurb: 'One tube, one very large bang.' },
+  { key: 'knuckles', name: 'Knuckles',    kind: 'knuckles', cost: 120,
+    dmg: 1.22, cool: .95,  reach: 1,
+    blurb: 'Brass over the fingers. Cheap and nasty.' },
+  { key: 'knife',   name: 'Trench Knife', kind: 'knife',   cost: 200,
+    dmg: 1.4,  cool: .95,  reach: 1.08,
+    blurb: 'A heavy blade with a knuckle guard.' },
+  { key: 'rifle',   name: 'Bolt Rifle',   kind: 'rifle',   cost: 380,
+    dmg: 1.45, cool: 1.18, reach: 1.35,
+    blurb: 'Slow to work the bolt, but it reaches a long way.' },
+  { key: 'smg',     name: 'Grease Gun',   kind: 'smg',     cost: 560,
+    dmg: 1.3,  cool: .68,  reach: 1.15,
+    blurb: 'Sprays fast. Weaker per hit but far more of them.' },
+  { key: 'shotgun', name: 'Trench Gun',   kind: 'shotgun', cost: 760,
+    dmg: 1.85, cool: 1.25, reach: .85,
+    blurb: 'Devastating up close. Useless at a distance.' },
+  { key: 'shield',  name: 'Riot Shield',  kind: 'shield',  cost: 980,
+    dmg: 1.35, cool: 1,    reach: 1,    noBite: true,
+    blurb: 'Nothing bites through this. Ever.' },
+  { key: 'flamer',  name: 'Flamethrower', kind: 'flamer',  cost: 1250,
+    dmg: 1.55, cool: .62,  reach: 1.05,
+    blurb: 'Pours it out. Best against a crowd.' },
+  { key: 'panzer',  name: 'Panzerfaust',  kind: 'panzer',  cost: 1600,
+    dmg: 2.05, cool: 1.8,  reach: 1.25,
+    blurb: 'One tube, one very large bang, then a long wait.' },
+  { key: 'sniper',  name: 'Sniper Rifle', kind: 'sniper',  cost: 2000,
+    dmg: 2,    cool: 1.8,  reach: 1.7,
+    blurb: 'Picks them off from right across the map.' },
+  { key: 'minigun', name: 'Minigun',      kind: 'minigun', cost: 2600,
+    dmg: 1.6,  cool: .5,   reach: 1.25,
+    blurb: 'Never stops. The last thing you will ever need.' },
 ];
 function weaponByKey(k) {
   for (const w of WEAPONS) { if (w.key === k) return w; }
