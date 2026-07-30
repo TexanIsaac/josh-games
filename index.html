@@ -260,7 +260,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v34';
+const VERSION = 'v35';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -772,8 +772,11 @@ const TUNE = {
   SPAWN_SPEEDUP: 0.986,
 
   // Waves. Clear one and you pick an upgrade before the next starts.
-  WAVE_FIRST_COUNT: 5,
-  WAVE_GROWTH: 2,
+  // Josh said the waves felt short. The first one is now eight rather than five and
+  // each wave adds three rather than two, so wave five is twenty instead of thirteen
+  // and wave ten is thirty five instead of twenty three.
+  WAVE_FIRST_COUNT: 8,
+  WAVE_GROWTH: 3,
   UPGRADE_CHOICES: 3,
 
   // How much tougher enemies get each wave, and it compounds. Your upgrades
@@ -902,27 +905,27 @@ const TUNE = {
 // ---------------------------------------------------------------------------
 const MAP = `
 ############################################
-#Z......#..........C....#.........#.......Z#
-#.......#..C....C.......#...CC....#........#
-#...C...#.......#####...#.........#...C....#
-#.......#.......#...#...######.#####.......#
-#.####..#...C...#...#.........#....C.......#
-#....#..#.......#...#####..####............#
+#Z......#....S.....C....#.........#.......Z#
+#.......#..C....C....B..#...CC....#...H....#
+#...C...#.......#####...#....S....#...C....#
+#.......#..S....#...#...######.#####.......#
+#.####..#...C...#...#....BB...#....C...S...#
+#....#..#.......#...#####..####.....H......#
 #....#......C...#.......#..#......C....C...#
-#....######.....#..CC...#..#...........#####
-#...............#.......#..#...............#
+#....######..S..#..CC...#..#.....S.....#####
+#...............#.......#..#...H...........#
 #..C....#####...#####.###..#####.####...C..#
-#.......#..........P.......................#
+#.......#....B.....P....S..................#
 #.......#...........#......#####.####...C..#
-#####...#####..C....#..C...#...............#
-#...........#.......#......#....C......#####
-#..C....C...#..#####........####...........#
+#####...#####..C....#..C...#.......S.......#
+#....S......#.......#......#....C......#####
+#..C....C...#..#####...BB...####.....H.....#
 #...........#..#....C...C......#....C..C...#
-#####.###...#..#...........#####...........#
+#####.###...#..#.....S.....#####...........#
 #.......#...#..######.##...#.......#####...#
-#..C....#......#....#..#...#....C......#...#
-#.......#####..#.C..#..#####...........#...#
-#..C..........C#....#..........C....C..#...#
+#..C....#..H...#....#..#...#....C......#...#
+#.......#####..#.C..#..#####.....S.....#...#
+#..C.....S....C#....#..........C....C..#...#
 #Z......#...........#...C.........#......Z.#
 ############################################
 `;
@@ -1819,7 +1822,69 @@ function resize() {
 //  The level, loaded from the MAP text
 // ---------------------------------------------------------------------------
 const TILE = 40;
-const WALL = 1, CRATE = 2;
+const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5;
+
+// Everything that can stand in your way, in one table. Add a line to add an obstacle.
+//   h            how tall it is. Walls work theirs out per tile, so theirs is null.
+//   hp           how much explosive it takes to clear. null means it cannot be cleared.
+//   explodes     goes off when it is destroyed, which can set off its neighbours.
+//   soft         drawn with rounded edges instead of flat panels.
+const TILE_KIND = {
+  1: { name: 'wall',     h: null,     hp: 320,  color: null },
+  2: { name: 'crate',    h: 26,       hp: 90,   color: null },
+  3: { name: 'barrel',   h: 32,       hp: 40,   color: '#b4552f', explodes: true, soft: true },
+  4: { name: 'sandbag',  h: 17,       hp: 130,  color: '#c2ad72', soft: true },
+  5: { name: 'hedgehog', h: 25,       hp: null, color: '#8f959e' },
+};
+function tileKind(t) { return TILE_KIND[t] || null; }
+
+// How much punishment each tile has left. Walls and crates start whole; a tile that
+// runs out is cleared away and leaves floor behind.
+let tileHp = [];
+
+// A blast big enough to matter clears obstacles out of its way. The outer ring is
+// never touched: with a hole in the boundary everything would wander off the map.
+function damageTile(gx, gy, dmg) {
+  if (gx <= 0 || gy <= 0 || gx >= GW - 1 || gy >= GH - 1) return;
+  const t = grid[gy][gx];
+  if (t === 0) return;
+  const kind = tileKind(t);
+  if (!kind || kind.hp === null) return;      // a steel hedgehog just takes it
+  tileHp[gy][gx] -= dmg;
+  if (tileHp[gy][gx] > 0) return;
+
+  // Cleared. Leave floor, throw some debris, and if it was a barrel it goes off,
+  // which is what makes a row of them worth shooting.
+  grid[gy][gx] = 0;
+  const cx = gx * TILE + TILE / 2, cy = gy * TILE + TILE / 2;
+  const col = kind.color || (t === WALL ? brickAt(gx, gy) : crateColor());
+  spray(cx, cy, col, 16);
+  for (let i = 0; i < 6; i++) {
+    bits.push({
+      x: cx + (Math.random() - .5) * TILE, y: cy + (Math.random() - .5) * TILE,
+      z: 8 + Math.random() * 26,
+      vx: (Math.random() - .5) * 130, vy: (Math.random() - .5) * 130,
+      life: .8, max: .8, c: col, s: 4,
+    });
+  }
+  SFX.smash();
+  if (kind.explodes) {
+    // Queued rather than done here, so a chain of barrels cannot recurse its way
+    // through the whole map inside one blast.
+    pendingBarrels.push({ x: cx, y: cy });
+  }
+}
+let pendingBarrels = [];
+
+// Barrels that were set off go up one after another, each able to catch the next.
+function popBarrels() {
+  let guard = 0;
+  while (pendingBarrels.length && guard++ < 60) {
+    const b = pendingBarrels.shift();
+    explode(b.x, b.y, 190, 210, '#ffb44a');
+  }
+  if (guard >= 60) pendingBarrels.length = 0;
+}
 let grid = [], GW = 0, GH = 0, spawnPoints = [], playerStart = { x: 0, y: 0 };
 
 function loadMap() {
@@ -1837,12 +1902,25 @@ function loadMap() {
       if (edge) { row.push(WALL); continue; }
       if (ch === '#') { row.push(WALL); continue; }
       if (ch === 'C') { row.push(CRATE); continue; }
+      if (ch === 'B') { row.push(BARREL); continue; }
+      if (ch === 'S') { row.push(SANDBAG); continue; }
+      if (ch === 'H') { row.push(HEDGEHOG); continue; }
       row.push(0);
       const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
       if (ch === 'Z') spawnPoints.push({ x: cx, y: cy });
       if (ch === 'P') playerStart = { x: cx, y: cy };
     }
     grid.push(row);
+  }
+  // Every obstacle starts whole.
+  tileHp = [];
+  for (let y = 0; y < GH; y++) {
+    const hp = [];
+    for (let x = 0; x < GW; x++) {
+      const k = tileKind(grid[y][x]);
+      hp.push(k && k.hp !== null ? k.hp : Infinity);
+    }
+    tileHp.push(hp);
   }
   if (spawnPoints.length === 0) spawnPoints.push({ x: TILE * 2, y: TILE * 2 });
   if (!playerStart.x) playerStart = { x: GW * TILE / 2, y: GH * TILE / 2 };
@@ -2072,7 +2150,9 @@ function tileTopAt(px, py) {
   const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
   if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return WALL_H * 4;
   const t = grid[gy][gx];
-  return t === WALL ? wallHeightAt(gx, gy) : t === CRATE ? CRATE_H : 0;
+  if (t === WALL) return wallHeightAt(gx, gy);
+  const k = tileKind(t);
+  return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
 }
 
 // The tallest thing under a body, checking its four corners.
@@ -2397,6 +2477,22 @@ function explode(x, y, radius, damage, color) {
     if (d > radius) continue;
     const falloff = 1 - (d / radius) * .55;
     hurtEnemy(e, damage * falloff, x, y);
+  }
+
+  // And it knocks a hole in whatever was in the way. Only the inner obstacles: the
+  // boundary stays put so nothing can wander off the map.
+  const g0x = Math.max(1, Math.floor((x - radius) / TILE));
+  const g1x = Math.min(GW - 2, Math.floor((x + radius) / TILE));
+  const g0y = Math.max(1, Math.floor((y - radius) / TILE));
+  const g1y = Math.min(GH - 2, Math.floor((y + radius) / TILE));
+  for (let gy = g0y; gy <= g1y; gy++) {
+    for (let gx = g0x; gx <= g1x; gx++) {
+      if (grid[gy][gx] === 0) continue;
+      const tx = gx * TILE + TILE / 2, ty = gy * TILE + TILE / 2;
+      const d2 = Math.hypot(tx - x, ty - y);
+      if (d2 > radius) continue;
+      damageTile(gx, gy, damage * (1 - (d2 / radius) * .5));
+    }
   }
 }
 
@@ -3703,6 +3799,7 @@ function update(dt) {
 
   updatePlanes(dt);
   updateBombs(dt);
+  popBarrels();
 
   driftEffects(dt);
   if (slowmo > 0) slowmo = Math.max(0, slowmo - dt);
@@ -4407,6 +4504,115 @@ function drawPowerupAt(p) {
   ctx.fillText(p.name.charAt(0), tx, ty);
 }
 
+// The tallest point of a tile, whatever kind it is.
+function topHeightAt(gx, gy) {
+  const t = grid[gy][gx];
+  if (t === WALL) return wallHeightAt(gx, gy);
+  const k = tileKind(t);
+  return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
+}
+
+// Two hoops and a bung, which is all it takes for a rounded shape to read as a fuel
+// drum rather than a lump.
+function drawBarrelTop(wx, wy, h) {
+  const cx = wx + TILE / 2, cy = wy + TILE / 2;
+  ctx.strokeStyle = 'rgba(30,22,16,0.45)';
+  ctx.lineWidth = 1.4;
+  for (const f of [0.34, 0.68]) {
+    const z = h * f;
+    ctx.beginPath();
+    for (let a = 0; a <= 12; a++) {
+      const th = (a / 12) * Math.PI * 2;
+      const px = cx + Math.cos(th) * TILE * 0.27;
+      const py = cy + Math.sin(th) * TILE * 0.27;
+      const sx = isoX(px, py, z), sy = isoY(px, py, z);
+      if (a === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+  }
+  // The bung on the lid, and a hazard mark so it is obvious it will go off.
+  ctx.fillStyle = '#5b3a22';
+  const bx = isoX(cx + 4, cy - 3, h), by = isoY(cx + 4, cy - 3, h);
+  ctx.beginPath(); ctx.ellipse(bx, by, 3.2, 2, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = 'rgba(255,216,77,0.85)';
+  ctx.font = '800 9px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('!', isoX(cx - 5, cy, h * .62), isoY(cx - 5, cy, h * .62) + 3);
+  ctx.textAlign = 'left';
+}
+
+// Three courses of bags, staggered, which is how they are actually stacked.
+function drawSandbagRows(wx, wy, h) {
+  ctx.strokeStyle = 'rgba(90,76,44,0.5)';
+  ctx.lineWidth = 1.1;
+  for (const f of [0.34, 0.68]) {
+    const z = h * f;
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx + 2, wy + TILE / 2, z), isoY(wx + 2, wy + TILE / 2, z));
+    ctx.lineTo(isoX(wx + TILE - 2, wy + TILE / 2, z), isoY(wx + TILE - 2, wy + TILE / 2, z));
+    ctx.stroke();
+  }
+  // A couple of seams across the top so it does not read as one solid pillow.
+  for (const f of [0.36, 0.64]) {
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx + TILE * f, wy + 3, h), isoY(wx + TILE * f, wy + 3, h));
+    ctx.lineTo(isoX(wx + TILE * f, wy + TILE - 3, h), isoY(wx + TILE * f, wy + TILE - 3, h));
+    ctx.stroke();
+  }
+}
+
+// A steel hedgehog: three lengths of angle iron welded across each other. Nothing
+// gets through it and nothing blows it up either.
+function drawHedgehog(wx, wy, h, col, fade) {
+  if (fade !== undefined) ctx.globalAlpha = fade;
+  const cx = wx + TILE / 2, cy = wy + TILE / 2;
+  const r = TILE * 0.36;
+  const bars = [[0, 0], [Math.PI / 3, 0], [-Math.PI / 3, 0]];
+  for (const [ang] of bars) {
+    const dx = Math.cos(ang) * r, dy = Math.sin(ang) * r;
+    // Each bar runs from low on one side to high on the other, crossing the middle.
+    const x1 = isoX(cx - dx, cy - dy, 0), y1 = isoY(cx - dx, cy - dy, 0);
+    const x2 = isoX(cx + dx, cy + dy, h), y2 = isoY(cx + dx, cy + dy, h);
+    const x3 = isoX(cx - dx, cy - dy, h), y3 = isoY(cx - dx, cy - dy, h);
+    const x4 = isoX(cx + dx, cy + dy, 0), y4 = isoY(cx + dx, cy + dy, 0);
+    ctx.strokeStyle = shade(col, -18);
+    ctx.lineWidth = 4.2;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x3, y3); ctx.lineTo(x4, y4); ctx.stroke();
+    ctx.strokeStyle = shade(col, 22);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Cracks that appear as an obstacle takes damage, so it is obvious which ones are
+// nearly gone and worth one more shell.
+function drawTileDamage(gx, gy, t, h) {
+  const k = tileKind(t);
+  if (!k || k.hp === null) return;
+  const left = tileHp[gy] ? tileHp[gy][gx] : Infinity;
+  if (!isFinite(left) || left >= k.hp) return;
+  const hurt = 1 - Math.max(0, left) / k.hp;
+  if (hurt < 0.15) return;
+  const cx = gx * TILE + TILE / 2, cy = gy * TILE + TILE / 2;
+  ctx.strokeStyle = 'rgba(18,14,12,' + (0.25 + hurt * 0.5).toFixed(2) + ')';
+  ctx.lineWidth = 1 + hurt * 1.4;
+  // A fixed set of splits per tile, so the damage does not crawl about between frames.
+  const seed = (gx * 73856093) ^ (gy * 19349663);
+  const rnd = i => (((seed >> (i * 3)) & 7) / 7) - .5;
+  const n = 1 + Math.floor(hurt * 3);
+  for (let i = 0; i < n; i++) {
+    const z0 = h * (0.25 + 0.2 * i);
+    const ox = rnd(i) * TILE * .5, oy = rnd(i + 2) * TILE * .5;
+    ctx.beginPath();
+    ctx.moveTo(isoX(cx + ox, cy + oy, z0), isoY(cx + ox, cy + oy, z0));
+    ctx.lineTo(isoX(cx + ox * .3, cy + oy * .3, z0 + h * .28),
+               isoY(cx + ox * .3, cy + oy * .3, z0 + h * .28));
+    ctx.stroke();
+  }
+}
+
 // Slats across the lid of a crate, so it reads as a wooden box rather than a
 // plain brown cube.
 function drawCrateLid(wx, wy, h) {
@@ -4714,7 +4920,7 @@ function drawStanding() {
       const t = grid[gy][gx];
       if (t === 0) continue;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = t === WALL ? wallHeightAt(gx, gy) : CRATE_H;
+      const h = topHeightAt(gx, gy);
       if (!boxOnScreen(wx, wy, h)) continue;
       slot(viewDepth(wx + TILE / 2, wy + TILE / 2, 0), 0, gx, gy, t);
     }
@@ -4733,10 +4939,13 @@ function drawStanding() {
     if (o.k === 0) {
       const gx = o.a, gy = o.b, t = o.c;
       const wx = gx * TILE, wy = gy * TILE;
-      const h = t === WALL ? wallHeightAt(gx, gy) : CRATE_H;
+      const h = topHeightAt(gx, gy);
       const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
         ? TUNE.WALL_FADE : undefined;
-      const col = t === WALL ? brickAt(gx, gy) : crateColor();
+      const kind = tileKind(t);
+      const col = t === WALL ? brickAt(gx, gy)
+        : t === CRATE ? crateColor()
+        : (kind && kind.color) || crateColor();
       // Walls carry marks; crates get their lid instead.
       const decal = (t === WALL && fade === undefined) ? decalFor(gx, gy) : null;
       // A side touching another wall of the same height is buried, so leave it out.
@@ -4753,8 +4962,26 @@ function drawStanding() {
         if (!same(0, 1)) open |= 4;
         if (!same(-1, 0)) open |= 8;
       }
-      drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
-      if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
+      // A barrel and a sandbag are soft things, so they are drawn with the rounded
+      // painter the characters use rather than as flat panelled boxes. A hedgehog is
+      // welded steel bar and stays angular.
+      if (kind && kind.soft) {
+        const wasPart = partMode;
+        partMode = true;
+        // Inset a little, so a barrel does not fill its whole square like a wall does.
+        const in2 = t === BARREL ? TILE * 0.22 : TILE * 0.06;
+        drawBox(wx + in2, wy + in2, 0, TILE - in2 * 2, TILE - in2 * 2, h, col, fade);
+        partMode = wasPart;
+        if (t === BARREL && fade === undefined) drawBarrelTop(wx, wy, h);
+        if (t === SANDBAG && fade === undefined) drawSandbagRows(wx, wy, h);
+      } else if (t === HEDGEHOG) {
+        drawHedgehog(wx, wy, h, col, fade);
+      } else {
+        drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
+        if (t === CRATE && fade === undefined) drawCrateLid(wx, wy, h);
+      }
+      // How battered it is, once it has taken a hit but before it goes.
+      if (fade === undefined) drawTileDamage(gx, gy, t, h);
     } else {
       // Your own body is not drawn in first person: you would be staring at the
       // inside of your own head.
