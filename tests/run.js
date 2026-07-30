@@ -143,7 +143,7 @@ eval(code + `
    puffDust, addShake, get shake(){return shake}, driftEffects, get bits(){return bits},
    paintFigure, paintFace, paintHat, lookFor, limbOn, HATS, FACES,
    leaveTank, morphTo, itemThumb, dressRow, statBar, drawShop,
-   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt,
+   DOOR, isDoorOpen, updateDoors, resetDoors, drawDoor, solidAt, passableTile, MOUNTAIN, TRENCH, HIGH, isPit, topHeightAt, MOUNTAIN_H, HIGH_H, TRENCH_D, drawMountain, updateHeight, moveEntity, blockedAt, get GW(){return GW}, get GH(){return GH},
    shadeRaw, partGradient, drawBlockFace, drawBlockWeapon,
    MEDALS, hasMedal, awardMedal, medalCount, medalRow, drawEdgeArrows,
    noteRank, rankFor, finishWave, get wave(){return wave}, set wave(v){wave=v},
@@ -1194,6 +1194,121 @@ ok('both themes draw a whole frame without throwing', (() => {
   return true;
 })());
 
+group('A bigger map with somewhere to go');
+G.loadMap(); G.reset();
+ok('the map is much bigger than it was', G.GW * G.GH > 2500,
+  G.GW + ' by ' + G.GH + ', ' + (G.GW * G.GH) + ' tiles');
+ok('there are mountains, trenches and two storey blocks on it', (() => {
+  const seen = {};
+  for (let y = 0; y < G.GH; y++)
+    for (let x = 0; x < G.GW; x++) seen[G.grid[y][x]] = (seen[G.grid[y][x]] || 0) + 1;
+  console.log('    mountain ' + (seen[G.MOUNTAIN] || 0) + ', trench ' + (seen[G.TRENCH] || 0)
+    + ', two storey ' + (seen[G.HIGH] || 0) + ', doors ' + (seen[G.DOOR] || 0));
+  return (seen[G.MOUNTAIN] || 0) > 20 && (seen[G.TRENCH] || 0) > 20
+    && (seen[G.HIGH] || 0) > 5;
+})());
+ok('every bit of open ground can still be reached', (() => {
+  // The buildings all have doors and the trenches are walkable, so nothing is walled
+  // off. sealPockets fills anything that is not, and filling a lot would mean the map
+  // generator had made rooms with no way in.
+  G.loadMap();
+  let open = 0;
+  for (let y = 0; y < G.GH; y++)
+    for (let x = 0; x < G.GW; x++) if (G.passableTile(G.grid[y][x])) open++;
+  return open > 2000;
+})(), 'nothing significant was filled in');
+ok('the boundary is still sealed', (() => {
+  for (let x = 0; x < G.GW; x++) if (G.grid[0][x] === 0 || G.grid[G.GH - 1][x] === 0) return false;
+  for (let y = 0; y < G.GH; y++) if (G.grid[y][0] === 0 || G.grid[y][G.GW - 1] === 0) return false;
+  return true;
+})());
+ok('there is a clear lane inside the boundary, so nothing gets boxed in', (() => {
+  let blocked = 0;
+  for (let x = 1; x < G.GW - 1; x++) {
+    if (!G.passableTile(G.grid[1][x])) blocked++;
+    if (!G.passableTile(G.grid[G.GH - 2][x])) blocked++;
+  }
+  return blocked === 0;
+})());
+
+group('Mountains, which nothing can shift');
+ok('a mountain is far taller than a wall', G.MOUNTAIN_H > G.WALL_H * 2,
+  G.MOUNTAIN_H + ' against ' + G.WALL_H);
+ok('a mountain cannot be destroyed at all', G.TILE_KIND[G.MOUNTAIN].hp === null);
+ok('a nuke does not touch one', (() => {
+  G.loadMap();
+  let m = null;
+  for (let y = 2; y < G.GH - 2 && !m; y++)
+    for (let x = 2; x < G.GW - 2 && !m; x++) if (G.grid[y][x] === G.MOUNTAIN) m = [x, y];
+  if (!m) return false;
+  const before = G.grid[m[1]][m[0]];
+  // Everything the game has, right on top of it, several times over.
+  for (let i = 0; i < 8; i++) {
+    G.explode(m[0] * 40 + 20, m[1] * 40 + 20, G.TUNE.NUKE_RADIUS, G.TUNE.NUKE_DMG, '#fff');
+  }
+  return G.grid[m[1]][m[0]] === before;
+})(), 'still standing after eight nukes');
+ok('a wall next to it does go, so the blast was real', (() => {
+  G.loadMap();
+  let w = null;
+  for (let y = 2; y < G.GH - 2 && !w; y++)
+    for (let x = 2; x < G.GW - 2 && !w; x++) if (G.grid[y][x] === 1) w = [x, y];
+  for (let i = 0; i < 6; i++) G.explode(w[0] * 40 + 20, w[1] * 40 + 20, 150, 500, '#fff');
+  return G.grid[w[1]][w[0]] === 0;
+})(), 'so the mountain surviving means something');
+G.loadMap(); G.reset();
+
+group('Trenches');
+ok('a trench is below the ground, not above it', G.TRENCH_D < 0, 'floor at ' + G.TRENCH_D);
+ok('it counts as somewhere you can walk', G.passableTile(G.TRENCH));
+ok('it does not block a shot', (() => {
+  G.loadMap();
+  let tr = null;
+  for (let y = 2; y < G.GH - 2 && !tr; y++)
+    for (let x = 2; x < G.GW - 2 && !tr; x++) if (G.grid[y][x] === G.TRENCH) tr = [x, y];
+  return tr !== null && G.solidAt(tr[0] * 40 + 20, tr[1] * 40 + 20) === false;
+})(), 'you shoot over it, not into the side of it');
+ok('standing in one puts you below ground level', (() => {
+  G.loadMap(); G.reset();
+  let tr = null;
+  for (let y = 2; y < G.GH - 2 && !tr; y++)
+    for (let x = 2; x < G.GW - 2 && !tr; x++) if (G.grid[y][x] === G.TRENCH) tr = [x, y];
+  const e = { x: tr[0] * 40 + 20, y: tr[1] * 40 + 20, r: 12, z: 0 };
+  for (let i = 0; i < 120; i++) G.updateHeight(e, 0, 0, 1 / 60);
+  return e.z < -5;
+})(), 'you drop into it');
+ok('and you can climb back out again', (() => {
+  G.loadMap(); G.reset();
+  let tr = null;
+  for (let y = 3; y < G.GH - 3 && !tr; y++) {
+    for (let x = 3; x < G.GW - 3 && !tr; x++) {
+      if (G.grid[y][x] === G.TRENCH && G.grid[y][x + 1] === 0) tr = [x, y];
+    }
+  }
+  if (!tr) return true;
+  const e = { x: tr[0] * 40 + 20, y: tr[1] * 40 + 20, r: 12, z: G.TRENCH_D };
+  for (let i = 0; i < 200; i++) {
+    G.moveEntity(e, 90 / 60, 0);
+    G.updateHeight(e, 1, 0, 1 / 60);
+  }
+  return e.z > -2;
+})(), 'a trench is cover, not a pit you are stuck in');
+ok('a trench is drawn with the ground, not as a block standing on it',
+  src.indexOf('A trench is a hole in the ground and is drawn with the ground') !== -1);
+
+group('Two storey blocks, and staying inside the map');
+ok('a two storey block is taller than a wall', G.HIGH_H > G.WALL_H,
+  G.HIGH_H + ' against ' + G.WALL_H);
+ok('the boundary is impassable as a rule, not because of its height', (() => {
+  // The two storey blocks are taller than the boundary, so height alone stopped
+  // guarding it the moment they went in.
+  return src.indexOf('The boundary is never passable, at any height at all') !== -1;
+})());
+ok('even standing higher than the wall you cannot walk over it', (() => {
+  // Right up against the boundary, at roof height, pushing outwards.
+  return G.blockedAt(20, 20, 12, G.HIGH_H) && G.blockedAt(20, 20, 12, G.MOUNTAIN_H * 2);
+})(), 'which is how Josh got out into the blue once before');
+
 group('Pickups and the item row');
 ok('there is a version marker on screen', typeof G.VERSION === 'string' && G.VERSION.length > 0,
   G.VERSION);
@@ -1760,7 +1875,10 @@ ok('nothing ends up outside the walls over a long game', (() => {
   // ninety seconds driving hard into the corners, nothing ever got out. Height is
   // only a loose sanity check, because standing on a wall or being part way up one
   // is both normal and expected, and a big body samples the ground differently.
-  const notFloating = o => (o.z || 0) <= G.WALL_H + 3;
+  // The ceiling is the tallest thing anyone can legitimately be standing on, which is
+  // now a mountain rather than a wall. Two storey roofs and rock are both places you
+  // are meant to be able to get to.
+  const notFloating = o => (o.z || 0) <= G.MOUNTAIN_H + 3;
   return inside(G.player) && G.enemies.every(inside)
     && notFloating(G.player) && G.enemies.every(notFloating);
 })(), 'player and every enemy still inside the boundary');
@@ -3150,11 +3268,11 @@ ok('a shut door stops a shot and an open one lets it through', (() => {
   return shut === true && open === false;
 })());
 ok('a room behind a door is never sealed off', (() => {
-  // The pathfinder treats a door as a way through even when it is shut. If it did not,
-  // sealPockets would wall in any room only reachable through a door and every enemy
-  // in there would be stranded, which is a bug this suite has caught before.
-  G.loadMap();
-  return src.indexOf("grid[ny][nx] !== DOOR") !== -1;
+  // The pathfinder treats a door as a way through even when it is shut. Without that,
+  // sealPockets walls in any room reachable only through a door and every enemy in it
+  // is stranded. A trench counts as walkable for the same reason.
+  return G.passableTile(G.DOOR) && G.passableTile(G.TRENCH) && G.passableTile(0)
+    && !G.passableTile(1) && !G.passableTile(G.MOUNTAIN);
 })());
 ok('enemies can still reach the player with doors in the way', (() => {
   G.loadMap(); G.reset();

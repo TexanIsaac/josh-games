@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v49';
+const VERSION = 'v50';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1059,30 +1059,50 @@ const TUNE = {
 //  outside edge, and fills in any room that got walled off by accident.
 // ---------------------------------------------------------------------------
 const MAP = `
-############################################
-#Z......#....S.....C....#.........#.......Z#
-#.......D..C....C....B..D...CC....D...H....#
-#...C...#.......#####...#....S....#...C....#
-#.......#..S....#...#...######.#####.......#
-#.####..#...C...#...#....BB...#....C...S...#
-#....#..#.......#...#####..####.....H......#
-#....#......C...#.......#..#......C....C...#
-#....#D####..S..D..CC...#..#.....S.....#D###
-#...............#.......#..#...H...........#
-#..C....#####...#####.###..#####.####...C..#
-#.......#....B.....P....S..................#
-#.......#...........#......#####.####...C..#
-#####...#####..C....#..C...#.......S.......#
-#....S......#.......#......#....C......#####
-#..C....C...#..#####...BB...####.....H.....#
-#...........D..D....C...C......D....C..C...#
-#####.###...#..#.....S.....#####...........#
-#.......#...#..######.##...#.......#####...#
-#..C....#..H...#....#..#...#....C......#...#
-#.......#####..#.C..#..#####.....S.....#...#
-#..C.....S....C#....#..........C....C..#...#
-#Z......#...........#...C.........#......Z.#
-############################################
+########################################################################
+#......................................................................#
+#.MMMMMMM........C...S............Z......C.......B.....................#
+#.MMMMMM......................#####D#####.....S.......H.............Z..#
+#.MMMMM.......#####D#####.....#XX...#...#............................B.#
+#.MMMM........#XX...#...#.....#X....#C..#.....#####D#####..S..B........#
+#.MMM..B......#X....#...#.....#...S.D...D.S...#XX...#...#..............#
+#.MM..........#.....#...#.....#.....#...#.....#X....#...#...S..........#
+#.M...........#.....D...#.....#.....#.CH#.....#.....#S..#.#####D#####..#
+#.............#.....#...#C....#.....#...#.....D.....D...D.#.....#...#..#
+#.............#.....#..C#.....#####D#####...S.#.....#.C.#.#.....#...#..#
+#............C#...C.#...#.....................#.....#...#.#.....#...#..#
+#..ZTTTTTTTTT.#####D#####...............T.....#.....#...#.D.....D...D..#
+#.......C.C....................S........T.....#####D#####.#.....#...#..#
+#.B.......................T...........C.T............S....#.....#...#B.#
+#...HS....................T.............T.SS...S..........#.....#...#H.#
+#....#####D#####..........T..........####D####.....B......#.....#...#..#
+#....#XXC..#...#....######D######....#..T.#..#.S..........#####D#####..#
+#....#X..C.#...#....#.....T#....#....#..T.#..#.........................#
+#....#..C..#...#....#.....T#....#....D..T.D..D.........C.....BCH.......#
+#.C..#.....D...D....#.....T#....#....#.BT.#..#..MMMMMM.MMMMMMM.........#
+#....#.....#...#....D......D....#....#..T.#..#..M.MMMM.M.MMMMM.........#
+#..C.#.....#...#....#..B...#....#...P#..T.#..#..TH.....................#
+#....#.....#..C#.H.C#......#....#....####D####..T............C.........#
+#....#####D#####....#...C..#....#.......T....C..T.........#####D#####..#
+#...................#......#....#.......T...H...T.........#.........#..#
+#.........B.........######D######.......T.......T.........#.......C.#..#
+#.................................C.............T.........#.........#..#
+#..S.....................H...SH..S..........#####D#####...D.........D..#
+#.......######D######...S.....C.............#XX...#...#...#...H..C..#..#
+#.......#......#.TTT#TTTTT######D######.....#X....#...#...#......H..#..#
+#.......#..B...#S...#S....#......#....#.....#.....#...#...#.........#..#
+#.......#......#....#.C...#...B..#....#.C...D.....D...D...#.........#..#
+#....C..D......D....#.....#..C...#..C.#C....#.....#...#...#####D#####..#
+#.......#.S....#....#.....D......D....D.....#.....#...#................#
+#......B#......#....#.T...#......#.B..#H....#.....#...#........B.......#
+#.......#......#....#.T..C#...C..#....#....S#####D#####.C..C.........M.#
+#.......#......#....#.T...#......#....#.....C.......B...............MM.#
+#...C...######D######.T...#S.S...#....#......C........B.TTTTTTTTTTTMMM.#
+#.....................T...######D######C..........S...............MMMM.#
+#.CZ..................T..............B...........H...............MMMMM.#
+#.....................T.C.......C.Z........C....................MMMMMM.#
+#......................................................................#
+########################################################################
 `;
 
 
@@ -2177,8 +2197,12 @@ function resize() {
 // ---------------------------------------------------------------------------
 const TILE = 40;
 const WALL = 1, CRATE = 2, BARREL = 3, SANDBAG = 4, HEDGEHOG = 5, DOOR = 6;
+// Rock, a dug trench, and a two storey block you can get on top of.
+const MOUNTAIN = 7, TRENCH = 8, HIGH = 9;
 // How tall the scenery is. Up here because the obstacle table below needs them.
 const WALL_H = 58, CRATE_H = 26;
+// A trench is a hole, so its top is below the ground rather than above it.
+const MOUNTAIN_H = 132, HIGH_H = 96, TRENCH_D = -15;
 
 // Everything that can stand in your way, in one table. Add a line to add an obstacle.
 //   h            how tall it is. Walls work theirs out per tile, so theirs is null.
@@ -2192,6 +2216,12 @@ const TILE_KIND = {
   4: { name: 'sandbag',  h: 15,       hp: 130,  color: '#c2ad72', soft: true },
   5: { name: 'hedgehog', h: 25,       hp: null, color: '#8f959e' },
   6: { name: 'door',     h: WALL_H,   hp: 200,  color: '#8a5a2b', door: true },
+  // Rock. Nothing shifts it, not even a nuke, which is the point of it.
+  7: { name: 'mountain', h: MOUNTAIN_H, hp: null, color: '#8c8f96' },
+  // A dug trench. You drop into it and climb out, and it is cover while you are in it.
+  8: { name: 'trench',   h: TRENCH_D, hp: null, color: '#6b5c46', pit: true },
+  // Two storeys. Climbable, so the roof is somewhere to fight from.
+  9: { name: 'high',     h: HIGH_H,  hp: 900,  color: null },
 };
 function tileKind(t) { return TILE_KIND[t] || null; }
 
@@ -2318,6 +2348,9 @@ function loadMap() {
       if (ch === 'S') { row.push(SANDBAG); continue; }
       if (ch === 'H') { row.push(HEDGEHOG); continue; }
       if (ch === 'D') { row.push(DOOR); continue; }
+      if (ch === 'M') { row.push(MOUNTAIN); continue; }
+      if (ch === 'T') { row.push(TRENCH); continue; }
+      if (ch === 'X') { row.push(HIGH); continue; }
       row.push(0);
       const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
       if (ch === 'Z') spawnPoints.push({ x: cx, y: cy });
@@ -2363,7 +2396,7 @@ function sealPockets() {
   let head = 0, tail = 0;
 
   const sx = Math.floor(playerStart.x / TILE), sy = Math.floor(playerStart.y / TILE);
-  if (sx < 0 || sy < 0 || sx >= GW || sy >= GH || grid[sy][sx] !== 0) return 0;
+  if (sx < 0 || sy < 0 || sx >= GW || sy >= GH || !passableTile(grid[sy][sx])) return 0;
   // A door counts as floor here: a room reached only through a door is not sealed.
 
   seen[sy * GW + sx] = 1;
@@ -2375,7 +2408,7 @@ function sealPockets() {
       const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
       const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
+      if (!passableTile(grid[ny][nx])) continue;
       const ni = ny * GW + nx;
       if (seen[ni]) continue;
       seen[ni] = 1; q[tail++] = ni;
@@ -2385,7 +2418,9 @@ function sealPockets() {
   let filled = 0;
   for (let y = 0; y < GH; y++) {
     for (let x = 0; x < GW; x++) {
-      if (grid[y][x] === 0 && !seen[y * GW + x]) { grid[y][x] = WALL; filled++; }
+      if (passableTile(grid[y][x]) && !seen[y * GW + x]) {
+        grid[y][x] = WALL; filled++;
+      }
     }
   }
   spawnPoints = spawnPoints.filter(
@@ -2399,11 +2434,20 @@ resize();
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 140));
 
+// Somewhere a person can be: open ground, a doorway, or down in a trench. Used by the
+// pathfinder and by the check for sealed off areas, both of which would otherwise wall
+// in a trench system or strand anything standing in one.
+function passableTile(t) {
+  return t === 0 || t === DOOR || t === TRENCH;
+}
+
 function solidAt(px, py) {
   const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
   if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true;
   const t = grid[gy][gx];
   if (t === DOOR) return !isDoorOpen(gx, gy);
+  // A shot passes over a trench rather than stopping at the edge of it.
+  if (t === TRENCH) return false;
   return t !== 0;
 }
 
@@ -2599,6 +2643,15 @@ const BODY = 0.62;
 // Blocked only by things taller than your feet. Stand on top of a wall and you
 // can walk straight over it.
 function blockedAt(x, y, r, z) {
+  // The boundary is never passable, at any height at all.
+  //
+  // Until now this was guaranteed by the boundary being as tall as anything else, so
+  // nobody could ever be high enough to step over it. The two storey blocks broke that
+  // the moment they went in: they are 96 tall against a boundary of 58, so from a roof
+  // you could walk clean over the outer wall and off into the sky. Josh found that
+  // exact bug once before by another route, so it is a rule now rather than something
+  // that happens to be true of the numbers.
+  if (borderAt(x, y)) return true;
   return topUnder(x, y, r * BODY) > (z || 0) + STEP_UP;
 }
 
@@ -2690,7 +2743,7 @@ function buildFlow(tx, ty) {
   if (!flow) { flow = new Int32Array(size); flowQueue = new Int32Array(size); }
   flow.fill(-1);
   if (tx < 0 || ty < 0 || tx >= GW || ty >= GH) return;
-  if (grid[ty][tx] !== 0 && grid[ty][tx] !== DOOR) return;
+  if (!passableTile(grid[ty][tx])) return;
 
   let head = 0, tail = 0;
   const start = ty * GW + tx;
@@ -2705,7 +2758,7 @@ function buildFlow(tx, ty) {
       const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
       const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
+      if (!passableTile(grid[ny][nx])) continue;
       const ni = ny * GW + nx;
       if (flow[ni] !== -1) continue;
       flow[ni] = d;
@@ -2727,7 +2780,7 @@ function flowDir(x, y) {
       if (dx === 0 && dy === 0) continue;
       const nx = gx + dx, ny = gy + dy;
       if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
-      if (grid[ny][nx] !== 0 && grid[ny][nx] !== DOOR) continue;
+      if (!passableTile(grid[ny][nx])) continue;
       // Never cut a diagonal through the corner of a wall.
       if (dx !== 0 && dy !== 0 && (grid[gy][nx] !== 0 || grid[ny][gx] !== 0)) continue;
       const v = flow[ny * GW + nx];
@@ -4945,9 +4998,18 @@ function drawFloor() {
   // used to be skipped on any solid tile, which was invisible while every obstacle
   // filled its whole square. The moment barrels were drawn narrower than their tile
   // the sky showed through the gap around them, as pale blue patches on the floor.
+  //
+  // Trenches are dug afterwards, once all the ground is down, so a trench wall is
+  // never painted over by the tile next to it.
+  const pits = [];
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
       const wx = gx * TILE, wy = gy * TILE;
+      // Ground off the side of the screen still costs a fill and a path each, and on a
+      // map this size that is most of them. The skirt outside the map was already
+      // culled; the map itself was not, which did not matter while it was small.
+      if (!boxOnScreen(wx, wy, 0)) continue;
+      if (isPit(grid[gy][gx])) pits.push([gx, gy]);
       if (!boxOnScreen(wx, wy, 0)) continue;
 
       // Ground tucked up against a block sits in its shadow.
@@ -5044,6 +5106,57 @@ function drawFloor() {
       }
     }
   }
+  // Dig the trenches now that all the ground is down. A trench is a hole, so its floor
+  // sits below ground level and the earth face is drawn on every side of it that is not
+  // another trench. Doing it after the ground means a trench wall can never be painted
+  // over by the tile next to it.
+  for (const pit of pits) {
+    const gx = pit[0], gy = pit[1];
+    const wx = gx * TILE, wy = gy * TILE;
+    if (!boxOnScreen(wx, wy, 0)) continue;
+    const d = TRENCH_D;
+    const earth = TILE_KIND[TRENCH].color;
+
+    // The floor of it.
+    ctx.fillStyle = shade(earth, -14);
+    ctx.beginPath();
+    ctx.moveTo(isoX(wx, wy, d), isoY(wx, wy, d));
+    ctx.lineTo(isoX(wx + TILE, wy, d), isoY(wx + TILE, wy, d));
+    ctx.lineTo(isoX(wx + TILE, wy + TILE, d), isoY(wx + TILE, wy + TILE, d));
+    ctx.lineTo(isoX(wx, wy + TILE, d), isoY(wx, wy + TILE, d));
+    ctx.closePath();
+    ctx.fill();
+
+    // The cut earth on each side that opens onto solid ground.
+    const nb = [
+      { dx: 0, dy: -1, a: [0, 0], b: [TILE, 0] },
+      { dx: 1, dy: 0, a: [TILE, 0], b: [TILE, TILE] },
+      { dx: 0, dy: 1, a: [TILE, TILE], b: [0, TILE] },
+      { dx: -1, dy: 0, a: [0, TILE], b: [0, 0] },
+    ];
+    for (const n of nb) {
+      const nx = gx + n.dx, ny = gy + n.dy;
+      if (nx >= 0 && ny >= 0 && nx < GW && ny < GH && isPit(grid[ny][nx])) continue;
+      const x1 = wx + n.a[0], y1 = wy + n.a[1];
+      const x2 = wx + n.b[0], y2 = wy + n.b[1];
+      ctx.fillStyle = shade(earth, n.dy > 0 ? 12 : -30);
+      ctx.beginPath();
+      ctx.moveTo(isoX(x1, y1, 0), isoY(x1, y1, 0));
+      ctx.lineTo(isoX(x2, y2, 0), isoY(x2, y2, 0));
+      ctx.lineTo(isoX(x2, y2, d), isoY(x2, y2, d));
+      ctx.lineTo(isoX(x1, y1, d), isoY(x1, y1, d));
+      ctx.closePath();
+      ctx.fill();
+      // A lip of turf along the top edge, so the cut reads as dug rather than painted.
+      ctx.strokeStyle = 'rgba(40,34,24,0.5)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(isoX(x1, y1, 0), isoY(x1, y1, 0));
+      ctx.lineTo(isoX(x2, y2, 0), isoY(x2, y2, 0));
+      ctx.stroke();
+    }
+  }
+
 }
 
 function drawHeartAt(h) {
@@ -5118,6 +5231,12 @@ function topHeightAt(gx, gy) {
   if (t === DOOR) return isDoorOpen(gx, gy) ? 0 : (tileKind(DOOR).h);
   const k = tileKind(t);
   return k ? (k.h === null ? wallHeightAt(gx, gy) : k.h) : 0;
+}
+
+// Is this tile a hole rather than a thing standing up?
+function isPit(t) {
+  const k = tileKind(t);
+  return !!(k && k.pit);
 }
 
 // ---------------------------------------------------------------------------
@@ -5409,6 +5528,30 @@ function drawDoor(gx, gy, wx, wy, h, col, fade) {
     const hyy = L.hy + Math.sin(a) * leafLen * 0.84;
     drawBoxRot(hxx, hyy, doorH * 0.5, 3.5, 3.5, 3.5, '#c9a227', a, fade);
   }
+}
+
+// Rock. Drawn as a few blocks of different heights stacked into the tile rather than
+// one clean box, so a range of them reads as a ridge instead of as a row of towers.
+// Nothing destroys it, which is the whole reason it is here.
+function drawMountain(gx, gy, wx, wy, h, col, fade) {
+  // Fixed per tile, so a mountain does not shuffle about between frames.
+  const seed = ((gx * 73856093) ^ (gy * 19349663)) >>> 0;
+  const r1 = ((seed >>> 3) & 255) / 255, r2 = ((seed >>> 11) & 255) / 255;
+  const lumps = [
+    { ox: 0, oy: 0, w: TILE, d: TILE, hh: h * (0.72 + r1 * 0.28) },
+    { ox: TILE * 0.14, oy: TILE * 0.1, w: TILE * 0.66, d: TILE * 0.72,
+      hh: h * (0.88 + r2 * 0.12) },
+    { ox: TILE * 0.34, oy: TILE * 0.3, w: TILE * 0.42, d: TILE * 0.4,
+      hh: h * (1 + r1 * 0.1) },
+  ];
+  for (const L of lumps) {
+    drawBox(wx + L.ox, wy + L.oy, 0, L.w, L.d, L.hh,
+            shade(col, Math.round(-10 + r2 * 16)), fade);
+  }
+  // A cap of paler stone on the highest lump, which is what makes it read as rock
+  // rather than as a grey building.
+  drawBox(wx + TILE * 0.34, wy + TILE * 0.3, lumps[2].hh, TILE * 0.42, TILE * 0.4,
+          TILE * 0.1, shade(col, 26), fade);
 }
 
 // A steel hedgehog: three lengths of angle iron welded across each other. Nothing
@@ -5780,7 +5923,9 @@ function drawStanding() {
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
       const t = grid[gy][gx];
-      if (t === 0) continue;
+      // A trench is a hole in the ground and is drawn with the ground, not as
+      // something standing on it.
+      if (t === 0 || isPit(t)) continue;
       const wx = gx * TILE, wy = gy * TILE;
       const h = (t === DOOR) ? tileKind(DOOR).h : topHeightAt(gx, gy);
       if (!boxOnScreen(wx, wy, h)) continue;
@@ -5809,7 +5954,7 @@ function drawStanding() {
       const fade = (TUNE.WALL_SEE_THROUGH && hidesSomeone(wx, wy, h))
         ? TUNE.WALL_FADE : undefined;
       const kind = tileKind(t);
-      const col = t === WALL ? brickAt(gx, gy)
+      const col = (t === WALL || t === HIGH) ? brickAt(gx, gy)
         : t === CRATE ? crateColor()
         : t === SANDBAG ? (TH().barricade ? TH().barricade.color : kind.color)
         : t === HEDGEHOG ? (TH().spikes ? TH().spikes.color : kind.color)
@@ -5837,6 +5982,11 @@ function drawStanding() {
         drawBarrel(wx, wy, h, col, fade);
       } else if (t === SANDBAG) {
         drawSandbags(wx, wy, h, col, fade);
+      } else if (t === MOUNTAIN) {
+        drawMountain(gx, gy, wx, wy, h, col, fade);
+      } else if (t === HIGH) {
+        // Two storeys of the same brick, with a course line where the floors meet.
+        drawBox(wx, wy, 0, TILE, TILE, h, col, fade, decal, open);
       } else if (t === DOOR) {
         drawDoor(gx, gy, wx, wy, h, col, fade);
       } else if (t === HEDGEHOG) {
