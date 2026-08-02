@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v56';
+const VERSION = 'v57';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -980,7 +980,8 @@ const TUNE = {
   // The tank. You climb in and drive it, and it stays yours until it is wrecked.
   // A tank is slow and turns slowly on purpose: it is powerful, so it should feel
   // heavy rather than just being a faster you.
-  TANK_HP: 30,          // how much punishment the tank soaks up before it blows
+  TANK_HP: 800,         // Josh's number, 2 Aug 2026. It used to be 30, so the tank
+                        // now shrugs off very nearly everything.
   TANK_SPEED: 1.15,     // a shade faster than walking, but it corners badly
   TANK_TURN: 3.2,       // how quickly the hull comes round. Lower is heavier.
   TANK_TURRET_TURN: 5,  // the gun swings faster than the hull does
@@ -1338,8 +1339,14 @@ const THEMES = {
     aName: 'Noob', bName: 'Zombie',
     ranged: 'pistol',
     helmet: false,
-    a: { skin: '#f5cd30', torso: '#2f9be8', legs: '#6aa84f' },
-    b: { skin: '#b6e87f', torso: '#f58ac8', legs: '#98a3c0' },
+    // Straight off the two pictures Josh sent on 2 August 2026: the classic
+    // Roblox Noob, and the Roblox zombie. The shirt blue and both browns are
+    // darker than the grass on purpose. Dark is not the same as unreadable:
+    // they are 25 to 42 luminance clear of the ground and a completely
+    // different hue, which is why the readability test measures distance from
+    // the grass in both directions rather than demanding everyone be lighter.
+    a: { skin: '#f5cd30', torso: '#0d69ac', legs: '#a4bd47' },
+    b: { skin: '#a3c48d', torso: '#8b4a2f', legs: '#7a3e27' },
     rankA: ['Noob', 'Noob Knifer', 'Noob Gunner'],
     rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter'],
     // An overrun town rather than a battlefield: stained render, mossy concrete and
@@ -5014,7 +5021,7 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
     faceKind = fc ? fc.kind : 'smile';
   } else {
     if (TH().helmet) { hatKind = 'helmet'; hatCol = pal.helmet || '#8a9c50'; }
-    faceKind = isNoob ? 'smile' : 'angry';
+    faceKind = isNoob ? 'smile' : 'moan';
   }
   if (g.boss) faceKind = 'angry';
 
@@ -5139,6 +5146,17 @@ function drawBlockFace(g, LX, LY, rot, fwd, eyeZ, u, kind, skin) {
     ctx.moveTo(ml[0], ml[1] - 2); ctx.lineTo(mr[0], mr[1] - 2);
     ctx.lineTo(mr[0], mr[1] + 2); ctx.lineTo(ml[0], ml[1] + 2);
     ctx.closePath(); ctx.fill();
+  } else if (kind === 'moan') {
+    // The zombie in Josh's picture is not scowling, its mouth is just hanging
+    // open. An outlined oval, so it reads as a hole rather than a blob at the
+    // size a head actually gets on screen.
+    const mcx = (ml[0] + mr[0]) / 2, mcy = (ml[1] + mr[1]) / 2;
+    const half = Math.hypot(mr[0] - ml[0], mr[1] - ml[1]) / 2;
+    ctx.strokeStyle = shade(skin, -62);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(mcx, mcy, Math.max(1.8, half * .78), Math.max(1.4, half * .52), 0, 0, 6.283);
+    ctx.stroke();
   } else {
     ctx.strokeStyle = shade(skin, -58);
     ctx.lineWidth = 1.6;

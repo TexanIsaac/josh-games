@@ -823,17 +823,33 @@ function fromGrass(hex) {
   return Math.min(Math.abs(lum(hex) - lum(GRASS[0])), Math.abs(lum(hex) - lum(GRASS[1])));
 }
 const FLOOR_A = GRASS[0], FLOOR_B = GRASS[1];
-const zombieBody = ['#b6e87f', '#f58ac8', '#98a3c0'];
-const noobBody = ['#f5cd30', '#2f9be8', '#6aa84f'];
+// Read out of the game the same way the grass is, so changing a shirt colour
+// can never leave a stale one sitting here. It did exactly that once.
+const bodyOf = p => [p.skin, p.torso, p.legs];
+const zombieBody = bodyOf(G.THEMES.noobs.b);
+const noobBody = bodyOf(G.THEMES.noobs.a);
 ok('zombie parts stand out from the grass', zombieBody.every(c =>
   Math.abs(lum(c) - lum(FLOOR_A)) > 18 && Math.abs(lum(c) - lum(FLOOR_B)) > 18),
   zombieBody.map(c => c + ' d=' + Math.abs(lum(c) - lum(FLOOR_A)).toFixed(0)).join('  '));
 ok('noob parts stand out from the grass', noobBody.every(c =>
   Math.abs(lum(c) - lum(FLOOR_A)) > 18));
-ok('the zombie colours in the code match the ones checked here',
-  zombieBody.every(c => src.indexOf(c) !== -1));
-ok('a zombie is not mistakable for a noob at a glance',
-  Math.abs(lum(zombieBody[1]) - lum(noobBody[1])) > 15);
+ok('the colours checked here are really the ones in the game',
+  zombieBody.concat(noobBody).every(c => /^#[0-9a-f]{6}$/.test(c)
+    && src.indexOf(c) !== -1),
+  zombieBody.concat(noobBody).join(' '));
+// This used to compare brightness, which worked while the zombie wore pink.
+// A rust shirt and a deep blue shirt are within 5 of each other in brightness
+// and could not look less alike, so compare the colours themselves.
+ok('a zombie is not mistakable for a noob at a glance', (() => {
+  const rgb = h => [(parseInt(h.slice(1), 16) >> 16) & 255,
+                    (parseInt(h.slice(1), 16) >> 8) & 255,
+                     parseInt(h.slice(1), 16) & 255];
+  const apart = (x, y) => Math.hypot(...rgb(x).map((v, i) => v - rgb(y)[i]));
+  const gaps = [0, 1, 2].map(i => apart(zombieBody[i], noobBody[i]));
+  console.log('    skin, shirt and legs differ by: '
+    + gaps.map(g => g.toFixed(0)).join(', '));
+  return gaps.every(g => g > 60);
+})(), 'measured across all three parts, not just brightness');
 // The tinted enemy types have to stand out from the grass too.
 const tints = G.ENEMY_TYPES.map(e => e.color).filter(Boolean);
 ok('every enemy type stands out from the grass',
@@ -3719,7 +3735,14 @@ ok('the ground is deeper than it was, on purpose',
   src.indexOf('Darker ground lets the people standing on it be bright') !== -1);
 ok('the reason the characters looked gloomy is written down',
   src.indexOf('had to be dark to stay readable against it') !== -1);
-ok('every character colour is now brighter than the ground it stands on', (() => {
+// The rule used to be that every character colour had to be lighter than the
+// grass. That was the wrong shape of rule: it banned the real Roblox shirt blue
+// and the zombie's brown, both of which read perfectly well because they are a
+// long way from the ground in the other direction. What actually matters is
+// distance from the ground, either way. Anything sitting just under the grass is
+// the thing that disappears, and that is what this catches now.
+const CHAR_MARGIN = 20;
+ok('every character colour stands clear of the ground it stands on', (() => {
   const Lf = h => { const n = parseInt(h.slice(1), 16);
     return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
   const grass = Math.max(Lf(G.GRASS_A), Lf(G.GRASS_B));
@@ -3733,10 +3756,43 @@ ok('every character colour is now brighter than the ground it stands on', (() =>
     }
   }
   G.applyTheme('noobs');
-  const dark = cols.filter(c => Lf(c) < grass);
-  if (dark.length) console.log('    darker than the ground: ' + dark.join(', '));
-  return dark.length === 0;
-})(), 'nobody is darker than the grass any more');
+  const lost = cols.filter(c => Lf(c) <= grass && Lf(c) > grass - CHAR_MARGIN);
+  if (lost.length) console.log('    too close to the ground to read: ' + lost.join(', '));
+  const worst = Math.min.apply(null, cols.map(c => Math.abs(Lf(c) - grass)));
+  console.log('    closest any colour gets to the grass: ' + worst.toFixed(0) + ', margin is ' + CHAR_MARGIN);
+  return lost.length === 0;
+})(), 'nothing sits in the band where it would disappear');
+
+ok('the deliberately dark ones are still a long way from the grass', (() => {
+  const Lf = h => { const n = parseInt(h.slice(1), 16);
+    return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+  const grass = Math.max(Lf(G.GRASS_A), Lf(G.GRASS_B));
+  const p = G.THEMES.noobs;
+  return grass - Lf(p.a.torso) >= CHAR_MARGIN
+      && grass - Lf(p.b.torso) >= CHAR_MARGIN
+      && grass - Lf(p.b.legs) >= CHAR_MARGIN;
+})(), 'the shirt blue and both browns');
+
+group("The two sides match Josh's reference pictures");
+ok('the noob is the classic Roblox noob', (() => {
+  const a = G.THEMES.noobs.a;
+  return a.skin === '#f5cd30' && a.torso === '#0d69ac' && a.legs === '#a4bd47';
+})(), 'bright yellow, deep blue shirt, yellowish green legs');
+ok('the zombie is green with a brown shirt, not pink', (() => {
+  const b = G.THEMES.noobs.b;
+  return b.skin === '#a3c48d' && b.torso === '#8b4a2f' && b.legs === '#7a3e27';
+})(), 'sage skin, rust shirt, brown legs');
+ok('a zombie face hangs open rather than scowling',
+  src.indexOf("faceKind = isNoob ? 'smile' : 'moan'") !== -1);
+ok('and the open mouth is really drawn, as an outlined oval',
+  src.indexOf("kind === 'moan'") !== -1 && /moan[\s\S]{0,600}?ctx\.ellipse/.test(src));
+ok('drawing a zombie face does not throw', (() => {
+  G.reset();
+  try {
+    for (let i = 0; i < 3; i++) { G.update(1 / 60); G.draw(); }
+    return true;
+  } catch (e) { console.log('    ' + e.message); return false; }
+})());
 
 group('Josh is credited');
 ok('on the title screen', /A game by[\s\S]{0,80}Josh Alexander/.test(src));
