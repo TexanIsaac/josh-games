@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v58';
+const VERSION = 'v59';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -1127,8 +1127,11 @@ const MAP = `
 //  reason about.
 // ---------------------------------------------------------------------------
 const SKINS  = ['#f5cd30', '#e8c9a0', '#c98a4b', '#a86c33', '#9ed36a', '#7ad7ff', '#ff9f43', '#e8e9ec'];
-const SHIRTS = ['#2f9be8', '#e8402f', '#f5cd30', '#9cb45e', '#b878f0', '#7ad7ff', '#98a3c0', '#f2f3f5'];
-const PANTS  = ['#6aa84f', '#98a3c0', '#bb8d5c', '#8a9c50', '#98a2ad', '#c3cedd', '#d472a8', '#e8e9ec'];
+// The first of each is what you start in, and it has to be the same noob the rest
+// of your side is wearing. These two were missed when the sides were repainted on
+// 2 August, so the player did not match the noobs walking around him.
+const SHIRTS = ['#0d69ac', '#e8402f', '#f5cd30', '#9cb45e', '#b878f0', '#7ad7ff', '#98a3c0', '#f2f3f5'];
+const PANTS  = ['#a4bd47', '#98a3c0', '#bb8d5c', '#8a9c50', '#98a2ad', '#c3cedd', '#d472a8', '#e8e9ec'];
 
 // Hats. The first one is no hat at all and costs nothing.
 const HATS = [
@@ -1687,9 +1690,22 @@ function shade(hex, amt) {
   return out;
 }
 
-function shadeRaw(hex, amt) {
-  const n = parseInt(hex.slice(1), 16);
-  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+// Takes '#rrggbb' or the 'rgb(r,g,b)' this function itself returns. Reading its own
+// output matters: drawBoxRot shades every face of a box from the colour it is given,
+// so a limb handed a shade instead of a plain hex got shaded twice. The second pass
+// used to run parseInt over 'gb(248,209,55)', get NaN, and return 'rgb(NaN,NaN,NaN)',
+// which the canvas will not draw. One arm and one leg on every character in the game
+// came out black because of it.
+function shadeRaw(col, amt) {
+  let r, g, b;
+  if (col.charCodeAt(0) === 35) {
+    const n = parseInt(col.slice(1), 16);
+    r = (n >> 16) & 255; g = (n >> 8) & 255; b = n & 255;
+  } else {
+    const m = col.match(/(\d+)\D+(\d+)\D+(\d+)/);
+    if (!m) return col;
+    r = +m[1]; g = +m[2]; b = +m[3];
+  }
   if (amt < 0) {
     // Never fully black: at the very darkest a face keeps a third of its colour.
     const f = Math.max(0.34, 1 + amt / 150);
@@ -2244,7 +2260,14 @@ const MOUNTAIN = 7, TRENCH = 8, HIGH = 9;
 // How tall the scenery is. Up here because the obstacle table below needs them.
 const WALL_H = 58, CRATE_H = 26;
 // A trench is a hole, so its top is below the ground rather than above it.
-const MOUNTAIN_H = 132, HIGH_H = 96, TRENCH_D = -15;
+// A trench has to swallow a person to about the shoulders or it reads as a brown
+// path painted on the grass rather than a hole, which is exactly what Josh said it
+// looked like. It was -15, and a pair of legs is 2 studs of a 5 stud figure, so at
+// -15 you stood in one and barely sank past the knee. Derived from the character
+// height so the two cannot drift apart: three studs down puts the rim just under
+// the shoulders, leaving the head and the top of the shirt above ground.
+const MOUNTAIN_H = 132, HIGH_H = 96;
+const TRENCH_D = -Math.round(BODY_TOP * 3 / 5);
 
 // Everything that can stand in your way, in one table. Add a line to add an obstacle.
 //   h            how tall it is. Walls work theirs out per tile, so theirs is null.
@@ -4964,9 +4987,16 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const screenH = Math.abs(isoY(g.x, g.y, z0) - isoY(g.x, g.y, z0 + BODY_TOP * u));
   const detail = screenH > 46;
 
-  // Roblox proportions, in world units: legs to 17, torso to 33, head to 46.
-  const LEG_TOP = 17 * u, TORSO_TOP = 33 * u, HEAD_TOP = BODY_TOP * u;
+  // Roblox R6 is five studs tall: legs 2, torso 2, head 1. Everything below is
+  // derived from that one stud, so no two of these can drift apart again. The head
+  // used to be 13 of 46, which is a third of the figure, and it towered.
+  const STUD = BODY_TOP / 5;
+  const LEG_TOP = 2 * STUD * u, TORSO_TOP = 4 * STUD * u, HEAD_TOP = BODY_TOP * u;
   const legH = LEG_TOP, torsoH = TORSO_TOP - LEG_TOP, headH = HEAD_TOP - TORSO_TOP;
+  // Widths follow the same stud. The torso is two across, a limb is one, and the
+  // head is just under the torso, which is how it sits in the reference picture.
+  const TORSO_W = 14.4 * u, TORSO_D = 8 * u;
+  const LIMB_W = TORSO_W / 2;
 
   // Is this a gun? A gun is held out in front and pointed, rather than swung.
   const rangedNow = !!rk.ranged;
@@ -4983,21 +5013,30 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   // ---- legs ----
   // Square in section and chunky, which is what makes a leg read as a brick rather
   // than as a stick. Feet are their own block, so a leg has a joint in it.
-  const legW = 6.4 * u, legD = 6.4 * u;
-  B(-3.4 * u, stride, z0 + 3.2 * u, legW, legD, legH - 3.2 * u, legCol);
-  B(3.4 * u, stride2, z0 + 3.2 * u, legW, legD, legH - 3.2 * u, shade(legCol, -12));
+  const legW = LIMB_W, legD = TORSO_D, footH = 3.2 * u;
+  const legX = LIMB_W / 2;
+  B(-legX, stride, z0 + footH, legW, legD, legH - footH, legCol);
+  B(legX, stride2, z0 + footH, legW, legD, legH - footH, shade(legCol, -12));
   if (detail) {
-    B(-3.4 * u, stride + .6 * u, z0, legW + .6 * u, legD + 1.4 * u, 3.2 * u, '#3f444c');
-    B(3.4 * u, stride2 + .6 * u, z0, legW + .6 * u, legD + 1.4 * u, 3.2 * u, '#3f444c');
+    // A joint at the ankle so a leg is not one unbroken stick. It used to be near
+    // black, which read as boots and dragged the whole leg dark; the picture has
+    // plain legs, so it is the leg colour now, only darker.
+    B(-legX, stride + .4 * u, z0, legW, legD, footH, shade(legCol, -26));
+    B(legX, stride2 + .4 * u, z0, legW, legD, footH, shade(legCol, -34));
   }
 
   // ---- torso ----
-  B(0, 0, z0 + LEG_TOP, 14.4 * u, 8 * u, torsoH, torsoCol);
-  // A belt, because one flat slab of shirt from waist to neck reads as a slab.
-  B(0, 0, z0 + LEG_TOP, 14.8 * u, 8.4 * u, 2.2 * u, '#3f444c');
+  B(0, 0, z0 + LEG_TOP, TORSO_W, TORSO_D, torsoH, torsoCol);
+  // There used to be a dark belt here to break up the slab of shirt. There is no
+  // belt in the picture, and now that the arms are skin coloured the shirt has a
+  // clear edge on both sides anyway, so it does not read as a slab without one.
 
   // ---- arms ----
-  const armW = 5 * u, armD = 5 * u, armH = torsoH * 0.94;
+  // Skin, not shirt. This is the one that mattered: in the reference the arms are
+  // the same yellow as the head. Drawn in the shirt colour they merge into the
+  // torso and only the hand on the end reads as an arm.
+  const armW = LIMB_W, armD = TORSO_D, armH = torsoH;
+  const armX = (TORSO_W + LIMB_W) / 2;
   const armZ = z0 + LEG_TOP + torsoH - armH;
   // Holding a gun means both arms come up and forward and stay there, rather than
   // swinging with the walk. Josh asked to see the weapon actually out in front, and an
@@ -5007,17 +5046,19 @@ function drawGuyInner(g, side, rankIdx, isPlayer) {
   const armLift = aim * 5 * u;
   const swingL = rangedNow ? armFwd : stride2 + act * 5 * u;
   const swingR = rangedNow ? armFwd : stride + act * 6 * u;
-  B(-9.6 * u, swingL, armZ + armLift, armW, armD, armH, shade(torsoCol, 8));
-  B(9.6 * u, swingR, armZ + armLift, armW, armD, armH, torsoCol);
-  // Hands on the ends of the arms, so an arm is not one unbroken stick.
+  B(-armX, swingL, armZ + armLift, armW, armD, armH, shade(skin, 6));
+  B(armX, swingR, armZ + armLift, armW, armD, armH, shade(skin, -8));
+  // The arms in the reference are plain blocks with nothing on the end. There used to
+  // be a wider cuff here to break the arm up; at this size it just juts out.
   if (detail) {
-    B(-9.6 * u, swingL, armZ + armLift, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
-    B(9.6 * u, swingR, armZ + armLift, armW + .6 * u, armD + .6 * u, 4.6 * u, skin);
+    B(-armX, swingL, armZ + armLift, armW, armD, 2.6 * u, shade(skin, -18));
+    B(armX, swingR, armZ + armLift, armW, armD, 2.6 * u, shade(skin, -26));
   }
 
   // ---- head ----
-  // A big square head. Roblox heads are close to a cube and it is most of the look.
-  const headW = 10.4 * u, headD = 9.2 * u;
+  // One stud tall and nearly as wide as the torso, which is squat, not a tower.
+  // The head is most of the look and it was the wrong shape.
+  const headW = TORSO_W * 0.84, headD = TORSO_D * 1.06;
   B(0, 0, z0 + TORSO_TOP, headW, headD, headH, skin);
 
   // The face goes on the front of the head. The front is a flat plane in the world, so

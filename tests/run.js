@@ -101,6 +101,7 @@ const code = scripts[scripts.length - 1].replace(/^<script>/, '').replace(/<\/sc
 
 eval(code + `
  global.G = { reset, update, draw, drawCards, drawPause, choose, rankFor, pathNear,
+  shade, BODY_TOP, TRENCH_D,
    NOOB_RANKS, ZOMBIE_RANKS, UPGRADES, ENEMY_TYPES, TUNE, hostileCount,
    buildFlow, flowDir, solidAt, grid, GW, GH, TILE, spawnPoints, playerStart,
    freshUpgrades, waveCount, wrapLines, shade, rollEnemyType, resize,
@@ -1346,6 +1347,80 @@ ok('enemies never arrive already inside your firing range', (() => {
 ok('and the ring is derived from the reach, not typed in',
   src.indexOf('const longest = Math.max(NOOB_RANKS[2].reach, ZOMBIE_RANKS[2].reach);') !== -1,
   'so tuning a gun cannot break it again');
+
+group('Nothing is drawn in a colour that does not exist');
+// The bug this catches: shadeRaw returns 'rgb(r,g,b)' and only ever parsed
+// '#rrggbb'. drawBoxRot shades each face of a box from the colour it is handed, so
+// any limb handed a shade rather than a plain hex got shaded twice. The second pass
+// ran parseInt over 'gb(248,209,55)', got NaN, and returned 'rgb(NaN,NaN,NaN)',
+// which the canvas refuses to draw. One arm and one leg on every character in the
+// game came out black, for months, and no test noticed because nothing checked that
+// a colour was a colour.
+const looksLikeAColour = c => typeof c === 'string'
+  && !/NaN|undefined|null/.test(c)
+  && (/^#[0-9a-f]{6}$/i.test(c) || /^rgba?\([\d.,\s]+\)$/.test(c));
+
+ok('shade turns a hex into something drawable',
+  looksLikeAColour(G.shade('#f5cd30', -20)), G.shade('#f5cd30', -20));
+ok('shade can read its own output, which is what was broken', (() => {
+  const once = G.shade('#f5cd30', -20);
+  const twice = G.shade(once, -20);
+  return looksLikeAColour(twice);
+})(), 'shade(shade(x)) used to be rgb(NaN,NaN,NaN)');
+ok('shading stays sane however many times it is applied', (() => {
+  let c = '#0d69ac';
+  for (let i = 0; i < 6; i++) c = G.shade(c, i % 2 ? -14 : 9);
+  return looksLikeAColour(c);
+})());
+ok('every colour in every palette survives a double shade', (() => {
+  const cols = [];
+  for (const th of ['noobs', 'ww2']) {
+    for (const side of ['a', 'b']) {
+      const p = G.THEMES[th][side];
+      cols.push(p.skin, p.torso, p.legs);
+      if (p.helmet) cols.push(p.helmet);
+    }
+  }
+  const bad = cols.filter(c => !looksLikeAColour(G.shade(G.shade(c, 8), -12)));
+  if (bad.length) console.log('    broke: ' + bad.join(', '));
+  return bad.length === 0;
+})());
+
+group('The rig matches the reference picture');
+ok('the head is a fifth of the figure, not a third',
+  /const STUD = BODY_TOP \/ 5;/.test(src)
+  && /HEAD_TOP = BODY_TOP \* u/.test(src),
+  'legs 2 studs, torso 2, head 1');
+ok('the head is wider than it is tall, like a Roblox head',
+  /const headW = TORSO_W \* 0\.84/.test(src),
+  'was 10.4 wide by 13 tall, which towered');
+ok('the arms are skin, not shirt', (() => {
+  const i = src.indexOf('const armW = LIMB_W');
+  if (i === -1) return false;
+  const blk = src.slice(i, i + 900);
+  // Both arm boxes take a shade of skin, and neither takes the torso colour.
+  return /B\(-armX[^;]*shade\(skin/.test(blk)
+      && /B\(armX[^;]*shade\(skin/.test(blk)
+      && blk.indexOf('torsoCol)') === -1;
+})(), 'in the picture the arms are the same yellow as the head');
+ok('a limb is half the width of the torso',
+  /const LIMB_W = TORSO_W \/ 2;/.test(src));
+ok('there is no belt any more', src.indexOf("2.2 * u, '#3f444c'") === -1);
+ok('the reason the arms were the wrong colour is written down',
+  src.indexOf('came out black because of it') !== -1);
+
+group('A trench reads as a hole');
+ok('it is deep enough to swallow someone past the waist',
+  Math.abs(G.TRENCH_D) > G.BODY_TOP * 0.5,
+  Math.abs(G.TRENCH_D) + ' deep, a character is ' + G.BODY_TOP + ' tall');
+ok('but not so deep that the head is buried too',
+  Math.abs(G.TRENCH_D) < G.BODY_TOP * 0.8,
+  'the head and the top of the shirt still show above the rim');
+ok('the depth follows the character height rather than being typed in',
+  /const TRENCH_D = -Math\.round\(BODY_TOP \* 3 \/ 5\);/.test(src),
+  'so the two cannot drift apart again');
+ok('the reason it used to look like a painted path is written down',
+  src.indexOf('path painted on the grass') !== -1);
 
 group('Shooting something that is right on top of you');
 // Josh reported the top rank felt bad against a boss. Measured, a Gunner was
