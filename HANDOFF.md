@@ -28,8 +28,8 @@ what changes next.
 `CACHE` name in `sw.js`, commit, push. Pages takes about 40 to 90 seconds. Verify by
 fetching the page and reading the `VERSION` string back rather than trusting the push.
 
-**Current state:** v55, 682 checks passing, stable across repeated runs. 53 commits in
-the session.
+**Current state:** v58, 691 checks passing, stable across repeated runs. Josh drove a
+second session on 2 August 2026 (v56 to v58); everything below reflects that.
 
 ## What it is
 
@@ -37,7 +37,10 @@ Josh's design, unchanged throughout and not to be altered without him:
 
 - You start as a noob with fists, fighting zombies.
 - Zombies bite you; enough bites and you become one. Then you bite noobs.
-- Four ranks a side, earned at **7 / 22 / 37 kills**. Mirrored on both sides.
+- Three ranks a side, earned at **7 / 22 kills**. Mirrored on both sides. There were
+  four until 2 August 2026, when Josh cut the top one (Noob Rioter and Zombie Brute)
+  after being told it meant the ceiling moved from 37 kills down to 22. He said yes
+  knowing that. Do not put it back without him.
 - There is no game over. You go back and forth between the sides forever.
 
 Everything else is scaffolding around that and can be changed freely.
@@ -82,14 +85,28 @@ This ate most of the session and is the thing most likely to be revisited.
 **The lesson: the problem was never that they were boxes. It was that there were twenty
 tiny ones.** If this is revisited, that is the thing to hold on to.
 
+On 2 August 2026 Josh sent two reference pictures, a classic Roblox noob and a Roblox
+zombie, and asked for those exactly. The noob yellow was already right; the shirt is
+the real deep blue now and the legs the yellowish green. The zombie had been wearing
+a pink shirt, which is what sent him looking for pictures: it is sage green with a
+rust shirt and brown legs, and its face hangs open rather than scowling.
+
+That needed a rule changed. A test demanded every character colour be **lighter** than
+the grass, from when Josh said everyone looked gloomy. The real shirt blue and both
+browns are darker than the grass, so it blocked all three. The rule was the wrong
+shape: what matters is distance from the ground in either direction, since the colour
+that vanishes is the one sitting just under it. It measures both ways now, with the
+margin named and the worst case printed every run. Closest in this palette is the
+noob shirt at 25.
+
 A bug worth remembering: after building the blocky rig, `drawGuy` was still switching on
 the rounded painter, so the blocky look never reached the screen at all. Found while
 measuring performance, not by looking. Nothing in the tests could have caught it.
 
 ## The recurring bug class
 
-**Six bugs this session had one shape: a number that was only correct because of another
-number, with the relationship written down nowhere.**
+**Seven bugs so far have had one shape: a number that was only correct because of
+another number, with the relationship written down nowhere.**
 
 | Bug | The hidden relationship |
 |---|---|
@@ -99,28 +116,54 @@ number, with the relationship written down nowhere.**
 | Enemies shot on arrival, no crowds | spawn ring vs longest weapon reach |
 | Void visible at the edges when zoomed out | ground skirt vs maximum zoom |
 | First person camera at chin height | eye height vs character height |
+| Bullets could not hit anything close to you | muzzle offset vs how close a thing can get |
 
-All six are now derived from each other in code rather than independently guessed. **If a
-new number is added that has to agree with an existing one, derive it.** That single
-habit would have prevented every one of these.
+All seven are now derived from each other in code rather than independently guessed.
+**If a new number is added that has to agree with an existing one, derive it.** That
+single habit would have prevented every one of these.
 
-The last two were found by going looking for the pattern rather than waiting to be told,
-and neither had broken yet: both were one small change away.
+Two of them were found by going looking for the pattern rather than waiting to be
+told, and neither had broken yet: both were one small change away.
+
+The seventh is the best example of the class and is worth reading before touching
+anything. Josh said the top rank felt weak against a boss. It was not the pistol. A
+Gunner was landing 9 to 14 per cent of its shots, and **the starting distance made no
+difference to that number**, which is what gave it away. The muzzle sat a flat 16
+units in front of the shooter so a bullet would not appear inside its own chest. A
+boss closes to about one unit and stays there, so the bullet was born 15 units past
+the boss, pointed away, and flew off. Distance did not matter because a boss always
+ends up in your face. Alongside it, a bullet covers 16.3 units in a frame and was
+tested for a hit only where it stopped, which mostly worked and quietly failed when
+the timing fell badly. The muzzle is clamped to the range to the target now, and a
+hit is measured along the whole path travelled. Point blank boss: 45.6s to 4.5s.
+
+**Measure before believing a diagnosis.** "The pistol is weak up close" was the
+obvious reading and it was wrong in a way that would have led to buffing the pistol
+and never finding the bug.
 
 ## Testing
 
-`node tests/run.js`, 682 checks, plain assertions with a fake DOM and a canvas stub.
+`node tests/run.js`, 691 checks, plain assertions with a fake DOM and a canvas stub.
 It has caught real bugs repeatedly, including several that were invisible by eye.
 
 Things worth knowing:
 
 - The canvas context is a `let` with a `setCtx` hook so tests can hand in a counting
-  stand-in and **measure** frame cost. A frame with 34 enemies is 6,910 canvas
-  operations, budget 7,400.
+  stand-in and **measure** frame cost. A frame with 34 enemies is 6,876 canvas
+  operations, budget 7,400. It was 6,910 before the fourth rank went; the scene mixes
+  one of each rank and there is one fewer rank to mix.
 - That budget test **was flaky** and the flakiness was the interesting part: it spawned
   enemies randomly, so the scene differed each run and it failed about one run in five.
   A test that fails one run in five teaches you to ignore it. It measures a fixed scene
   now and gives an identical number every time.
+- Two more went flaky or brittle on 2 August, both worth the same lesson. One compared
+  a fists Noob with no upgrades against a 37 kill player with six and called the result
+  "upgrades speed it up": it was measuring rank and upgrades at once, and once 37 kills
+  stopped meaning the Rioter it failed one run in three. It holds the rank still now.
+  Another read a fixed 700 characters of source looking for a line inside the window, so
+  adding a comment above that line broke it; it reads to the end of the block now.
+  **If a check can fail for a reason that has nothing to do with what it is named
+  after, it is not measuring what it claims.**
 - Prefer tests that **trigger the behaviour** over tests that check a comment exists. The
   medal tests kill an actual enemy; the popper test puts a neighbour beside one and
   checks it took damage while one further away did not.
@@ -150,6 +193,13 @@ Things worth knowing:
 **Needs Josh's eyes, not more building.** Several things are verified correct and fast
 but nobody has judged whether they look or feel right:
 
+- The repainted noobs and zombies, as of v57. He has not seen them in motion yet.
+- Whether the game is now too hard. Fixing the point blank bug helped the acid
+  spitters exactly as much as it helped the player, and nobody has played a wave
+  since. This is the most likely thing to need turning down.
+- The tank at 800 health, up from 30. It is effectively indestructible; that is what
+  he asked for, but he has not driven it yet.
+- Whether three ranks feels thin now that the ceiling is 22 kills rather than 37.
 - The blocky characters. Levers if wrong: chunkier proportions, or a harder step between
   face shades. Both single numbers.
 - Whether the tripled map feels big or empty.
