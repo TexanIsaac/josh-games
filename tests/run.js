@@ -100,7 +100,7 @@ if (!scripts || !scripts.length) {
 const code = scripts[scripts.length - 1].replace(/^<script>/, '').replace(/<\/script>$/, '');
 
 eval(code + `
- global.G = { reset, update, draw, drawCards, drawPause, choose, rankFor,
+ global.G = { reset, update, draw, drawCards, drawPause, choose, rankFor, pathNear,
    NOOB_RANKS, ZOMBIE_RANKS, UPGRADES, ENEMY_TYPES, TUNE, hostileCount,
    buildFlow, flowDir, solidAt, grid, GW, GH, TILE, spawnPoints, playerStart,
    freshUpgrades, waveCount, wrapLines, shade, rollEnemyType, resize,
@@ -1347,6 +1347,77 @@ ok('and the ring is derived from the reach, not typed in',
   src.indexOf('const longest = Math.max(NOOB_RANKS[2].reach, ZOMBIE_RANKS[2].reach);') !== -1,
   'so tuning a gun cannot break it again');
 
+group('Shooting something that is right on top of you');
+// Josh reported the top rank felt bad against a boss. Measured, a Gunner was
+// landing 9 to 14 per cent of its shots at every distance. A boss closes to
+// about one unit and stays there, and the bullet was born 16 units along the
+// line to it, which put it on the far side, flying away. These check the two
+// numbers that have to agree with something else now really do.
+ok('a bullet is never born past the thing it was fired at', (() => {
+  const i = src.indexOf('const muzzle =');
+  if (i === -1) return false;
+  const line = src.slice(i, src.indexOf(';', i));
+  // It has to be tied to the distance to the target, not a bare number.
+  return /dist/.test(line) && /Math\.min/.test(line);
+})(), 'the muzzle offset is clamped to the range to the target');
+
+ok('shooting something touching you actually hits it', (() => {
+  G.reset();
+  G.player.kills.noob = G.TUNE.KILLS_FOR_GUNNER;
+  G.player.rank = G.rankFor('noob', G.TUNE.KILLS_FOR_GUNNER);
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', false);
+  const e = G.enemies[0];
+  e.x = G.player.x + 6;
+  e.y = G.player.y;
+  const hp0 = e.hp;
+  for (let f = 0; f < 90 && e.hp > 0; f++) {
+    aimStickAt(e.x, e.y);
+    G.player.hp = G.player.maxhp;
+    G.player.bite = 0;
+    G.enemies.length = 1;
+    G.update(1 / 60);
+  }
+  return e.hp < hp0;
+})(), 'six units away, which used to be inside the muzzle and impossible to hit');
+
+ok('a boss standing on you dies in a sensible time now', (() => {
+  G.reset();
+  G.player.kills.noob = G.TUNE.KILLS_FOR_GUNNER;
+  G.player.rank = G.rankFor('noob', G.TUNE.KILLS_FOR_GUNNER);
+  G.enemies.length = 0;
+  G.spawnEnemy('zombie', true);
+  const boss = G.enemies[0];
+  boss.x = G.player.x + 30;
+  boss.y = G.player.y;
+  let f = 0;
+  const cap = 60 * 60;
+  while (boss.hp > 0 && f < cap) {
+    aimStickAt(boss.x, boss.y);
+    G.player.hp = G.player.maxhp;
+    G.player.bite = 0;
+    G.enemies.length = 1;
+    G.update(1 / 60);
+    f++;
+    if (!G.enemies.includes(boss)) break;
+  }
+  console.log('    point blank boss with a pistol: ' + (f / 60).toFixed(1)
+    + 's, it was 45.6s before the fix');
+  return boss.hp <= 0 && f / 60 < 15;
+})(), 'under 15 seconds');
+
+ok('a bullet cannot step over something narrower than one frame of travel', (() => {
+  // One frame of pistol is about 16 units. A target 6 units off the line, sitting
+  // in the middle of that step, has to register.
+  const near = G.pathNear(0, 0, 16.3, 0, 8, 6);
+  const ends = Math.min(Math.hypot(8 - 0, 6 - 0), Math.hypot(8 - 16.3, 6 - 0));
+  return near <= 6.001 && near < ends;
+})(), 'measured against the path, not against where the bullet stopped');
+
+ok('the reason both numbers now follow something else is written down',
+  src.indexOf('born on the far side of it and flies away') !== -1 &&
+  src.indexOf('lets it step clean over one') !== -1);
+
 group('Flowers and rainbows');
 ok('now and then a shot is something daft', G.TUNE.SILLY_SHOT > 0);
 ok('but it stays rare enough to be a surprise',
@@ -1359,8 +1430,12 @@ ok('only your own gun does it, not thirty enemies at once', (() => {
 ok('a silly shot does exactly the same damage as a normal one', (() => {
   // It is a costume, not a weapon. If it were weaker or stronger it would stop being
   // a joke and start being a thing to farm or avoid.
+  // Read to the end of the push rather than counting characters. A fixed window
+  // meant that adding a comment above the push broke this check, which says
+  // nothing about whether a flower hits as hard as a bullet.
   const i = src.indexOf('let fun = null;');
-  const blk = src.slice(i, i + 700);
+  const end = src.indexOf('});', i);
+  const blk = src.slice(i, end);
   // dmg is passed straight through, untouched by the fun branch.
   return blk.indexOf('dmg: dmg,') !== -1 && blk.indexOf('fun ? ') === -1;
 })());
