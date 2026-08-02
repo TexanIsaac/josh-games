@@ -196,14 +196,20 @@ const overlaps = (a, b) =>
   !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
 
 // --- Josh's rules -----------------------------------------------------------
-group("Josh's ranks: 7 / 22 / 37");
+group("Josh's ranks: 7 / 22, top rank at 22 since Josh cut the fourth");
 ok('0 kills is Noob', G.NOOB_RANKS[G.rankFor('noob', 0)].name === 'Noob');
 ok('6 kills is still Noob', G.NOOB_RANKS[G.rankFor('noob', 6)].name === 'Noob');
 ok('7 kills is Noob Knifer', G.NOOB_RANKS[G.rankFor('noob', 7)].name === 'Noob Knifer');
 ok('21 kills is still Knifer', G.NOOB_RANKS[G.rankFor('noob', 21)].name === 'Noob Knifer');
 ok('22 kills is Noob Gunner', G.NOOB_RANKS[G.rankFor('noob', 22)].name === 'Noob Gunner');
 ok('36 kills is still Gunner', G.NOOB_RANKS[G.rankFor('noob', 36)].name === 'Noob Gunner');
-ok('37 kills is Noob Rioter', G.NOOB_RANKS[G.rankFor('noob', 37)].name === 'Noob Rioter');
+ok('37 kills is still Noob Gunner, because Gunner is the top rank now',
+  G.NOOB_RANKS[G.rankFor('noob', 37)].name === 'Noob Gunner');
+ok('there are three ranks a side, not four',
+  G.NOOB_RANKS.length === 3 && G.ZOMBIE_RANKS.length === 3,
+  G.NOOB_RANKS.length + ' noob, ' + G.ZOMBIE_RANKS.length + ' zombie');
+ok('no rank table has a hole in it, so nothing can draw an undefined rank',
+  G.NOOB_RANKS.concat(G.ZOMBIE_RANKS).every(r => r && r.name && r.weapon));
 ok('the zombie side mirrors the same thresholds',
   G.ZOMBIE_RANKS.every((z, i) => z.at === G.NOOB_RANKS[i].at),
   G.ZOMBIE_RANKS.map(z => z.name).join(' / '));
@@ -772,8 +778,21 @@ ok('a brand new Noob can kill a boss with bare fists', ttk[0].killed,
 ok('every rank can kill a boss', ttk.every(x => x.killed));
 ok('a boss is not a slog', ttk[0].killed && ttk[0].secs < 45, ttk[0].secs.toFixed(1) + 's');
 ok('a boss is not a pushover either', ttk[0].secs > 3, ttk[0].secs.toFixed(1) + 's');
-ok('upgrades visibly speed it up', ttk[3].secs < ttk[0].secs,
-  ttk[0].secs.toFixed(1) + 's -> ' + ttk[3].secs.toFixed(1) + 's');
+// This used to compare a fists Noob with no upgrades against the 37 kill case
+// with six, which measured the rank as much as the upgrades. That was fine
+// while 37 kills meant the Rioter. Since Josh cut the Rioter on 2 Aug 2026 the
+// top rank is the Gunner, and a pistol at point blank against a boss is not
+// reliably better than fists, so it failed about one run in three. Hold the
+// rank still and vary only the thing the check is named after.
+const topBare = bossTimeToKill(G.TUNE.KILLS_FOR_GUNNER, 0);
+console.log('    ' + topBare.rank.padEnd(12) + ' with 0 damage upgrades: '
+  + (topBare.killed ? topBare.secs.toFixed(1) + 's' : 'NOT KILLED in 120s'));
+ok('upgrades visibly speed it up, at the same rank both times',
+  ttk[3].killed && topBare.killed && ttk[3].secs < topBare.secs,
+  topBare.rank + ': ' + topBare.secs.toFixed(1) + 's with none -> '
+  + ttk[3].secs.toFixed(1) + 's with six');
+ok('and the two cases really are the same rank, or it is measuring rank again',
+  ttk[3].rank === topBare.rank, ttk[3].rank + ' both times');
 
 console.log('\n    enemy health by wave (it compounds):');
 for (const w of [1, 5, 10, 15, 20]) {
@@ -1033,7 +1052,7 @@ ok('a whole frame with a big wave stays inside a sane budget', (() => {
     const r = 120 + (i % 5) * 90;
     G.enemies.push({
       x: G.player.x + Math.cos(a) * r, y: G.player.y + Math.sin(a) * r, z: 0,
-      r: 12, hp: 40, maxhp: 60, side: other, rank: i % 4, size: 1,
+      r: 12, hp: 40, maxhp: 60, side: other, rank: i % 3, size: 1,
       walk: i * 0.3, moving: true, faceAng: a, type: 'normal', swing: 0, wob: i,
     });
   }
@@ -1393,8 +1412,8 @@ ok('a first kill really does award one', (() => {
 
 ok('reaching a rank awards its medal', (() => {
   G.save.medals = {};
-  G.noteRank(3);
-  return G.hasMedal('knifer') && G.hasMedal('gunner') && G.hasMedal('rioter');
+  G.noteRank(2);
+  return G.hasMedal('knifer') && G.hasMedal('gunner');
 })(), 'and the ranks below it too');
 ok('changing sides awards one', (() => {
   G.save.medals = {}; G.reset();
@@ -2031,40 +2050,36 @@ ok('a rocket that reaches something sets off a blast', (() => {
 ok('a rocket hits harder than a grenade', G.TUNE.RPG_DMG > G.TUNE.GRENADE_DMG,
   G.TUNE.RPG_DMG + ' vs ' + G.TUNE.GRENADE_DMG);
 
-group('The Noob Rioter is worth reaching');
-const gunner = G.NOOB_RANKS[2], rioter = G.NOOB_RANKS[3];
-ok('the top rank hits harder than the gun it replaces',
-  rioter.dmg > gunner.dmg, rioter.dmg + ' vs ' + gunner.dmg);
-ok('it swings faster than the gun fires', rioter.rate < gunner.rate,
-  rioter.rate + 's vs ' + gunner.rate + 's');
-ok('it shrugs off most of what hits it', rioter.armor >= 0.6,
-  Math.round(rioter.armor * 100) + '% armour');
-ok('it shoves whatever it hits', (rioter.shove || 1) > 1, 'x' + rioter.shove);
-ok('and quietly, it cannot be infected at all', rioter.noBite === true);
-ok('the zombie side mirrors the same upgrade', (() => {
-  const brute = G.ZOMBIE_RANKS[3];
-  return brute.noBite === true && brute.armor === rioter.armor && brute.shove > 1;
-})());
-ok('the reason it used to be useless is written down',
-  /straight downgrade/.test(src));
+group('The fourth rank is really gone');
+// Josh cut the Rioter and the Brute on 2 August 2026. These check it left
+// nothing dangling behind it, because a half removed rank is the kind of thing
+// that only shows up when a wave finally spawns one.
+ok('the top rank is the Gunner on both sides',
+  G.NOOB_RANKS[G.NOOB_RANKS.length - 1].name === 'Noob Gunner' &&
+  G.ZOMBIE_RANKS[G.ZOMBIE_RANKS.length - 1].name === 'Zombie Spitter');
+ok('nothing can reach a rank the table does not have',
+  [0, 7, 22, 37, 100, 5000].every(k => G.rankFor('noob', k) < G.NOOB_RANKS.length),
+  'checked 0, 7, 22, 37, 100 and 5000 kills');
+ok('no rank is immune to being bitten any more',
+  G.NOOB_RANKS.concat(G.ZOMBIE_RANKS).every(r => !r.noBite));
+ok('the threshold nobody uses is gone from the tuning',
+  G.TUNE.KILLS_FOR_RIOTER === undefined);
 
-// The shield really does stop infection, checked by playing it out.
-G.reset();
-G.player.kills.noob = G.TUNE.KILLS_FOR_RIOTER;
-G.player.rank = G.rankFor('noob', G.TUNE.KILLS_FOR_RIOTER);
-ok('the player really is a Rioter now',
-  G.NOOB_RANKS[G.player.rank].name === 'Noob Rioter');
-G.player.bite = 0;
-G.player.invuln = 0;
-G.hurtPlayer(5, G.TUNE.BITE_PER_HIT * 4);
-ok('a bite lands no infection on a Rioter', G.player.bite === 0,
-  'infection meter still ' + G.player.bite);
-// And a plain Noob still gets infected, so the test is measuring the shield.
+// Getting infected still has to work, which was the useful half of the group
+// that used to live here.
 G.reset();
 G.player.invuln = 0;
 G.hurtPlayer(5, G.TUNE.BITE_PER_HIT);
-ok('but a plain Noob still gets infected', G.player.bite > 0,
+ok('a plain Noob still gets infected', G.player.bite > 0,
   'meter at ' + G.player.bite.toFixed(0));
+G.reset();
+G.player.kills.noob = G.TUNE.KILLS_FOR_GUNNER;
+G.player.rank = G.rankFor('noob', G.TUNE.KILLS_FOR_GUNNER);
+G.player.bite = 0;
+G.player.invuln = 0;
+G.hurtPlayer(5, G.TUNE.BITE_PER_HIT);
+ok('and so does the top rank, since nothing blocks it now', G.player.bite > 0,
+  'top rank is ' + G.NOOB_RANKS[G.player.rank].name + ', meter at ' + G.player.bite.toFixed(0));
 
 group('The camera centres on the player');
 G.reset();
@@ -2246,10 +2261,12 @@ ok('the ranged rank carries a rifle rather than a pistol',
   G.NOOB_RANKS[2].weapon === 'rifle');
 ok('everybody wears a helmet', G.THEMES.ww2.helmet === true);
 ok('the thresholds are untouched by the theme, they are still Josh numbers',
-  G.NOOB_RANKS[1].at === 7 && G.NOOB_RANKS[2].at === 22 && G.NOOB_RANKS[3].at === 37,
-  '7 / 22 / 37');
-ok('the shield rank keeps its shield and its immunity',
-  G.NOOB_RANKS[3].weapon === 'riot shield' && G.NOOB_RANKS[3].noBite === true);
+  G.NOOB_RANKS[1].at === 7 && G.NOOB_RANKS[2].at === 22,
+  '7 / 22');
+ok('the theme renames every rank it has, with none left over',
+  G.NOOB_RANKS.length === G.THEMES.ww2.rankA.length &&
+  G.NOOB_RANKS.every((r, i) => r.name === G.THEMES.ww2.rankA[i]),
+  G.NOOB_RANKS.map(r => r.name).join(' / '));
 ok('the mirror still holds', G.ZOMBIE_RANKS.every((z, i) => z.at === G.NOOB_RANKS[i].at));
 ok('WW2 colours stand out from the grass', (() => {
   const L = h => { const n = parseInt(h.slice(1), 16);
@@ -2285,7 +2302,7 @@ ok('the game runs fine in the WW2 theme', (() => {
 ok('the choice is remembered between games',
   global.localStorage.getItem('zn_theme') === 'ww2');
 G.applyTheme('noobs');
-ok('switching back restores Josh names', G.NOOB_RANKS[3].name === 'Noob Rioter');
+ok('switching back restores Josh names', G.NOOB_RANKS[2].name === 'Noob Gunner');
 
 group('Weapons are built out of parts');
 ok('a knife is a blade, a guard and a grip in separate pieces',
@@ -2328,7 +2345,7 @@ ok('each weapon is several parts, not one box', (() => {
 ok('every weapon still draws without throwing', (() => {
   for (const th of ['noobs', 'ww2']) {
     G.applyTheme(th);
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < G.NOOB_RANKS.length; r++) {
       G.reset();
       G.player.rank = r;
       try { G.draw(); } catch (e) { console.log('    ' + th + ' rank ' + r + ': ' + e.message); return false; }
@@ -2774,7 +2791,7 @@ ok('walls and vehicles are still solid boxes, not blobs', (() => {
 ok('a whole character draws without throwing, in both themes', (() => {
   for (const th of ['noobs', 'ww2']) {
     G.applyTheme(th);
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < G.NOOB_RANKS.length; r++) {
       try {
         G.player.rank = r;
         G.drawGuy(G.player, G.player.side, r, true);

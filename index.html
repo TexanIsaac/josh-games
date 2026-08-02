@@ -407,7 +407,7 @@
 // ---------------------------------------------------------------------------
 // Bumped whenever the game changes, and shown on the title screen so a photo of
 // the screen says which build it is. Saves guessing whether a reload happened.
-const VERSION = 'v55';
+const VERSION = 'v56';
 
 const zzfxV = .28;
 let zzfxX = null;
@@ -895,7 +895,6 @@ const TUNE = {
   // How many kills to reach each rank. These are Josh's original numbers.
   KILLS_FOR_KNIFER: 7,
   KILLS_FOR_GUNNER: 22,
-  KILLS_FOR_RIOTER: 37,
 
   // How tough you are.
   PLAYER_HEALTH: 100,
@@ -1020,7 +1019,6 @@ const TUNE = {
   // why they felt harmless.
   RANK1_FROM_WAVE: 3,         // some get the better melee from this wave on
   RANK2_FROM_WAVE: 6,         // some start spitting from here
-  RANK3_FROM_WAVE: 9,         // and some turn up armoured
   RANK_CHANCE: 0.5,           // how likely an upgrade is once it is unlocked
 
   // How clever the enemies are.
@@ -1203,7 +1201,6 @@ const MEDALS = [
   { id: 'first',    name: 'First Blood',   hint: 'Get your first kill.' },
   { id: 'knifer',   name: 'Armed',         hint: 'Reach the second rank.' },
   { id: 'gunner',   name: 'Gunner',        hint: 'Reach the third rank.' },
-  { id: 'rioter',   name: 'Top Rank',      hint: 'Reach the fourth rank.' },
   { id: 'turned',   name: 'Bitten',        hint: 'Get infected and change sides.' },
   { id: 'backagain', name: 'Both Sides',   hint: 'Change sides, then change back.' },
   { id: 'streak',   name: 'On A Roll',     hint: 'Get ten kills in a row.' },
@@ -1343,8 +1340,8 @@ const THEMES = {
     helmet: false,
     a: { skin: '#f5cd30', torso: '#2f9be8', legs: '#6aa84f' },
     b: { skin: '#b6e87f', torso: '#f58ac8', legs: '#98a3c0' },
-    rankA: ['Noob', 'Noob Knifer', 'Noob Gunner', 'Noob Rioter'],
-    rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter', 'Zombie Brute'],
+    rankA: ['Noob', 'Noob Knifer', 'Noob Gunner'],
+    rankB: ['Zombie', 'Zombie Ripper', 'Zombie Spitter'],
     // An overrun town rather than a battlefield: stained render, mossy concrete and
     // rust, with the odd bright Roblox brick still showing through where a wall has
     // not been ruined yet. Every one of these was checked against the grass so nothing
@@ -1368,8 +1365,8 @@ const THEMES = {
     // Olive drab against field grey, with a helmet on everybody.
     a: { skin: '#f0d4ac', torso: '#9cb45e', legs: '#7d9147', helmet: '#8a9c50' },
     b: { skin: '#e8c9a0', torso: '#b3bdc8', legs: '#9aa4b2', helmet: '#8a94a0' },
-    rankA: ['Recruit', 'Trench Fighter', 'Rifleman', 'Shield Sergeant'],
-    rankB: ['Conscript', 'Grenadier', 'Marksman', 'Stormtrooper'],
+    rankA: ['Recruit', 'Trench Fighter', 'Rifleman'],
+    rankB: ['Conscript', 'Grenadier', 'Marksman'],
     // Concrete, sandbag tan and olive rather than bright primaries. A held
     // position does not look like a playground.
     // Every one of these was picked by measuring it against the grass. The first
@@ -1402,30 +1399,27 @@ function applyTheme(name) {
 }
 
 // ---------------------------------------------------------------------------
-//  RANKS  --  four on each side, mirrored, exactly as Josh described.
+//  RANKS  --  three on each side, mirrored. Josh cut the fourth on 2 Aug 2026.
 // ---------------------------------------------------------------------------
-// The Rioter used to be useless, and there was a real reason for it: it comes
-// after the Gunner, so reaching the top rank took your gun away and handed you a
-// melee weapon instead. Fifteen more kills of work for a straight downgrade.
+// There used to be a fourth rank here: the Noob Rioter and the Zombie Brute, a
+// riot shield and a ground slam at 37 kills, armoured and impossible to infect.
+// Josh cut it on 2 August 2026, so the Gunner is the top rank now at 22 kills.
 //
-// It is now the sneaky-good one. Nothing about it looks flashy, but it hits harder
-// than the gun, swings faster, shrugs off two thirds of what lands on it, shoves
-// whatever it touches off its feet, and quietly cannot be infected at all. On the
-// noob side that means the shield stops you ever turning into a zombie, which is
-// the strongest thing in the game while looking like the least.
+// If it ever comes back, the thing that made it worth reaching was noBite: the
+// shield stopped you turning into a zombie at all, which was the strongest thing
+// in the game while looking like the least. The weapon art for 'riot shield' and
+// 'smash' is still in the drawing code, unused, if anyone wants it back.
 const NOOB_RANKS = [
   { name: 'Noob',        weapon: 'fists',       at: 0,                     reach: 44,  dmg: 22, rate: .34, armor: 0,   ranged: false },
   { name: 'Noob Knifer', weapon: 'knife',       at: TUNE.KILLS_FOR_KNIFER, reach: 60,  dmg: 46, rate: .27, armor: 0,   ranged: false },
   { name: 'Noob Gunner', weapon: 'pistol',      at: TUNE.KILLS_FOR_GUNNER, reach: 860, dmg: 58, rate: .30, armor: 0,   ranged: true  },
-  { name: 'Noob Rioter', weapon: 'riot shield', at: TUNE.KILLS_FOR_RIOTER, reach: 74,  dmg: 64, rate: .25, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
-// The zombie side gets the same shape: melee, better melee, ranged, tank.
+// The zombie side gets the same shape: melee, better melee, ranged.
 const ZOMBIE_RANKS = [
   { name: 'Zombie',         weapon: 'bite',  at: 0,                     reach: 42,  dmg: 20, rate: .46, armor: 0,   ranged: false },
   { name: 'Zombie Ripper',  weapon: 'claws', at: TUNE.KILLS_FOR_KNIFER, reach: 56,  dmg: 40, rate: .30, armor: 0,   ranged: false },
   { name: 'Zombie Spitter', weapon: 'acid',  at: TUNE.KILLS_FOR_GUNNER, reach: 760, dmg: 44, rate: .52, armor: 0,   ranged: true  },
-  { name: 'Zombie Brute',   weapon: 'smash', at: TUNE.KILLS_FOR_RIOTER, reach: 76,  dmg: 68, rate: .38, armor: .68, ranged: false, shove: 2.0, noBite: true },
 ];
 
 
@@ -2891,7 +2885,6 @@ muted = localStorage.getItem('zn_muted') === '1';
 function noteRank(idx) {
   if (idx >= 1) awardMedal('knifer');
   if (idx >= 2) awardMedal('gunner');
-  if (idx >= 3) awardMedal('rioter');
 }
 
 function rankFor(side, kills) {
@@ -3583,8 +3576,7 @@ function spawnEnemy(side, boss) {
   let rank = 0;
   if (!boss) {
     const roll = Math.random();
-    if (wave >= TUNE.RANK3_FROM_WAVE && roll < TUNE.RANK_CHANCE * .36) rank = 3;
-    else if (wave >= TUNE.RANK2_FROM_WAVE && roll < TUNE.RANK_CHANCE * .68) rank = 2;
+    if (wave >= TUNE.RANK2_FROM_WAVE && roll < TUNE.RANK_CHANCE * .68) rank = 2;
     else if (wave >= TUNE.RANK1_FROM_WAVE && roll < TUNE.RANK_CHANCE) rank = 1;
   }
 
