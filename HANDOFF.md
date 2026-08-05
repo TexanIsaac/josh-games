@@ -18,8 +18,9 @@ what changes next.
 | Code | `C:\Dev\josh-games\` |
 | Repo | `git@github.com:TexanIsaac/josh-games.git`, branch `main`, public |
 | Live | `https://texanisaac.github.io/josh-games/` (GitHub Pages, auto-deploys on push) |
-| Game | `index.html`, one file, ~353 KB, no build step |
-| Tests | `tests/run.js`, ~176 KB, `node tests/run.js` |
+| Game | `index.html`, one file, ~349 KB, no build step |
+| Tests | `tests/run.js`, ~183 KB, `node tests/run.js` |
+| Pictures | `tools/shot.py`, headless Chrome. Read the next section. |
 | Audio | `assets/anthem-*.mp3`, six recordings |
 | Offline | `sw.js` + `manifest.webmanifest` |
 | Credits | `CREDITS.md` |
@@ -28,8 +29,49 @@ what changes next.
 `CACHE` name in `sw.js`, commit, push. Pages takes about 40 to 90 seconds. Verify by
 fetching the page and reading the `VERSION` string back rather than trusting the push.
 
-**Current state:** v58, 691 checks passing, stable across repeated runs. Josh drove a
-second session on 2 August 2026 (v56 to v58); everything below reflects that.
+**Current state:** v59, 705 checks passing, stable across repeated runs. Josh drove a
+second session on 2 August 2026, v56 through v59, and everything below reflects it.
+
+| Version | What went in |
+|---|---|
+| v56 | The fourth rank cut, Rioter and Brute gone |
+| v57 | Both sides repainted to Josh's reference pictures, tank to 800 health |
+| v58 | Bullets can hit things standing next to you |
+| v59 | The black limb bug, the rig rebuilt to Roblox proportions, deeper trenches |
+
+**Nothing in v57 to v59 has been judged by Josh yet.** He asked for a fresh thread
+before playing it. The open items at the bottom are the real next step, not more
+building.
+
+## Look at it before you touch it
+
+    py -3.12 tools/shot.py                 # closeup, the default
+    py -3.12 tools/shot.py closeup trench  # several at once
+
+Writes `shots/<mode>.png`. Modes are `closeup`, `faces`, `trench`, `inside`. Nothing
+it makes is committed.
+
+**This is the most important tool in the repo and it is the newest.** The test suite
+cannot see. It counts canvas operations and asserts on numbers, and three separate
+times a bug has been invisible to every one of 700 checks and obvious in a picture
+within ten seconds:
+
+| Bug | How long it survived |
+|---|---|
+| The blocky rig never reached the screen; `drawGuy` still called the old painter | a whole build |
+| Every character had a black arm and a black leg | months |
+| Trenches read as brown paint on the grass | since trenches existed |
+
+None of the three was findable by reading the code with a theory in hand, and the
+second one had been shipped in every version Josh ever played.
+
+**If Josh says something looks wrong, take a picture before you touch the code.** He
+has been right every single time, including when he could not say why, and twice the
+thing he was looking at was not the thing anyone assumed.
+
+The one trap: the map regenerates on every reset, so `trench`, `faces` and `inside`
+sometimes frame a wall or drop the camera inside geometry. Run it again. `closeup`
+does not depend on the map and always frames cleanly, which is why it is the default.
 
 ## What it is
 
@@ -68,9 +110,10 @@ barrel, sandbag/rubble, hedgehog/spikes, door, mountain, trench, two storey bloc
   when shut, otherwise a room behind one gets sealed and its occupants stranded.
 - **Buildings** are rooms with doors on opposite walls and an inner dividing wall.
 
-### Characters: three attempts, and why the third works
+### Characters: four attempts, and what was actually wrong
 
-This ate most of the session and is the thing most likely to be revisited.
+This ate most of the first session, came back twice in the second, and is still the
+thing most likely to be revisited. Read this section before changing how anyone looks.
 
 1. **Twenty small boxes**, each rounded, shaded and outlined on its own. At ninety
    pixels tall each box is about ten pixels. Twenty independently shaded ten pixel
@@ -99,13 +142,44 @@ that vanishes is the one sitting just under it. It measures both ways now, with 
 margin named and the worst case printed every run. Closest in this palette is the
 noob shirt at 25.
 
-A bug worth remembering: after building the blocky rig, `drawGuy` was still switching on
-the rounded painter, so the blocky look never reached the screen at all. Found while
-measuring performance, not by looking. Nothing in the tests could have caught it.
+Josh looked at that and said the characters *still* did not look right. He was right,
+and the main reason was not a proportion at all. **`shade()` could not read its own
+output.** It returns `rgb(r,g,b)` and only ever parsed `#rrggbb`. `drawBoxRot` shades
+each face of a box from the colour it is handed, so any limb handed a shade rather
+than a plain hex got shaded twice; the second pass ran `parseInt` over
+`gb(248,209,55)`, got NaN, and returned `rgb(NaN,NaN,NaN)`, which the canvas will not
+draw. The left arm took `shade(torsoCol, 8)` and the right leg took
+`shade(legCol, -12)`, so **every character in the game had a black arm and a black
+leg**, in every version Josh ever played. `shade` reads both forms now.
+
+With that fixed the rig was rebuilt against the picture, every size derived from one
+stud so no two can drift apart again:
+
+- Roblox R6 is five studs tall: legs 2, torso 2, head 1. The head had been 13 of 46,
+  a third of the figure, and it towered. `const STUD = BODY_TOP / 5` drives all of it.
+- **The arms were painted in the shirt colour.** In the reference they are skin, the
+  same yellow as the head. In shirt colour they merge into the torso and only the
+  small hand on the end reads as an arm. This is most of why they looked wrong even
+  where they were not outright black.
+- A limb is half the torso width now; arms were a third of it.
+- The dark belt and the near black feet are gone. Neither is in the picture, and the
+  feet read as boots and dragged the whole leg dark.
+
+**There are two separate character palettes and it is easy to fix only one.**
+`THEMES.noobs.a` and `.b` colour everyone the game spawns. The player is coloured
+from `SKINS` / `SHIRTS` / `PANTS` by index out of `save.look`. The sides were
+repainted in v57 and the player was not, so for two versions he did not match his own
+team. If a colour changes, change both.
+
+An older bug worth remembering, same family: after building the blocky rig, `drawGuy`
+was still switching on the rounded painter, so the blocky look never reached the
+screen at all. Found while measuring performance, not by looking. Nothing in the
+tests could have caught it, and nothing in the tests caught the black limbs either.
+That is what `tools/shot.py` is for.
 
 ## The recurring bug class
 
-**Seven bugs so far have had one shape: a number that was only correct because of
+**Eight bugs so far have had one shape: a number that was only correct because of
 another number, with the relationship written down nowhere.**
 
 | Bug | The hidden relationship |
@@ -117,16 +191,18 @@ another number, with the relationship written down nowhere.**
 | Void visible at the edges when zoomed out | ground skirt vs maximum zoom |
 | First person camera at chin height | eye height vs character height |
 | Bullets could not hit anything close to you | muzzle offset vs how close a thing can get |
+| Trenches looked like paint on the grass | trench depth vs character height |
 
-All seven are now derived from each other in code rather than independently guessed.
+All eight are now derived from each other in code rather than independently guessed.
 **If a new number is added that has to agree with an existing one, derive it.** That
 single habit would have prevented every one of these.
 
 Two of them were found by going looking for the pattern rather than waiting to be
 told, and neither had broken yet: both were one small change away.
 
-The seventh is the best example of the class and is worth reading before touching
-anything. Josh said the top rank felt weak against a boss. It was not the pistol. A
+**The bullet one is the best example of the class** and is worth reading before
+touching anything. Josh said the top rank felt weak against a boss. It was not the
+pistol. A
 Gunner was landing 9 to 14 per cent of its shots, and **the starting distance made no
 difference to that number**, which is what gave it away. The muzzle sat a flat 16
 units in front of the shooter so a bullet would not appear inside its own chest. A
@@ -141,17 +217,24 @@ hit is measured along the whole path travelled. Point blank boss: 45.6s to 4.5s.
 obvious reading and it was wrong in a way that would have led to buffing the pistol
 and never finding the bug.
 
+**The trench one is the plainest.** A trench was 15 deep. A character is 46 tall and a
+pair of legs is 18 of that, so you stood in one and did not sink past the knee, and it
+read as a brown path painted on the grass. That is exactly what Josh called it. It is
+`-Math.round(BODY_TOP * 3 / 5)` now, so the rim sits just under the shoulders.
+
 ## Testing
 
-`node tests/run.js`, 691 checks, plain assertions with a fake DOM and a canvas stub.
+`node tests/run.js`, 705 checks, plain assertions with a fake DOM and a canvas stub.
 It has caught real bugs repeatedly, including several that were invisible by eye.
+**It has also missed bugs that were glaring to the eye.** Both halves are true and
+the second half is why `tools/shot.py` exists. Run the tests and look at a picture.
 
 Things worth knowing:
 
 - The canvas context is a `let` with a `setCtx` hook so tests can hand in a counting
-  stand-in and **measure** frame cost. A frame with 34 enemies is 6,876 canvas
-  operations, budget 7,400. It was 6,910 before the fourth rank went; the scene mixes
-  one of each rank and there is one fewer rank to mix.
+  stand-in and **measure** frame cost. A frame with 34 enemies is 6,689 canvas
+  operations, budget 7,400. It was 6,910 in July: one fewer rank to mix into the
+  scene, and the rig rebuild dropped the belt and the separate hand blocks.
 - That budget test **was flaky** and the flakiness was the interesting part: it spawned
   enemies randomly, so the scene differed each run and it failed about one run in five.
   A test that fails one run in five teaches you to ignore it. It measures a fixed scene
@@ -170,6 +253,10 @@ Things worth knowing:
 - A test guarding another test's validity caught a real gameplay bug: when the spawn ring
   fell inside weapon range, crowds stopped forming and the clumping measurement dropped
   from 105 samples to one. Nothing else would have noticed.
+- **Nothing checked that a colour was a colour**, which is how `rgb(NaN,NaN,NaN)` shipped
+  for months. There is now a `looksLikeAColour` check and a test that every palette
+  colour survives being shaded twice. When a helper can be fed its own output, test
+  that it can.
 
 ## Content as it stands
 
@@ -178,9 +265,14 @@ Things worth knowing:
   dearer means more specialised.
 - **16 upgrades**, ~12,700 coins for all levels. Everything together is ~22,000, a
   deliberate long tail.
-- **16 medals**, shown locked with their hint so there is always a visible next thing.
+- **15 medals**, shown locked with their hint so there is always a visible next thing.
+  It was 16; the one for reaching the fourth rank went with the fourth rank, because
+  the third rank already awards one and keeping it handed out two for one event.
 - **5 enemy kinds**: walker, runner, brute, popper (explodes on death, hits its own side
-  too), leaper (rushes the last stretch).
+  too), leaper (rushes the last stretch). **The brute here is an enemy kind and it still
+  exists.** It is not the Zombie Brute rank Josh deleted, which was something else with
+  the same name. There is also a `brute` player morph form. Three different bruties;
+  check which one is meant before removing anything.
 - **6 special waves**, every third wave: swarm, heavy, all leapers, all poppers,
   nightfall, payday. Never the same one twice running.
 - **4 difficulties**, multipliers on the tuned numbers so the levels stay in proportion.
@@ -190,21 +282,29 @@ Things worth knowing:
 
 ## Open items
 
-**Needs Josh's eyes, not more building.** Several things are verified correct and fast
-but nobody has judged whether they look or feel right:
+**Needs Josh's eyes, not more building.** Everything in v57 to v59 is verified correct,
+fast and screenshotted, and none of it has been played. In rough order of how likely
+it is to need attention:
 
-- The repainted noobs and zombies, as of v57. He has not seen them in motion yet.
-- Whether the game is now too hard. Fixing the point blank bug helped the acid
-  spitters exactly as much as it helped the player, and nobody has played a wave
-  since. This is the most likely thing to need turning down.
-- The tank at 800 health, up from 30. It is effectively indestructible; that is what
-  he asked for, but he has not driven it yet.
-- Whether three ranks feels thin now that the ceiling is 22 kills rather than 37.
-- The blocky characters. Levers if wrong: chunkier proportions, or a harder step between
-  face shades. Both single numbers.
-- Whether the tripled map feels big or empty.
-- Whether wave 3 being a special wave is too soon. One character to change.
-- Whether the flowers and rainbows land as funny (about 1 shot in 25).
+1. **Is it too hard now?** Fixing the point blank bug helped the acid spitters exactly
+   as much as it helped the player, and their shots used to miss whenever they got
+   close. Nobody has played a single wave since. If one thing needs turning down this
+   is it, and `ZOMBIE_RANKS[2].dmg` or `.rate` is the lever.
+2. **Do the characters look right at last?** Josh has said no twice. The third attempt
+   is the one with the black limbs fixed and the proportions taken off his own
+   reference picture, so it is the first version where what he is judging is actually
+   what was intended. Take a `closeup` shot next to his picture before changing
+   anything.
+3. **Do the trenches read as holes now?** 15 deep to 28 deep is a big jump. If it is
+   too much, the number is derived, so change the fraction and not the constant.
+4. **The tank at 800 health**, up from 30. Effectively indestructible. That is what he
+   asked for, but he has not driven it yet.
+5. Whether three ranks feels thin now the ceiling is 22 kills rather than 37.
+6. Whether the tripled map feels big or empty.
+7. Whether wave 3 being a special wave is too soon. One character to change.
+8. Whether the flowers and rainbows land as funny (about 1 shot in 25).
+
+Items 6 to 8 have been waiting since July and are not urgent. Items 1 to 3 are.
 
 **Not started:** camo clothing option; in-game weapon models matching the shop cards
 exactly; more boss variety.
@@ -230,13 +330,25 @@ Josh has said he does not care about it.
 - `const` declarations must come before anything that reads them; one constant was
   declared below its first use and the whole game failed to start.
 - Do not audit or change BoM Builder or Pulse from this project; unrelated.
+- **`shade()` output is a colour, not a hex.** Anything handed to `B()` / `drawBoxRot`
+  gets shaded again per face. That is safe now, but do not assume a colour coming out
+  of a helper can be sliced or parsed as `#rrggbb`.
+- The map is regenerated on every `reset()`. Any test or screenshot that depends on
+  where something is will be flaky. Place things yourself instead of hunting for them.
+- Josh is eight. Explain what a change will cost him **before** doing it, in plain
+  words, and then do what he says. He cut his own top rank knowing it moved the
+  ceiling from 37 kills to 22, and that was the right call to hand him.
 
 ## Next step
 
-Josh and Max have the live link (https://texanisaac.github.io/josh-games/) on their
-iPads. Collect their feedback on the four judgement calls above before building anything
-further; everything else on the list is either done or is building on top of an
-unvalidated foundation.
+**Hand Josh and Max v59 on their iPads and watch them play a few waves.** The link is
+https://texanisaac.github.io/josh-games/ and it is unchanged. Nothing on the open list
+should be built until that has happened, because four versions of changes have stacked
+up without a single one being played, and the difficulty question at the top of the
+list can only be answered by watching.
+
+Ask about the five open items in order. Do not ask all five at once; he answers one
+clear question at a time and gets bored of menus.
 
 Two things to watch now that it is on iPads rather than a laptop:
 

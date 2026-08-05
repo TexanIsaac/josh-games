@@ -4,3 +4,10 @@
 .check.js
 .DS_Store
 Thumbs.db
+
+# Screenshot tool output, never committed
+shots/
+_shot.html
+_check.js
+_probe.js
+tests/_probe.js
